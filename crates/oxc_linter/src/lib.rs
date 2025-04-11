@@ -8,7 +8,6 @@ mod ast_util;
 mod config;
 mod context;
 mod disable_directives;
-mod fixer;
 mod frameworks;
 mod globals;
 mod module_graph_visitor;
@@ -18,6 +17,7 @@ mod rule;
 mod service;
 mod utils;
 
+pub mod fixer;
 pub mod loader;
 pub mod rules;
 pub mod table;

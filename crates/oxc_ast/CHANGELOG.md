@@ -4,6 +4,85 @@ All notable changes to this package will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project does not adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) until v1.0.0.
 
+## [0.69.0] - 2025-05-09
+
+- 2b5d826 ast: [**BREAKING**] Fix field order for `TSTypeAssertion` (#10906) (overlookmotel)
+
+- 1f35910 ast: [**BREAKING**] Fix field order for `TSNamedTupleMember` (#10905) (overlookmotel)
+
+- 8a3bba8 ast: [**BREAKING**] Fix field order for `PropertyDefinition` (#10902) (overlookmotel)
+
+- 5746d36 ast: [**BREAKING**] Fix field order for `NewExpression` (#10893) (overlookmotel)
+
+- 0139793 ast: [**BREAKING**] Re-order fields of `TaggedTemplateExpression` (#10889) (overlookmotel)
+
+- 6646b6b ast: [**BREAKING**] Fix field order for `JSXOpeningElement` (#10882) (overlookmotel)
+
+- cc2ed21 ast: [**BREAKING**] Fix field order for `JSXElement` and `JSXFragment` (#10881) (overlookmotel)
+
+- ad4fbf4 ast: [**BREAKING**] Simplify `RegExpPattern` (#10834) (overlookmotel)
+
+### Features
+
+- d066516 ast_tools: Support `#[estree(prepend_to)]` (#10849) (overlookmotel)
+
+### Bug Fixes
+
+- 2c09243 ast: Fix field order for `AccessorProperty` (#10878) (overlookmotel)
+- 581d068 ast/estree: Fix TS type def for `RegExpLiteral` (#10876) (overlookmotel)
+- e7228fa ast/estree: Fix `optional` field of `TSMappedType` in TS-ESTree AST (#10874) (overlookmotel)
+- 6f0638a ast/estree: Remove `TSImportTypeOptions` custom serializer (#10873) (overlookmotel)
+- e6657ae ast/estree: Reorder fields for TS `Identifier` types in TS-ESTree AST (#10864) (overlookmotel)
+
+### Performance
+
+- 49a6f97 napi/parser: Faster fixup of `BigInt`s and `RegExp`s (#10820) (overlookmotel)
+
+### Documentation
+
+- 4863eef ast: Improve docs for `TSImportType` (#10903) (overlookmotel)
+
+### Refactor
+
+- 805735b ast: Remove quotes from `#[estree(append_to)]` attributes (#10863) (overlookmotel)
+- 0f7e755 ast/estree: Use `#[estree(prepend_to)]` (#10862) (overlookmotel)
+- b16331e ast/estree: Generalize concatenating fields with `Concat2` (#10848) (overlookmotel)
+- daba0a7 estree: Remove regular expression types from ESTree AST (#10855) (overlookmotel)
+
+### Styling
+
+- 62c3a4a ast_tools: Add full stop to end of generated comments (#10809) (overlookmotel)
+
+## [0.68.1] - 2025-05-04
+
+### Bug Fixes
+
+- 663fb53 ast/estree: For TS type def for `BigIntLiteral` (#10786) (overlookmotel)
+- c33eb9c ast/estree: Fix raw deser for `TSTypeReference` (#10787) (overlookmotel)
+
+## [0.68.0] - 2025-05-03
+
+- 28ceb90 ast: [**BREAKING**] Remove `TSMappedTypeModifierOperator::None` variant (#10749) (overlookmotel)
+
+- a0a37e0 ast: [**BREAKING**] `AstBuilder` methods require an `Atom` with correct lifetime (#10735) (overlookmotel)
+
+### Features
+
+- 60347e7 ast_tools: `AstBuilder` generator support types with more than 1 `Atom` field (#10737) (overlookmotel)
+
+### Bug Fixes
+
+- 8bfd5e3 ast: `AssignmentTargetMaybeDefault::identifier` preserve lifetime (#10720) (overlookmotel)
+- 61d825b ast/estree: Rename `assert` to `with` in `TSImportType` `options` in TS-ESTree AST (#10681) (overlookmotel)
+
+### Refactor
+
+- 050ecd9 ast/estree: Remove custom serializer for `TSMappedTypeModifierOperator` (#10747) (overlookmotel)
+
+### Styling
+
+- c18c81f ast: Import `Display` trait (#10724) (overlookmotel)
+
 ## [0.67.0] - 2025-04-27
 
 ### Bug Fixes

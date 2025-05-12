@@ -34,7 +34,7 @@ use super::{inherit_variants, js::*, literal::*};
 #[estree(
     rename = "Identifier",
     add_fields(name = This, decorators = EmptyArray, optional = False),
-    field_order(span, name, type_annotation, decorators, optional),
+    field_order(span, name, decorators, optional, type_annotation),
 )]
 pub struct TSThisParameter<'a> {
     pub span: Span,
@@ -490,7 +490,8 @@ pub struct TSTupleType<'a> {
 /// ## Example
 /// ```ts
 /// type Foo = [first: string, second: number];
-/// //          ^^^^^^^^^^^^^
+/// //          ^^^^^^^^^^^^^ TSNamedTupleMember
+/// //    label ^^^^^  ^^^^^^ element_type
 /// ```
 ///
 /// ## Reference
@@ -500,8 +501,8 @@ pub struct TSTupleType<'a> {
 #[generate_derive(CloneIn, Dummy, TakeIn, GetSpan, GetSpanMut, ContentEq, ESTree)]
 pub struct TSNamedTupleMember<'a> {
     pub span: Span,
-    pub element_type: TSTupleElement<'a>,
     pub label: IdentifierName<'a>,
+    pub element_type: TSTupleElement<'a>,
     pub optional: bool,
 }
 
@@ -1080,7 +1081,11 @@ pub struct TSConstructSignatureDeclaration<'a> {
 #[ast(visit)]
 #[derive(Debug)]
 #[generate_derive(CloneIn, Dummy, TakeIn, GetSpan, GetSpanMut, ContentEq, ESTree)]
-#[estree(rename = "Identifier", add_fields(decorators = EmptyArray, optional = False))]
+#[estree(
+    rename = "Identifier",
+    add_fields(decorators = EmptyArray, optional = False),
+    field_order(span, name, decorators, optional, type_annotation),
+)]
 pub struct TSIndexSignatureName<'a> {
     pub span: Span,
     #[estree(json_safe)]
@@ -1262,9 +1267,8 @@ pub enum TSModuleDeclarationBody<'a> {
 #[generate_derive(CloneIn, Dummy, TakeIn, GetSpan, GetSpanMut, ContentEq, ESTree)]
 pub struct TSModuleBlock<'a> {
     pub span: Span,
-    #[estree(rename = "body")]
+    #[estree(prepend_to = body)]
     pub directives: Vec<'a, Directive<'a>>,
-    #[estree(append_to = "directives")]
     pub body: Vec<'a, Statement<'a>>,
 }
 
@@ -1333,14 +1337,22 @@ pub enum TSTypeQueryExprName<'a> {
 }
 }
 
-/// `type foo = import('foo')`
+/// `import('foo')` in `type Foo = import('foo');`
+///
+/// ```ts
+/// //                       ______________ options
+/// type Foo = import('foo', { assert: {} })<T>;
+/// //                ^^^^^ argument        ^^^ type_arguments
+///
+/// type Foo = import('foo').bar;
+/// //                       ^^^ qualifier
+/// ```
 #[ast(visit)]
 #[derive(Debug)]
 #[generate_derive(CloneIn, Dummy, TakeIn, GetSpan, GetSpanMut, ContentEq, ESTree)]
 pub struct TSImportType<'a> {
     pub span: Span,
     pub argument: TSType<'a>,
-    #[estree(via = TSImportTypeOptions)]
     pub options: Option<Box<'a, ObjectExpression<'a>>>,
     pub qualifier: Option<TSTypeName<'a>>,
     pub type_arguments: Option<Box<'a, TSTypeParameterInstantiation<'a>>>,
@@ -1437,41 +1449,42 @@ pub struct TSMappedType<'a> {
     /// ## Examples
     /// ```ts
     /// type Foo = { [P in keyof T]?: T[P] }
-    /// //                         ^^ True
+    /// //                         ^  Some(True)
     /// type Bar = { [P in keyof T]+?: T[P] }
-    /// //                         ^^ Plus
+    /// //                         ^^ Some(Plus)
     /// type Baz = { [P in keyof T]-?: T[P] }
-    /// //                         ^^ Minus
+    /// //                         ^^ Some(Minus)
     /// type Qux = { [P in keyof T]: T[P] }
-    /// //                         ^ None
+    /// //                         ^  None
     /// ```
-    pub optional: TSMappedTypeModifierOperator,
+    #[estree(via = TSMappedTypeOptional)]
+    pub optional: Option<TSMappedTypeModifierOperator>,
     /// Readonly modifier before keyed index signature
     ///
     /// ## Examples
     /// ```ts
-    /// type Foo = { readonly [P in keyof T]: T[P] }  // True
-    /// type Bar = { +readonly [P in keyof T]: T[P] } // Plus
-    /// type Baz = { -readonly [P in keyof T]: T[P] } // Minus
+    /// type Foo = { readonly [P in keyof T]: T[P] }  // Some(True)
+    /// type Bar = { +readonly [P in keyof T]: T[P] } // Some(Plus)
+    /// type Baz = { -readonly [P in keyof T]: T[P] } // Some(Minus)
     /// type Qux = { [P in keyof T]: T[P] }           // None
     /// ```
-    pub readonly: TSMappedTypeModifierOperator,
+    pub readonly: Option<TSMappedTypeModifierOperator>,
     pub scope_id: Cell<Option<ScopeId>>,
 }
 
 #[ast]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[generate_derive(CloneIn, Dummy, ContentEq, ESTree)]
-#[estree(via = TSMappedTypeModifierOperatorConverter)]
 pub enum TSMappedTypeModifierOperator {
     /// e.g. `?` in `{ [P in K]?: T }`
+    #[estree(via = True)]
     True = 0,
     /// e.g. `+?` in `{ [P in K]+?: T }`
+    #[estree(rename = "+")]
     Plus = 1,
     /// e.g. `-?` in `{ [P in K]-?: T }`
+    #[estree(rename = "-")]
     Minus = 2,
-    /// No modifier present
-    None = 3,
 }
 
 /// TypeScript Template Literal Type
@@ -1528,13 +1541,21 @@ pub struct TSSatisfiesExpression<'a> {
     pub type_annotation: TSType<'a>,
 }
 
+/// TypeScript Type Assertion
+///
+/// ## Example
+/// ```ts
+/// //                ___ expression
+/// let foo = <number>bar;
+/// //        ^^^^^^^^ type_annotation
+/// ```
 #[ast(visit)]
 #[derive(Debug)]
 #[generate_derive(CloneIn, Dummy, TakeIn, GetSpan, GetSpanMut, ContentEq, ESTree)]
 pub struct TSTypeAssertion<'a> {
     pub span: Span,
-    pub expression: Expression<'a>,
     pub type_annotation: TSType<'a>,
+    pub expression: Expression<'a>,
 }
 
 #[ast(visit)]

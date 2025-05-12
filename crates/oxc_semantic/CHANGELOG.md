@@ -4,6 +4,36 @@ All notable changes to this package will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project does not adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) until v1.0.0.
 
+## [0.69.0] - 2025-05-09
+
+- 2b5d826 ast: [**BREAKING**] Fix field order for `TSTypeAssertion` (#10906) (overlookmotel)
+
+- 1f35910 ast: [**BREAKING**] Fix field order for `TSNamedTupleMember` (#10905) (overlookmotel)
+
+- 0139793 ast: [**BREAKING**] Re-order fields of `TaggedTemplateExpression` (#10889) (overlookmotel)
+
+- cc2ed21 ast: [**BREAKING**] Fix field order for `JSXElement` and `JSXFragment` (#10881) (overlookmotel)
+
+### Bug Fixes
+
+- 773d0de semantic: Correctly handle nested brackets in jsdoc parsing (#10922) (camc314)
+- b215b6c semantic: Dont parse `@` as jsdoc tags inside `[`/`]` (#10919) (camc314)
+- 6e47699 semantic, syntax: TS value module cannot be referenced as type (#10918) (Dunqing)
+
+### Refactor
+
+- faf0a95 syntax: Rename `NameSpaceModule` to `NamespaceModule` (#10917) (Dunqing)
+
+## [0.68.0] - 2025-05-03
+
+### Bug Fixes
+
+- d1d05d3 parser: Check comma in JSX expr lazily (#10739) (Yuji Sugiura)
+
+### Performance
+
+- 3de1b31 semantic: Reuse `Atom` (#10771) (overlookmotel)
+
 ## [0.67.0] - 2025-04-27
 
 - a2b7e9d semantic: [**BREAKING**] Do not need to return old name in `Scoping::set_symbol_name` (#10613) (Dunqing)

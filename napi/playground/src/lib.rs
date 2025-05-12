@@ -5,6 +5,8 @@ use std::{
     sync::Arc,
 };
 
+use rustc_hash::FxHashMap;
+
 use napi_derive::napi;
 use serde::Serialize;
 
@@ -12,7 +14,7 @@ use oxc::{
     allocator::Allocator,
     ast::ast::Program,
     ast_visit::Visit,
-    codegen::{CodeGenerator, CodegenOptions},
+    codegen::{Codegen, CodegenOptions, LegalComment},
     diagnostics::OxcDiagnostic,
     isolated_declarations::{IsolatedDeclarations, IsolatedDeclarationsOptions},
     minifier::{CompressOptions, MangleOptions, Minifier, MinifierOptions},
@@ -27,7 +29,7 @@ use oxc::{
 };
 use oxc_formatter::{FormatOptions, Formatter};
 use oxc_index::Idx;
-use oxc_linter::{ConfigStoreBuilder, LintOptions, Linter, ModuleRecord};
+use oxc_linter::{ConfigStore, ConfigStoreBuilder, LintOptions, Linter, ModuleRecord};
 use oxc_napi::{Comment, OxcError, convert_utf8_to_utf16};
 
 use crate::options::{OxcOptions, OxcRunOptions};
@@ -169,7 +171,7 @@ impl Oxc {
                     IsolatedDeclarations::new(&allocator, IsolatedDeclarationsOptions::default())
                         .build(&program);
                 if ret.errors.is_empty() {
-                    let codegen_result = CodeGenerator::new()
+                    let codegen_result = Codegen::new()
                         .with_options(CodegenOptions {
                             source_map_path: codegen_options
                                 .enable_sourcemap
@@ -228,10 +230,13 @@ impl Oxc {
             None
         };
 
-        let codegen_result = CodeGenerator::new()
+        let codegen_result = Codegen::new()
             .with_scoping(symbol_table)
             .with_options(CodegenOptions {
                 minify: minifier_options.whitespace.unwrap_or_default(),
+                comments: true,
+                annotation_comments: true,
+                legal_comments: LegalComment::Inline,
                 source_map_path: codegen_options
                     .enable_sourcemap
                     .unwrap_or_default()
@@ -259,9 +264,9 @@ impl Oxc {
                 );
             }
 
-            program.to_pretty_estree_js_json()
+            program.to_pretty_estree_js_json_with_fixes()
         } else {
-            program.to_pretty_estree_ts_json()
+            program.to_pretty_estree_ts_json_with_fixes()
         };
         self.comments = comments;
 
@@ -281,11 +286,11 @@ impl Oxc {
             let semantic = Rc::new(semantic_ret.semantic);
             let lint_config =
                 ConfigStoreBuilder::default().build().expect("Failed to build config store");
-            let linter_ret = Linter::new(LintOptions::default(), lint_config).run(
-                path,
-                Rc::clone(&semantic),
-                Arc::clone(module_record),
-            );
+            let linter_ret = Linter::new(
+                LintOptions::default(),
+                ConfigStore::new(lint_config, FxHashMap::default()),
+            )
+            .run(path, Rc::clone(&semantic), Arc::clone(module_record));
             self.diagnostics.extend(linter_ret.into_iter().map(|e| e.error));
         }
     }

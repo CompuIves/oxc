@@ -1,4 +1,4 @@
-name: CI VSCode
+name: VSCode CI
 
 permissions: {}
 
@@ -21,12 +21,12 @@ on:
       - ".github/workflows/ci_vscode.yml"
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  group: ${{ github.workflow }}-${{ github.ref_name }}-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: ${{ github.ref_name != 'main' }}
 
 jobs:
   lint:
-    name: Lint & Typecheck
+    name: Check VSCode
     runs-on: ubuntu-latest
     steps:
       - uses: taiki-e/checkout-action@b13d20b7cda4e2f325ef19895128f7ff735c0b3d # v1.3.1
@@ -41,7 +41,7 @@ jobs:
         run: pnpm run type-check
 
   test:
-    name: Test
+    name: Test VSCode
     runs-on: ubuntu-latest
     steps:
       - uses: taiki-e/checkout-action@b13d20b7cda4e2f325ef19895128f7ff735c0b3d # v1.3.1

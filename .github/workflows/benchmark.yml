@@ -35,7 +35,7 @@ on:
       - "tasks/benchmark/codspeed/*.mjs"
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  group: ${{ github.workflow }}-${{ github.ref_name }}-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: true
 
 defaults:
@@ -148,7 +148,7 @@ jobs:
           chmod +x ./target/codspeed/instrumentation/oxc_benchmark/*
 
       - name: Install codspeed
-        uses: taiki-e/install-action@ab3728c7ba6948b9b429627f4d55a68842b27f18 # v2.50.3
+        uses: taiki-e/install-action@83254c543806f3224380bf1001d6fac8feaf2d0b # v2.50.10
         with:
           tool: cargo-codspeed
 

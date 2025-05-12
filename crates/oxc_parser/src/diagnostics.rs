@@ -253,6 +253,17 @@ pub fn new_optional_chain(span: Span) -> OxcDiagnostic {
 }
 
 #[cold]
+pub fn invalid_new_optional_chain(span: Span) -> OxcDiagnostic {
+    OxcDiagnostic::error("Invalid optional chain from new expression.").with_label(span)
+}
+
+#[cold]
+pub fn decorator_optional(span: Span) -> OxcDiagnostic {
+    OxcDiagnostic::error("Expression must be enclosed in parentheses to be used as a decorator.")
+        .with_label(span)
+}
+
+#[cold]
 pub fn for_loop_async_of(span: Span) -> OxcDiagnostic {
     OxcDiagnostic::error("The left-hand side of a `for...of` statement may not be `async`")
         .with_label(span)
@@ -427,15 +438,6 @@ pub fn return_statement_only_in_function_body(span: Span) -> OxcDiagnostic {
 }
 
 #[cold]
-pub fn jsx_expressions_may_not_use_the_comma_operator(span: Span) -> OxcDiagnostic {
-    // OxcDiagnostic::error("TS18007: JSX expressions may not use the comma
-    // operator.")
-    ts_error("18007", "JSX expressions may not use the comma operator")
-        .with_help("Did you mean to write an array?")
-        .with_label(span)
-}
-
-#[cold]
 pub fn invalid_identifier_in_using_declaration(span: Span) -> OxcDiagnostic {
     OxcDiagnostic::error("Using declarations may not have binding patterns.").with_label(span)
 }
@@ -566,6 +568,15 @@ pub fn cannot_appear_on_a_parameter(modifier: &Modifier) -> OxcDiagnostic {
 pub fn cannot_appear_on_an_index_signature(modifier: &Modifier) -> OxcDiagnostic {
     ts_error("1071", format!("'{}' modifier cannot appear on an index signature.", modifier.kind))
         .with_label(modifier.span)
+}
+
+/// TS(1243)
+pub fn accessor_modifier(modifier: &Modifier) -> OxcDiagnostic {
+    ts_error(
+        "1243",
+        format!("'accessor' modifier cannot be used with '{}' modifier.", modifier.kind),
+    )
+    .with_label(modifier.span)
 }
 
 /// TS(1354)

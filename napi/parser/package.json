@@ -10,7 +10,7 @@
     "build-wasi": "pnpm run build-dev --release --target wasm32-wasip1-threads",
     "build-npm-dir": "rm -rf npm-dir && napi create-npm-dirs --npm-dir npm-dir && pnpm napi artifacts --npm-dir npm-dir --output-dir .",
     "build-browser-bundle": "node build-browser-bundle.mjs",
-    "test": "pnpm run test-node run && tsc",
+    "test": "tsc && pnpm run test-node run",
     "test-node": "vitest --dir ./test",
     "test-browser": "vitest -c vitest.config.browser.mts",
     "bench": "vitest bench --run ./bench.bench.mjs"
@@ -56,10 +56,11 @@
   "devDependencies": {
     "@codspeed/vitest-plugin": "^4.0.0",
     "@napi-rs/wasm-runtime": "^0.2.7",
-    "@vitest/browser": "3.1.2",
+    "@vitest/browser": "3.1.3",
     "esbuild": "^0.25.0",
     "playwright": "^1.51.0",
-    "vitest": "catalog:"
+    "vitest": "catalog:",
+    "typescript": "catalog:"
   },
   "napi": {
     "binaryName": "parser",
@@ -73,6 +74,7 @@
       "aarch64-unknown-linux-gnu",
       "aarch64-unknown-linux-musl",
       "armv7-unknown-linux-gnueabihf",
+      "armv7-unknown-linux-musleabihf",
       "s390x-unknown-linux-gnu",
       "riscv64gc-unknown-linux-gnu",
       "x86_64-apple-darwin",

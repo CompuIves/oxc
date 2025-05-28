@@ -21,7 +21,9 @@
 
 #![warn(missing_docs)]
 
+mod accessor;
 mod address;
+mod alloc;
 mod allocator;
 mod allocator_api2;
 mod boxed;
@@ -30,17 +32,18 @@ mod convert;
 #[cfg(feature = "from_raw_parts")]
 mod from_raw_parts;
 pub mod hash_map;
-pub mod string;
+mod string_builder;
 mod take_in;
 mod vec;
 mod vec2;
 
+pub use accessor::AllocatorAccessor;
 pub use address::{Address, GetAddress};
 pub use allocator::Allocator;
 pub use boxed::Box;
 pub use clone_in::CloneIn;
 pub use convert::{FromIn, IntoIn};
 pub use hash_map::HashMap;
-pub use string::String;
+pub use string_builder::StringBuilder;
 pub use take_in::{Dummy, TakeIn};
 pub use vec::Vec;

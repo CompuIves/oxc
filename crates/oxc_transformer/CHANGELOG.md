@@ -4,6 +4,54 @@ All notable changes to this package will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project does not adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) until v1.0.0.
 
+## [0.72.0] - 2025-05-24
+
+### Features
+
+- 03390ad allocator: `TakeIn` trait with `AllocatorAccessor` (#11201) (Boshen)
+- 4feeeee span: Add `Atom::from_strs_array_in` method (#11261) (overlookmotel)
+
+### Performance
+
+- 3281e99 transformer/react-refresh: Faster base64 encoding (#11254) (overlookmotel)
+
+### Refactor
+
+- cef5452 allocator: `TakeIn::take_in_box` accept any `AllocatorAccessor` (#11216) (overlookmotel)
+- 202ffd2 transformer: Use `StringBuilder` instead of `String` (#11260) (overlookmotel)
+
+## [0.71.0] - 2025-05-20
+
+- 5d9344f rust: [**BREAKING**] Clippy avoid-breaking-exported-api = false (#11088) (Boshen)
+
+### Bug Fixes
+
+- fcd5ba9 transformer/legacy-decorator: Decorates insertion order is incorrect (#11144) (Dunqing)
+- 468ddf4 transformer/legacy-decorator: Static class fields cannot be accessed in static field initializer when `class-properties` plugin is not enabled (#11143) (Dunqing)
+- 907e114 transformer/optional-chaining: Optional chaining expression isn't being transformed correctly when inside a double call expression (#11179) (Dunqing)
+- d374490 transformer/typescript: Panics when `setPublicClassFields = true` and the class includes private field (#11089) (Dunqing)
+
+### Refactor
+
+
+## [0.70.0] - 2025-05-15
+
+- 4e5c73b span: [**BREAKING**] `SourceType::from_path(".js")` return js instead of jsx (#11038) (Boshen)
+
+### Bug Fixes
+
+- 6c20277 transformer: Always update jsx options from comments (#10966) (magic-akari)
+- 27a21a7 transformer/jsx: Fix parsing JSX pragma comments (#10983) (overlookmotel)
+- a39eb85 transformer/legacy-decorator: Abstract class doesn't work in metadata (#10952) (Dunqing)
+
+### Performance
+
+- 1aed99b transformer/jsx: Use `memchr` for parsing JSX pragma comments (#11001) (overlookmotel)
+
+### Testing
+
+- 6540f44 transformer/jsx: Fix tests for JSX pragma parsing (#11000) (overlookmotel)
+
 ## [0.69.0] - 2025-05-09
 
 - 8a3bba8 ast: [**BREAKING**] Fix field order for `PropertyDefinition` (#10902) (overlookmotel)

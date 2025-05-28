@@ -3,21 +3,21 @@
 
 //! AST node factories
 
-#![expect(clippy::default_trait_access)]
+#![allow(unused_imports)]
+#![expect(
+    clippy::default_trait_access,
+    clippy::inconsistent_struct_constructor,
+    clippy::unused_self
+)]
 
 use std::cell::Cell;
 
 use oxc_allocator::{Allocator, Box, IntoIn, Vec};
-use oxc_syntax::{reference::ReferenceId, scope::ScopeId, symbol::SymbolId};
+use oxc_syntax::{
+    comment_node::CommentNodeId, reference::ReferenceId, scope::ScopeId, symbol::SymbolId,
+};
 
-use crate::ast::*;
-
-/// AST builder for creating AST nodes
-#[derive(Clone, Copy)]
-pub struct AstBuilder<'a> {
-    /// The memory allocator used to allocate AST nodes in the arena.
-    pub allocator: &'a Allocator,
-}
+use crate::{AstBuilder, ast::*};
 
 impl<'a> AstBuilder<'a> {
     /// Build a [`Program`].

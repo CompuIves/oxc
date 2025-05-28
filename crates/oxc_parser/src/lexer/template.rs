@@ -1,6 +1,6 @@
 use std::{cmp::max, str};
 
-use oxc_allocator::String;
+use oxc_allocator::StringBuilder;
 
 use crate::diagnostics;
 
@@ -50,7 +50,7 @@ impl<'a> Lexer<'a> {
                     b'$' => {
                         // SAFETY: Next byte is `$` which is ASCII, so after it is a UTF-8 char boundary
                         let after_dollar = unsafe { pos.add(1) };
-                        if after_dollar.addr() < self.source.end_addr() {
+                        if after_dollar.is_not_end_of(&self.source) {
                             // If `${`, exit.
                             // SAFETY: Have checked there's at least 1 further byte to read.
                             if unsafe { after_dollar.read() } == b'{' {
@@ -118,7 +118,7 @@ impl<'a> Lexer<'a> {
         pos = unsafe { pos.add(1) };
 
         // If at EOF, exit. This illegal in valid JS, so cold branch.
-        if pos.addr() == self.source.end_addr() {
+        if pos.is_end_of(&self.source) {
             return cold_branch(|| {
                 self.source.advance_to_end();
                 self.error(diagnostics::unterminated_string(self.unterminated_range()));
@@ -194,14 +194,14 @@ impl<'a> Lexer<'a> {
     ///
     /// # SAFETY
     /// `pos` must not be before `self.source.position()`
-    unsafe fn template_literal_create_string(&self, pos: SourcePosition<'a>) -> String<'a> {
+    unsafe fn template_literal_create_string(&self, pos: SourcePosition<'a>) -> StringBuilder<'a> {
         // Create arena string to hold modified template literal.
         // We don't know how long template literal will end up being. Take a guess that total length
         // will be double what we've seen so far, or `MIN_ESCAPED_TEMPLATE_LIT_LEN` minimum.
         // SAFETY: Caller guarantees `pos` is not before `self.source.position()`.
         let so_far = unsafe { self.source.str_from_current_to_pos_unchecked(pos) };
         let capacity = max(so_far.len() * 2, MIN_ESCAPED_TEMPLATE_LIT_LEN);
-        let mut str = String::with_capacity_in(capacity, self.allocator);
+        let mut str = StringBuilder::with_capacity_in(capacity, self.allocator);
         str.push_str(so_far);
         str
     }
@@ -212,7 +212,7 @@ impl<'a> Lexer<'a> {
     /// `chunk_start` must not be after `pos`.
     unsafe fn template_literal_escaped(
         &mut self,
-        mut str: String<'a>,
+        mut str: StringBuilder<'a>,
         pos: SourcePosition<'a>,
         mut chunk_start: SourcePosition<'a>,
         mut is_valid_escape_sequence: bool,
@@ -229,7 +229,7 @@ impl<'a> Lexer<'a> {
                 if next_byte == b'$' {
                     // SAFETY: Next byte is `$` which is ASCII, so after it is a UTF-8 char boundary
                     let after_dollar = unsafe {pos.add(1)};
-                    if after_dollar.addr() < self.source.end_addr() {
+                    if after_dollar.is_not_end_of(&self.source) {
                         // If `${`, exit.
                         // SAFETY: Have checked there's at least 1 further byte to read.
                         if unsafe {after_dollar.read()} == b'{' {
@@ -280,7 +280,7 @@ impl<'a> Lexer<'a> {
                             // brought up to `chunk_start` again.
                             chunk_start = unsafe {pos.add(1)};
 
-                            if chunk_start.addr() < self.source.end_addr() {
+                            if chunk_start.is_not_end_of(&self.source) {
                                 // Either `\r` alone or `\r\n` needs to be converted to `\n`.
                                 // SAFETY: Have checked not at EOF.
                                 if unsafe {chunk_start.read()} == b'\n' {
@@ -321,7 +321,7 @@ impl<'a> Lexer<'a> {
 
                             // Start next chunk after escape sequence
                             chunk_start = self.source.position();
-                            assert!(chunk_start.addr() >= after_backslash.addr());
+                            assert!(chunk_start >= after_backslash);
 
                             // Continue search after escape sequence.
                             // NB: `byte_search!` macro increments `pos` when return `true`,
@@ -379,7 +379,7 @@ impl<'a> Lexer<'a> {
             },
         };
 
-        self.save_template_string(is_valid_escape_sequence, str.into_bump_str());
+        self.save_template_string(is_valid_escape_sequence, str.into_str());
 
         ret
     }

@@ -1,5 +1,7 @@
 //! Test cases created by oxc maintainers
 
+use std::path::PathBuf;
+
 use serde_json::json;
 
 use super::NoUnusedVars;
@@ -201,6 +203,24 @@ fn test_vars_self_use() {
         .intentionally_allow_no_fix_tests()
         .with_snapshot_suffix("oxc-vars-self-use")
         .test_and_snapshot();
+}
+
+#[test]
+fn test_vars_self_use_js() {
+    let pass = vec![
+        // https://github.com/oxc-project/oxc/issues/11215
+        "export function promisify() { var fn; function fn() {} return fn; }",
+    ];
+
+    let fail = vec![
+        // https://github.com/oxc-project/oxc/issues/11215
+        "export function promisify() { var fn; function fn() { fn() } }",
+    ];
+
+    Tester::new(NoUnusedVars::NAME, NoUnusedVars::PLUGIN, pass, fail)
+        .change_rule_path_extension("js")
+        .intentionally_allow_no_fix_tests()
+        .test();
 }
 
 #[test]
@@ -1288,6 +1308,43 @@ fn test_report_vars_only_used_as_types() {
     ];
 
     Tester::new(NoUnusedVars::NAME, NoUnusedVars::PLUGIN, pass, fail)
+        .intentionally_allow_no_fix_tests()
+        .test();
+}
+
+#[test]
+fn test_should_run() {
+    let pass = vec![
+        (
+            r#"<script setup lang="ts"> import * as vue from 'vue' </script>"#,
+            None,
+            None,
+            Some(PathBuf::from("src/foo/bar.vue")),
+        ),
+        (
+            r"---
+import Welcome from '../components/Welcome.astro';
+import Layout from '../layouts/Layout.astro';
+---
+<Layout>
+	<Welcome />
+</Layout>",
+            None,
+            None,
+            Some(PathBuf::from("src/foo/bar.astro")),
+        ),
+        (
+            r"<script>
+	            import Nested from './Nested.svelte';
+            </script>
+            <Nested answer={42} />",
+            None,
+            None,
+            Some(PathBuf::from("src/foo/bar.svelte")),
+        ),
+    ];
+
+    Tester::new(NoUnusedVars::NAME, NoUnusedVars::PLUGIN, pass, vec![])
         .intentionally_allow_no_fix_tests()
         .test();
 }

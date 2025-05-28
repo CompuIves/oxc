@@ -5,7 +5,10 @@ use rustc_hash::FxBuildHasher;
 use tokio::sync::{Mutex, RwLock};
 use tower_lsp_server::{
     UriExt,
-    lsp_types::{CodeActionOrCommand, Diagnostic, FileEvent, Range, TextEdit, Uri},
+    lsp_types::{
+        CodeActionOrCommand, Diagnostic, FileEvent, FileSystemWatcher, GlobPattern, OneOf, Range,
+        RelativePattern, TextEdit, Uri, WatchKind,
+    },
 };
 
 use crate::{
@@ -14,7 +17,10 @@ use crate::{
         apply_all_fix_code_action, apply_fix_code_action, ignore_this_line_code_action,
         ignore_this_rule_code_action,
     },
-    linter::{error_with_position::DiagnosticReport, server_linter::ServerLinter},
+    linter::{
+        error_with_position::DiagnosticReport,
+        server_linter::{ServerLinter, normalize_path},
+    },
 };
 
 pub struct WorkspaceWorker {
@@ -48,6 +54,58 @@ impl WorkspaceWorker {
     pub async fn init_linter(&self, options: &Options) {
         *self.options.lock().await = options.clone();
         *self.server_linter.write().await = Some(ServerLinter::new(&self.root_uri, options));
+    }
+
+    // WARNING: start all programs (linter, formatter) before calling this function
+    // each program can tell us customized file watcher patterns
+    pub async fn init_watchers(&self) -> Vec<FileSystemWatcher> {
+        let mut watchers = Vec::new();
+
+        // clone the options to avoid locking the mutex
+        let options = self.options.lock().await;
+        let use_nested_configs = options.use_nested_configs();
+
+        // append the base watcher
+        watchers.push(FileSystemWatcher {
+            glob_pattern: GlobPattern::Relative(RelativePattern {
+                base_uri: OneOf::Right(self.root_uri.clone()),
+                pattern: options
+                    .config_path
+                    .as_ref()
+                    .unwrap_or(&"**/.oxlintrc.json".to_owned())
+                    .to_owned(),
+            }),
+            kind: Some(WatchKind::all()), // created, deleted, changed
+        });
+
+        let Some(root_path) = &self.root_uri.to_file_path() else {
+            return watchers;
+        };
+
+        let Some(extended_paths) =
+            self.server_linter.read().await.as_ref().map(|linter| linter.extended_paths.clone())
+        else {
+            return watchers;
+        };
+
+        for path in &extended_paths {
+            // ignore .oxlintrc.json files when using nested configs
+            if path.ends_with(".oxlintrc.json") && use_nested_configs {
+                continue;
+            }
+
+            let pattern = path.strip_prefix(root_path).unwrap_or(path);
+
+            watchers.push(FileSystemWatcher {
+                glob_pattern: GlobPattern::Relative(RelativePattern {
+                    base_uri: OneOf::Right(self.root_uri.clone()),
+                    pattern: normalize_path(pattern).to_string_lossy().to_string(),
+                }),
+                kind: Some(WatchKind::all()), // created, deleted, changed
+            });
+        }
+
+        watchers
     }
 
     pub async fn needs_init_linter(&self) -> bool {
@@ -222,7 +280,8 @@ impl WorkspaceWorker {
     pub async fn did_change_configuration(
         &self,
         changed_options: &Options,
-    ) -> Option<ConcurrentHashMap<String, Vec<DiagnosticReport>>> {
+    ) -> (Option<ConcurrentHashMap<String, Vec<DiagnosticReport>>>, Option<FileSystemWatcher>) {
+        // clone the current options to avoid locking the mutex
         let current_option = &self.options.lock().await.clone();
 
         debug!(
@@ -237,10 +296,28 @@ impl WorkspaceWorker {
 
         if Self::needs_linter_restart(current_option, changed_options) {
             self.refresh_server_linter().await;
-            return Some(self.revalidate_diagnostics().await);
+
+            if current_option.config_path != changed_options.config_path {
+                return (
+                    Some(self.revalidate_diagnostics().await),
+                    Some(FileSystemWatcher {
+                        glob_pattern: GlobPattern::Relative(RelativePattern {
+                            base_uri: OneOf::Right(self.root_uri.clone()),
+                            pattern: changed_options
+                                .config_path
+                                .as_ref()
+                                .unwrap_or(&"**/.oxlintrc.json".to_string())
+                                .to_owned(),
+                        }),
+                        kind: Some(WatchKind::all()), // created, deleted, changed
+                    }),
+                );
+            }
+
+            return (Some(self.revalidate_diagnostics().await), None);
         }
 
-        None
+        (None, None)
     }
 }
 

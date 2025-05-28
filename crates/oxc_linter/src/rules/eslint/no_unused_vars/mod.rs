@@ -91,7 +91,7 @@ declare_oxc_lint!(
     /// and should not be considered unused. Since ES6 modules are now a TC39
     /// standard, Oxlint does not support this feature.
     ///
-    /// ### Example
+    /// ### Examples
     ///
     /// Examples of **incorrect** code for this rule:
     ///
@@ -215,12 +215,15 @@ impl Rule for NoUnusedVars {
     }
 
     fn should_run(&self, ctx: &ContextHost) -> bool {
-        // ignore .d.ts and vue/svelte files.
+        // ignore .d.ts and vue/svelte/astro files.
         // 1. declarations have side effects (they get merged together)
-        // 2. vue/svelte scripts declare variables that get used in the template, which
+        // 2. vue/svelte/astro scripts declare variables that get used in the template, which
         //    we can't detect
         !ctx.source_type().is_typescript_definition()
-            && !ctx.file_path().extension().is_some_and(|ext| ext == "vue" || ext == "svelte")
+            && !ctx
+                .file_path()
+                .extension()
+                .is_some_and(|ext| ext == "vue" || ext == "svelte" || ext == "astro")
     }
 }
 

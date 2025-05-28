@@ -68,7 +68,7 @@ function requireNative() {
     try {
       nativeBinding = require(process.env.NAPI_RS_NATIVE_LIBRARY_PATH);
     } catch (err) {
-      loadErrors.push(err);
+      loadErrors.push(err)
     }
   } else if (process.platform === 'android') {
     if (process.arch === 'arm64') {
@@ -382,6 +382,7 @@ if (!nativeBinding) {
   throw new Error(`Failed to load native binding`)
 }
 
+module.exports = nativeBinding
 module.exports.ParseResult = nativeBinding.ParseResult
 module.exports.ExportExportNameKind = nativeBinding.ExportExportNameKind
 module.exports.ExportImportNameKind = nativeBinding.ExportImportNameKind
@@ -389,6 +390,7 @@ module.exports.ExportLocalNameKind = nativeBinding.ExportLocalNameKind
 module.exports.getBufferOffset = nativeBinding.getBufferOffset
 module.exports.ImportNameKind = nativeBinding.ImportNameKind
 module.exports.parseAsync = nativeBinding.parseAsync
+module.exports.parseAsyncRaw = nativeBinding.parseAsyncRaw
 module.exports.parseSync = nativeBinding.parseSync
 module.exports.parseSyncRaw = nativeBinding.parseSyncRaw
 module.exports.rawTransferSupported = nativeBinding.rawTransferSupported

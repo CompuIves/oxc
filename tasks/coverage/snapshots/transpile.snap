@@ -1,4 +1,4 @@
-commit: 15392346
+commit: 81c95189
 
 transpile Summary:
 AST Parsed     : 20/20 (100.00%)
@@ -6,7 +6,7 @@ Positive Passed: 19/20 (95.00%)
 Mismatch: tasks/coverage/typescript/tests/cases/transpile/declarationBasicSyntax.ts
 
 
-#### "typescript/tests/cases/transpile/declarationComputedPropertyNames.ts" ####
+#### typescript/tests/cases/transpile/declarationComputedPropertyNames.ts ####
 //// [declarationComputedPropertyNames.ts] ////
 export namespace presentNs {
 	export const a = Symbol();
@@ -103,8 +103,8 @@ export declare class C {
 	["2"]: number;
 }
 export declare const D: {
-	Symbol.iterator: number
-	globalThis.Symbol.toStringTag: number
+	[Symbol.iterator]: number
+	[globalThis.Symbol.toStringTag]: number
 	1: number
 	"2": number
 };
@@ -308,7 +308,7 @@ export {};
  6 | 
    `----
 
-#### "typescript/tests/cases/transpile/declarationFunctionDeclarations.ts" ####
+#### typescript/tests/cases/transpile/declarationFunctionDeclarations.ts ####
 //// [fnDecl.ts] ////
 type T = number[];
 export function fnDeclBasic1(p: number[] | string[] | [T] = [], rParam: string): void {}

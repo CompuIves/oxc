@@ -12,7 +12,10 @@ use crate::{
 impl<'a> ParserImpl<'a> {
     pub(crate) fn parse_let(&mut self, stmt_ctx: StatementContext) -> Statement<'a> {
         let span = self.start_span();
-        let peeked = self.peek_kind();
+        let checkpoint = self.checkpoint();
+        self.bump_any();
+        let peeked = self.cur_kind();
+        self.rewind(checkpoint);
         // let = foo, let instanceof x, let + 1
         if peeked.is_assignment_operator() || peeked.is_binary_operator() {
             let expr = self.parse_assignment_expression_or_higher();
@@ -29,6 +32,20 @@ impl<'a> ParserImpl<'a> {
             self.parse_expression_statement(span, expr)
         } else {
             self.parse_variable_statement(stmt_ctx)
+        }
+    }
+
+    pub(crate) fn is_using_statement(&mut self) -> bool {
+        self.lookahead(Self::is_next_token_using_keyword_then_binding_identifier)
+    }
+
+    fn is_next_token_using_keyword_then_binding_identifier(&mut self) -> bool {
+        self.bump_any();
+        if self.at(Kind::Using) && !self.cur_token().is_on_new_line() {
+            self.bump_any();
+            self.cur_kind().is_binding_identifier() && !self.cur_token().is_on_new_line()
+        } else {
+            false
         }
     }
 
@@ -97,7 +114,7 @@ impl<'a> ParserImpl<'a> {
                 && self.at(Kind::Bang)
                 && !self.cur_token().is_on_new_line()
             {
-                self.eat(Kind::Bang);
+                self.bump(Kind::Bang);
                 definite = true;
             }
             let optional = self.eat(Kind::Question); // not allowed, but checked in checker/typescript.rs

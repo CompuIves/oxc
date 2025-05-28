@@ -14,6 +14,7 @@ fn cases() {
     test_same(
         "class Foo {\n\t#name: string;\n\tf() {\n\t\t#name in other && this.#name === other.#name;\n\t}\n}\n",
     );
+    test_same("class B {\n\tconstructor(override readonly a: number) {}\n}\n");
 }
 
 #[test]
@@ -118,6 +119,12 @@ export { default as name16 } from "module-name";
 import a = require("a");
 export import b = require("b");
 "#,
+        "class C {
+  static
+  static
+  static
+  bar() {}
+}",
     ];
 
     snapshot("ts", &cases);

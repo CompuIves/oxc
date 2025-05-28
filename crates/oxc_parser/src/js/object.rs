@@ -13,15 +13,14 @@ impl<'a> ParserImpl<'a> {
     pub(crate) fn parse_object_expression(&mut self) -> Box<'a, ObjectExpression<'a>> {
         let span = self.start_span();
         self.expect(Kind::LCurly);
-        let object_expression_properties = self.context(Context::In, Context::empty(), |p| {
+        let (object_expression_properties, _) = self.context(Context::In, Context::empty(), |p| {
             p.parse_delimited_list(
                 Kind::RCurly,
                 Kind::Comma,
-                /* trailing_separator */ false,
                 Self::parse_object_expression_property,
             )
         });
-        self.eat(Kind::Comma); // Trailing Comma
+        self.bump(Kind::Comma); // Trailing Comma
         self.expect(Kind::RCurly);
         self.ast.alloc_object_expression(self.end_span(span), object_expression_properties)
     }
@@ -35,8 +34,12 @@ impl<'a> ParserImpl<'a> {
 
     /// `PropertyDefinition`[Yield, Await]
     pub(crate) fn parse_property_definition(&mut self) -> Box<'a, ObjectProperty<'a>> {
-        let peek_kind = self.peek_kind();
+        let checkpoint = self.checkpoint();
+        self.bump_any();
+        let peek_kind = self.cur_kind();
+        let peek_token = self.cur_token();
         let class_element_name = peek_kind.is_class_element_name_start();
+        self.rewind(checkpoint);
         match self.cur_kind() {
             // get ClassElementName
             Kind::Get if class_element_name => self.parse_method_getter(),
@@ -46,7 +49,7 @@ impl<'a> ParserImpl<'a> {
             // AsyncGeneratorMethod
             Kind::Async
                 if (class_element_name || peek_kind == Kind::Star)
-                    && !self.peek_token().is_on_new_line() =>
+                    && !peek_token.is_on_new_line() =>
             {
                 self.parse_property_definition_method()
             }

@@ -231,10 +231,12 @@ enum GlobResult {
 
 declare_oxc_lint!(
     /// ### What it does
+    ///
     /// This rule allows you to specify imports that you don’t want to use in your application.
     /// It applies to static imports only, not dynamic ones.
     ///
     /// ### Why is this bad?
+    ///
     /// Some imports might not make sense in a particular environment.
     /// For example, Node.js’ fs module would not make sense in an environment that didn’t have a file system.
     ///
@@ -993,7 +995,13 @@ impl NoRestrictedImports {
 
         for (source, requests) in &module_record.requested_modules {
             for request in requests {
-                if request.is_import && module_record.import_entries.is_empty() {
+                if request.is_import
+                    && (module_record.import_entries.is_empty()
+                        || module_record
+                            .import_entries
+                            .iter()
+                            .all(|entry| entry.statement_span != request.statement_span))
+                {
                     side_effect_import_map.entry(source).or_default().push(request.statement_span);
                 }
             }
@@ -1009,6 +1017,33 @@ impl NoRestrictedImports {
                     if let Some(span) = spans.first() {
                         ctx.diagnostic(diagnostic_path(*span, path.message.clone(), source));
                     }
+                }
+            }
+        }
+
+        for (source, spans) in &side_effect_import_map {
+            let mut whitelist_found = false;
+            let mut err = None;
+            for pattern in &self.patterns {
+                match pattern.get_group_glob_result(source) {
+                    GlobResult::Whitelist => {
+                        whitelist_found = true;
+                        break;
+                    }
+                    GlobResult::Found => {
+                        err = Some(get_diagnostic_from_import_name_result_pattern(
+                            spans[0],
+                            source,
+                            &ImportNameResult::GeneralDisallowed,
+                            pattern,
+                        ));
+                    }
+                    GlobResult::None => {}
+                }
+            }
+            if !whitelist_found {
+                if let Some(err) = err {
+                    ctx.diagnostic(err);
                 }
             }
         }
@@ -1260,14 +1295,14 @@ fn get_diagnostic_from_import_name_result_path(
         },
         ImportNameResult::NameDisallowed(name_span) => match &path.allow_import_names {
             Some(allow_import_names) => diagnostic_allowed_import_name(
-                name_span.clone().span(),
+                name_span.span,
                 path.message.clone(),
                 name_span.name(),
                 source,
                 allow_import_names.join(", ").as_str(),
             ),
             _ => diagnostic_import_name(
-                name_span.clone().span(),
+                name_span.span,
                 path.message.clone(),
                 name_span.name(),
                 source,
@@ -1328,7 +1363,7 @@ fn get_diagnostic_from_import_name_result_pattern(
         }
         ImportNameResult::NameDisallowed(name_span) => match &pattern.allow_import_names {
             Some(allow_import_names) => diagnostic_allowed_import_name(
-                name_span.clone().span(),
+                name_span.span,
                 pattern.message.clone(),
                 name_span.name(),
                 source,
@@ -1336,14 +1371,14 @@ fn get_diagnostic_from_import_name_result_pattern(
             ),
             _ => match &pattern.allow_import_name_pattern {
                 Some(allow_import_name_pattern) => diagnostic_allowed_import_name_pattern(
-                    name_span.clone().span(),
+                    name_span.span,
                     pattern.message.clone(),
                     name_span.name(),
                     source,
                     allow_import_name_pattern.as_str(),
                 ),
                 _ => diagnostic_pattern_and_import_name(
-                    name_span.clone().span(),
+                    name_span.span,
                     pattern.message.clone(),
                     name_span.name(),
                     source,
@@ -3026,6 +3061,19 @@ fn test() {
         //         }]
         //     }])),
         // ),
+        (
+            r"import 'foo'; import {a} from 'b'",
+            Some(
+                serde_json::json!([{ "paths": [{ "name": "foo", "message": "foo is forbidden, use bar instead" }] }]),
+            ),
+        ),
+        // https://github.com/oxc-project/oxc/issues/10984
+        (
+            r"import 'foo'",
+            Some(
+                serde_json::json!([{ "patterns": [{ "group": ["foo"], "message": "foo is forbidden, use bar instead" }] }]),
+            ),
+        ),
     ];
 
     let fail_typescript = vec![

@@ -136,13 +136,10 @@ impl<'a> Transformer<'a> {
                 .proposals
                 .explicit_resource_management
                 .then(|| ExplicitResourceManagement::new(&self.ctx)),
-            x0_typescript: program.source_type.is_typescript().then(|| {
-                TypeScript::new(
-                    &self.typescript,
-                    self.env.es2022.class_properties.is_some(),
-                    &self.ctx,
-                )
-            }),
+            x0_typescript: program
+                .source_type
+                .is_typescript()
+                .then(|| TypeScript::new(&self.typescript, &self.ctx)),
             x1_jsx: Jsx::new(self.jsx, self.env.es2018.object_rest_spread, ast_builder, &self.ctx),
             x2_es2022: ES2022::new(
                 self.env.es2022,
@@ -531,7 +528,7 @@ impl<'a> Traverse<'a> for TransformerImpl<'a, '_> {
                 let Statement::ExpressionStatement(expr_stmt) = stmt else {
                     continue;
                 };
-                let expression = Some(expr_stmt.expression.take_in(ctx.ast.allocator));
+                let expression = Some(expr_stmt.expression.take_in(ctx.ast));
                 *stmt = ctx.ast.statement_return(SPAN, expression);
                 return;
             }

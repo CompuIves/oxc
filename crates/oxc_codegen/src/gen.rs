@@ -739,7 +739,9 @@ impl Gen for FunctionBody<'_> {
         let span_end = self.span.end;
         let comments_at_end = if span_end > 0 { p.get_comments(span_end - 1) } else { None };
         let single_line = if self.is_empty() {
-            comments_at_end.as_ref().is_none_or(|comments| comments.iter().all(|c| c.is_block()))
+            comments_at_end.as_ref().is_none_or(|comments| {
+                comments.iter().all(|c| !c.preceded_by_newline() && !c.followed_by_newline())
+            })
         } else {
             false
         };
@@ -764,6 +766,11 @@ impl Gen for FormalParameter<'_> {
         if let Some(accessibility) = self.accessibility {
             p.print_space_before_identifier();
             p.print_str(accessibility.as_str());
+            p.print_soft_space();
+        }
+        if self.r#override {
+            p.print_space_before_identifier();
+            p.print_str("override");
             p.print_soft_space();
         }
         if self.readonly {
@@ -3488,7 +3495,8 @@ impl Gen for TSIndexSignature<'_> {
         p.print_str("[");
         for (index, parameter) in self.parameters.iter().enumerate() {
             if index != 0 {
-                p.print_str(" | ");
+                p.print_str(",");
+                p.print_soft_space();
             }
             p.print_str(parameter.name.as_str());
             p.print_colon();

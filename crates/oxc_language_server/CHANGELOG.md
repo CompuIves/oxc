@@ -4,6 +4,46 @@ All notable changes to this package will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project does not adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) until v1.0.0.
 
+## [0.16.12] - 2025-05-25
+
+- 5d9344f rust: [**BREAKING**] Clippy avoid-breaking-exported-api = false (#11088) (Boshen)
+
+### Features
+
+- 0c1f382 language_server: Watch for files inside `.oxlintrc.json` extends (#11226) (Sysix)
+- 1675b2c language_server: Tell clients to watch for .oxlintrc.json files (#11078) (Sysix)
+
+### Bug Fixes
+
+- 0df5147 language_server: Correctly disable nested config search (#11173) (Sysix)
+
+### Refactor
+
+- 0d192e8 language_server: Introduce `ServerLinter.extended_paths` property (#11223) (Sysix)
+- ff8f519 language_server: Restructure `initialized` function (#11077) (Sysix)
+- 6b68de0 language_server: Add intern capability for `didChangeWatchedFiles.dynamicRegistration` (#11075) (Sysix)
+- 35761ae language_server/editor: Refresh file watchers without restarting the server (didChangeConfiguration) (#11112) (Sysix)
+- d5fdf17 language_server/editor: Refresh file watchers without restarting the server (didChangeWorkspaceFolders) (#11094) (Sysix)
+- 9f3a14a linter: Cleanup diagnostic and docs for `eslint/no-console` (#11101) (Ulrich Stark)
+
+## [0.16.11] - 2025-05-16
+
+### Features
+
+- 078bf0b language_server: Better fallback handling when passing invalid `Options` values (#10930) (Sysix)
+- be7f7e1 language_server/editor: Support multi workspace folders (#10875) (Sysix)
+
+### Bug Fixes
+
+- 89cc21b language_server: Normalize oxlintrc config path (#10982) (Sysix)
+- 39063ce linter: Reword diagnostic message for no-control-regex (#10993) (camc314)
+
+### Refactor
+
+- 3cc1466 language_server: New configuration structure for `initialize` and `workspace/didChangeConfiguration` (#10890) (Sysix)
+- bd2ef7d language_server: Use `Arc` for `diagnostic_report_map` (#10940) (Sysix)
+- bb999a3 language_server: Avoid cloning linter by taking reference in LintService (#10907) (Ulrich Stark)
+
 ## [0.16.10] - 2025-05-09
 
 ### Features

@@ -219,6 +219,7 @@ static SOURCE_PATHS: &[&str] = &[
     "crates/oxc_ast/src/serialize/jsx.rs",
     "crates/oxc_ast/src/serialize/ts.rs",
     "crates/oxc_syntax/src/lib.rs",
+    "crates/oxc_syntax/src/comment_node.rs",
     "crates/oxc_syntax/src/module_record.rs",
     "crates/oxc_syntax/src/number.rs",
     "crates/oxc_syntax/src/operator.rs",
@@ -389,15 +390,16 @@ fn generate_proc_macro() -> RawOutput {
         use quote::quote;
 
         ///@@line_break
-        pub fn get_trait_crate_and_generics(trait_name: &str) -> (TokenStream, TokenStream) {
-            match trait_name {
+        pub fn get_trait_crate_and_generics(trait_name: &str) -> Option<(TokenStream, TokenStream)> {
+            let res = match trait_name {
                 #(#match_arms,)*
-                _ => panic!("Invalid derive trait(generate_derive): {trait_name}"),
-            }
+                _ => return None,
+            };
+            Some(res)
         }
     };
 
-    Output::Rust { path: output_path(AST_MACROS_CRATE_PATH, "mod.rs"), tokens: output }
+    Output::Rust { path: output_path(AST_MACROS_CRATE_PATH, "derived_traits.rs"), tokens: output }
         .into_raw(file!())
 }
 

@@ -11,6 +11,7 @@ mod import {
     pub mod default;
     pub mod export;
     pub mod exports_last;
+    pub mod extensions;
     pub mod first;
     pub mod group_exports;
     pub mod max_dependencies;
@@ -93,6 +94,7 @@ mod eslint {
     pub mod no_eval;
     pub mod no_ex_assign;
     pub mod no_extend_native;
+    pub mod no_extra_bind;
     pub mod no_extra_boolean_cast;
     pub mod no_extra_label;
     pub mod no_fallthrough;
@@ -351,7 +353,6 @@ mod unicorn {
     pub mod no_console_spaces;
     pub mod no_document_cookie;
     pub mod no_empty_file;
-    pub mod no_for_loop;
     pub mod no_hex_escape;
     pub mod no_instanceof_array;
     pub mod no_instanceof_builtins;
@@ -592,6 +593,7 @@ oxc_macros::declare_all_lint_rules! {
     eslint::max_nested_callbacks,
     eslint::max_params,
     eslint::new_cap,
+    eslint::no_extra_bind,
     eslint::no_alert,
     eslint::no_array_constructor,
     eslint::no_async_promise_executor,
@@ -718,6 +720,7 @@ oxc_macros::declare_all_lint_rules! {
     import::default,
     import::export,
     import::exports_last,
+    import::extensions,
     import::first,
     import::group_exports,
     import::no_unassigned_import,
@@ -995,7 +998,6 @@ oxc_macros::declare_all_lint_rules! {
     unicorn::no_instanceof_builtins,
     unicorn::no_array_method_this_argument,
     unicorn::no_unnecessary_array_flat_depth,
-    unicorn::no_for_loop,
     unicorn::no_unnecessary_slice_end,
     unicorn::no_accessor_recursion,
     unicorn::no_invalid_fetch_options,

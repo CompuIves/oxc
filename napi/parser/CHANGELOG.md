@@ -2,7 +2,135 @@
 
 All notable changes to this package will be documented in this file.
 
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0).
+
+## [0.73.0] - 2025-06-13
+
+### 💥 BREAKING CHANGES
+
+- f3eaefb ast: [**BREAKING**] Add `value` field to `BigIntLiteral` (#11564) (overlookmotel)
+
+### 🚀 Features
+
+- 5860195 napi/parser: Improved `console.log` output for lazy deserialized AST (#11642) (overlookmotel)
+- 5a55a58 napi/parser: Add lazy deserialization (#11595) (overlookmotel)
+- 120b00f napi/parser: Support old versions of NodeJS (#11596) (overlookmotel)
+
+### 🐛 Bug Fixes
+
+- 931fc73 napi/parser: Cache nodes in lazy deserialization (#11637) (overlookmotel)
+
+### 🚜 Refactor
+
+- ff7111c napi/parser: Use "construct" instead of "deserialize" in lazy deserializer (#11616) (overlookmotel)
+- 95ee174 napi/parser: Move raw transfer code into separate directory (#11583) (overlookmotel)
+- 8e74e05 ast/estree: Remove dead code from generated raw transfer deserializer (#11579) (overlookmotel)
+
+### ⚡ Performance
+
+- 5271951 napi/parser: Remove function calls from lazy deserialization (#11615) (overlookmotel)
+- 7c66637 napi/parser: Re-use `TypedArray` objects in raw transfer (#11585) (overlookmotel)
+
+### 🧪 Testing
+
+- 8cab72f napi/parser: Env var to run lazy deserialization tests (#11636) (overlookmotel)
+- 8ad3061 napi/parser: Run raw transfer tests on multiple threads (#11611) (overlookmotel)
+- c0027e0 ast/estree: Benchmark raw transfer deserialization in isolation (#11584) (overlookmotel)
+
+
+## [0.73.0] - 2025-06-13
+
+### 💥 BREAKING CHANGES
+
+- f3eaefb ast: [**BREAKING**] Add `value` field to `BigIntLiteral` (#11564) (overlookmotel)
+
+### 🚀 Features
+
+- 5860195 napi/parser: Improved `console.log` output for lazy deserialized AST (#11642) (overlookmotel)
+- 5a55a58 napi/parser: Add lazy deserialization (#11595) (overlookmotel)
+- 120b00f napi/parser: Support old versions of NodeJS (#11596) (overlookmotel)
+
+### 🐛 Bug Fixes
+
+- 931fc73 napi/parser: Cache nodes in lazy deserialization (#11637) (overlookmotel)
+
+### 🚜 Refactor
+
+- ff7111c napi/parser: Use "construct" instead of "deserialize" in lazy deserializer (#11616) (overlookmotel)
+- 95ee174 napi/parser: Move raw transfer code into separate directory (#11583) (overlookmotel)
+- 8e74e05 ast/estree: Remove dead code from generated raw transfer deserializer (#11579) (overlookmotel)
+
+### ⚡ Performance
+
+- 5271951 napi/parser: Remove function calls from lazy deserialization (#11615) (overlookmotel)
+- 7c66637 napi/parser: Re-use `TypedArray` objects in raw transfer (#11585) (overlookmotel)
+
+### 🧪 Testing
+
+- 8cab72f napi/parser: Env var to run lazy deserialization tests (#11636) (overlookmotel)
+- 8ad3061 napi/parser: Run raw transfer tests on multiple threads (#11611) (overlookmotel)
+- c0027e0 ast/estree: Benchmark raw transfer deserialization in isolation (#11584) (overlookmotel)
+
+
+# Changelog
+
+All notable changes to this package will be documented in this file.
+
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project does not adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) until v1.0.0.
+
+## [0.72.3] - 2025-06-06
+
+### Bug Fixes
+
+- 8451bee ast/estree: Remove repeat fields from `BindingPattern` in TS-ESTree AST (#11500) (overlookmotel)
+- 5c32b7c ast/estree: Make error objects via raw transfer match standard transfer (#11481) (overlookmotel)
+- 953e61b ast/estree: Fix field order of `PropertyKey` constructor in raw transfer TS-ESTree AST (#11463) (overlookmotel)
+- ec4fc83 estree: Use consistent field order in serialization (#11385) (Yuji Sugiura)
+- ab0dd29 napi: Napi build cache problem (#11479) (LongYinan)
+
+### Testing
+
+- 97aa9cc ast/estree: Remove test skip list for TS raw transfer tests (#11478) (overlookmotel)
+- 75e241c ast/estree: Test raw transfer on TS-ESTree (#11476) (overlookmotel)
+
+## [0.72.3] - 2025-06-06
+
+### Bug Fixes
+
+- 8451bee ast/estree: Remove repeat fields from `BindingPattern` in TS-ESTree AST (#11500) (overlookmotel)
+- 5c32b7c ast/estree: Make error objects via raw transfer match standard transfer (#11481) (overlookmotel)
+- 953e61b ast/estree: Fix field order of `PropertyKey` constructor in raw transfer TS-ESTree AST (#11463) (overlookmotel)
+- ec4fc83 estree: Use consistent field order in serialization (#11385) (Yuji Sugiura)
+- ab0dd29 napi: Napi build cache problem (#11479) (LongYinan)
+
+### Testing
+
+- 97aa9cc ast/estree: Remove test skip list for TS raw transfer tests (#11478) (overlookmotel)
+- 75e241c ast/estree: Test raw transfer on TS-ESTree (#11476) (overlookmotel)
+
+## [0.72.2] - 2025-05-31
+
+### Features
+
+- 1df6732 ast/estree: Add decorators to ESTree AST (#11393) (overlookmotel)
+
+### Refactor
+
+- 12690a1 ast/estree: Re-order fields in visitation order (#11362) (overlookmotel)
+- 75ee3a5 ast/estree: Do not put TS struct fields last (#11360) (overlookmotel)
+- 1d1ebd6 ast_tools/estree: Order `type` and `span` fields first by default (#11361) (overlookmotel)
+
+## [0.72.2] - 2025-05-31
+
+### Features
+
+- 1df6732 ast/estree: Add decorators to ESTree AST (#11393) (overlookmotel)
+
+### Refactor
+
+- 12690a1 ast/estree: Re-order fields in visitation order (#11362) (overlookmotel)
+- 75ee3a5 ast/estree: Do not put TS struct fields last (#11360) (overlookmotel)
+- 1d1ebd6 ast_tools/estree: Order `type` and `span` fields first by default (#11361) (overlookmotel)
 
 ## [0.72.1] - 2025-05-28
 

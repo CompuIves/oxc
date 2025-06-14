@@ -4,6 +4,62 @@ All notable changes to this package will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project does not adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) until v1.0.0.
 
+## [0.72.3] - 2025-06-06
+
+### Features
+
+- d2da854 parser: Produce syntax error for `satisfies` and `as` in js files (#11502) (Boshen)
+- cd063d1 parser: Produce syntax error for decorators on overload (#11496) (Boshen)
+- 458c372 parser: Produce syntax error for decorators in incorrect places (#11491) (Boshen)
+- 7e88451 parser: Syntax errors for decorators appearing in conflicting places (#11482) (Boshen)
+
+### Bug Fixes
+
+- 392752f parser: Handle `import {type as as}` correctly (#11488) (camchenry)
+- be3bd8c parser: Fix panic while parsing `async await => {}` in module (#11493) (Boshen)
+- e291191 parser: Fix panic when parsing `export import` (#11473) (Boshen)
+- f729734 parser: Fix decorator placed incorrectly in initializers (#11461) (Boshen)
+
+### Performance
+
+- 7a5295d parser: Skip `try_parse` when current token is not an identifier (#11475) (leaysgur)
+- 25167f2 parser: Parse ts type signature without rewind (#11443) (Boshen)
+- 2e5a243 parser: Rewrite parse object literal element to avoid rewind (#11431) (Boshen)
+- b776847 parser: Parse `async function` without rewind (#11427) (Boshen)
+- dc110f5 parser: Parse binding list without token peek (#11423) (Boshen)
+- 2953a07 parser: Parse `<` without token peek (#11422) (Boshen)
+- 6203181 parser: Parse jsx open fragment without token peek (#11421) (Boshen)
+- 767e759 parser: Import `import` statement without token peak (#11420) (Boshen)
+- e41f85c parser: Optimize around `eat_decorators` (#11416) (Ulrich Stark)
+- d79cac1 parser: Parse `const` declaration without token peek (#11419) (Boshen)
+- b1d8d98 parser: Parse `let` declaration without token peek (#11413) (Boshen)
+- eaf19ed parser: Optimize around `parse_type_arguments_in_expression` (#11417) (Ulrich Stark)
+
+### Refactor
+
+- bf974da parser: Remove lookahead for parsing import declarations and specifiers (#11381) (camchenry)
+- 333b801 parser: Reduce backtracking during postfix type parsing (#11432) (therewillbecode)
+- a3e1585 parser: Reduce backtracking for literal type node parsing (#11426) (therewillbecode)
+- ed57fa3 parser: Reduce backtracking for assertion signature parsing (#11424) (therewillbecode)
+
+## [0.72.2] - 2025-05-31
+
+### Bug Fixes
+
+- daaa8f5 parser: Correctly parse decorators of property declaration (#11370) (magic-akari)
+
+### Performance
+
+- 24aba18 parser: Avoid checkpoint when parsing left curly in jsx (#11377) (Ulrich Stark)
+- 1bdeed2 parser: Remove lexer lookahead (#11349) (Boshen)
+
+### Refactor
+
+- 996194a parser: Remove unnecessary Tristate and checks (#11404) (Ulrich Stark)
+- cd3ed4d parser: Replace `at` and `bump` combinations with `eat` (#11390) (Ulrich Stark)
+- 4c49274 parser: Rewrite import/export specifier parsing (#11356) (camchenry)
+- bfaa443 parser: Consolidate export type `lookahead()` calls (#11341) (leaysgur)
+
 ## [0.72.1] - 2025-05-28
 
 ### Performance

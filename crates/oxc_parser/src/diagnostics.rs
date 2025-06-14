@@ -217,8 +217,9 @@ pub fn spread_last_element(span: Span) -> OxcDiagnostic {
 }
 
 #[cold]
-pub fn binding_rest_element_trailing_comma(span: Span) -> OxcDiagnostic {
-    OxcDiagnostic::error("Unexpected trailing comma after rest element").with_label(span)
+pub fn rest_element_trailing_comma(span: Span) -> OxcDiagnostic {
+    OxcDiagnostic::error("A rest parameter or binding pattern may not have a trailing comma.")
+        .with_label(span)
 }
 
 #[cold]
@@ -323,6 +324,11 @@ pub fn identifier_async(x0: &str, span1: Span) -> OxcDiagnostic {
 pub fn identifier_generator(x0: &str, span1: Span) -> OxcDiagnostic {
     OxcDiagnostic::error(format!("Cannot use `{x0}` as an identifier in a generator context"))
         .with_label(span1)
+}
+
+#[cold]
+pub fn identifier_expected(span: Span) -> OxcDiagnostic {
+    OxcDiagnostic::error("Identifier expected.").with_label(span)
 }
 
 #[cold]
@@ -534,7 +540,7 @@ pub fn accessibility_modifier_already_seen(modifier: &Modifier) -> OxcDiagnostic
 
 #[cold]
 pub fn modifier_already_seen(modifier: &Modifier) -> OxcDiagnostic {
-    ts_error("1030", format!("{}' modifier already seen.", modifier.kind))
+    ts_error("1030", format!("'{}' modifier already seen.", modifier.kind))
         .with_label(modifier.span)
         .with_help("Remove the duplicate modifier.")
 }
@@ -614,4 +620,92 @@ pub fn unexpected_exponential(x0: &str, span1: Span) -> OxcDiagnostic {
     OxcDiagnostic::error("Unexpected exponentiation expression")
         .with_help(format!("Wrap {x0} expression in parentheses to enforce operator precedence"))
         .with_label(span1)
+}
+
+#[cold]
+pub fn import_equals_can_only_be_used_in_typescript_files(span: Span) -> OxcDiagnostic {
+    ts_error("8002", "'import ... =' can only be used in TypeScript files.").with_label(span)
+}
+
+#[cold]
+pub fn index_signature_question_mark(span: Span) -> OxcDiagnostic {
+    ts_error("1019", "An index signature parameter cannot have a question mark.").with_label(span)
+}
+
+#[cold]
+pub fn index_signature_type_annotation(span: Span) -> OxcDiagnostic {
+    ts_error("1021", "An index signature must have a type annotation.").with_label(span)
+}
+
+#[cold]
+pub fn unexpected_export(span: Span) -> OxcDiagnostic {
+    OxcDiagnostic::error("Unexpected export.").with_label(span)
+}
+
+#[cold]
+pub fn decorators_in_export_and_class(span: Span) -> OxcDiagnostic {
+    OxcDiagnostic::error("Decorators may not appear after 'export' or 'export default' if they also appear before 'export'.").with_label(span)
+}
+
+#[cold]
+pub fn decorators_are_not_valid_here(span: Span) -> OxcDiagnostic {
+    OxcDiagnostic::error("Decorators are not valid here.").with_label(span)
+}
+
+#[cold]
+pub fn decorator_on_overload(span: Span) -> OxcDiagnostic {
+    ts_error("1249", "A decorator can only decorate a method implementation, not an overload.")
+        .with_label(span)
+}
+
+#[cold]
+pub fn as_in_ts(span: Span) -> OxcDiagnostic {
+    ts_error("8037", "Type assertion expressions can only be used in TypeScript files.")
+        .with_label(span)
+}
+
+#[cold]
+pub fn satisfies_in_ts(span: Span) -> OxcDiagnostic {
+    ts_error("8016", "Type satisfaction expressions can only be used in TypeScript files.")
+        .with_label(span)
+}
+
+#[cold]
+pub fn optional_and_rest_tuple_member(span: Span) -> OxcDiagnostic {
+    ts_error("5085", "A tuple member cannot be both optional and rest.").with_label(span)
+}
+
+#[cold]
+pub fn optional_after_tuple_member_name(span: Span) -> OxcDiagnostic {
+    ts_error("5086", "A labeled tuple element is declared as optional with a question mark after the name and before the colon, rather than after the type.").with_label(span)
+}
+
+#[cold]
+pub fn rest_after_tuple_member_name(span: Span) -> OxcDiagnostic {
+    ts_error("5087", "A labeled tuple element is declared as rest with a '...' before the name, rather than before the type.").with_label(span)
+}
+
+#[cold]
+pub fn parameter_modifiers_in_ts(modifier: &Modifier) -> OxcDiagnostic {
+    ts_error("8012", "Parameter modifiers can only be used in TypeScript files.")
+        .with_label(modifier.span)
+}
+
+#[cold]
+pub fn implementation_in_ambient(span: Span) -> OxcDiagnostic {
+    ts_error("1183", "An implementation cannot be declared in ambient contexts.").with_label(span)
+}
+
+#[cold]
+pub fn interface_implements(span: Span) -> OxcDiagnostic {
+    ts_error("1176", "Interface declaration cannot have 'implements' clause.").with_label(span)
+}
+
+#[cold]
+pub fn interface_extend(span: Span) -> OxcDiagnostic {
+    ts_error(
+        "2499",
+        "An interface can only extend an identifier/qualified-name with optional type arguments.",
+    )
+    .with_label(span)
 }

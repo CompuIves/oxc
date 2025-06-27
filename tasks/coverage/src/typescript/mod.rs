@@ -51,6 +51,10 @@ impl<T: Case> Suite<T> for TypeScriptSuite<T> {
             "unicodeExtendedEscapesInRegularExpressions15.ts",
             "unicodeExtendedEscapesInRegularExpressions16.ts",
             "unicodeExtendedEscapesInRegularExpressions18.ts",
+            // TS18010, but requires JSDoc TS parsing
+            "privateNamesIncompatibleModifiersJs.ts",
+            // Exporting JSDoc types from `.js`
+            "importingExportingTypes.ts",
         ]
         .iter()
         .any(|p| path.to_string_lossy().contains(p));
@@ -75,15 +79,24 @@ pub struct TypeScriptCase {
     pub code: String,
     pub units: Vec<TestUnitData>,
     pub settings: CompilerSettings,
-    error_files: Vec<String>,
+    error_codes: Vec<String>,
     pub result: TestResult,
+}
+
+impl TypeScriptCase {
+    /// Simple check for usage such as `semantic`.
+    /// `should_fail()` will return `true` only if there are still error codes remaining
+    /// after filtering out the not-supported ones.
+    pub fn should_fail_with_any_error_codes(&self) -> bool {
+        !self.error_codes.is_empty()
+    }
 }
 
 impl Case for TypeScriptCase {
     fn new(path: PathBuf, code: String) -> Self {
-        let TestCaseContent { tests, settings, error_files } =
+        let TestCaseContent { tests, settings, error_codes } =
             TestCaseContent::make_units_from_test(&path, &code);
-        Self { path, code, units: tests, settings, error_files, result: TestResult::ToBeRun }
+        Self { path, code, units: tests, settings, error_codes, result: TestResult::ToBeRun }
     }
 
     fn code(&self) -> &str {
@@ -99,7 +112,8 @@ impl Case for TypeScriptCase {
     }
 
     fn should_fail(&self) -> bool {
-        !self.error_files.is_empty()
+        // If there are still error codes to be supported, it should fail
+        self.error_codes.iter().any(|code| !NOT_SUPPORTED_ERROR_CODES.contains(code.as_str()))
     }
 
     fn always_strict(&self) -> bool {
@@ -116,3 +130,20 @@ impl Case for TypeScriptCase {
         self.result = self.evaluate_result(result);
     }
 }
+
+// TODO: Filter out more not-supported error codes here
+static NOT_SUPPORTED_ERROR_CODES: phf::Set<&'static str> = phf::phf_set![
+    "2315",  // Type 'U' is not generic.
+    "18028", // Private identifiers are only available when targeting ECMAScript 2015 and higher.
+    "18033", // Type 'Number' is not assignable to type 'number' as required for computed enum member values.
+    "18035", // Invalid value for 'jsxFragmentFactory'. '234' is not a valid identifier or qualified-name.
+    "18042", // 'Prop' is a type and cannot be imported in JavaScript files. Use 'import("./component").Prop' in a JSDoc type annotation.
+    "18043", // Types cannot appear in export declarations in JavaScript files.
+    "18045", // Properties with the 'accessor' modifier are only available when targeting ECMAScript 2015 and higher.
+    "18046", // 'x' is of type 'unknown'.
+    "18047", // 'x' is possibly 'null'.
+    "18048", // 'x' is possibly 'undefined'.
+    "18049", // 'x' is possibly 'null' or 'undefined'.
+    "18055", // 'A.a' has a string type, but must have syntactically recognizable string syntax when 'isolatedModules' is enabled.
+    "18057", // String literal import and export names are not supported when the '--module' flag is set to 'es2015' or 'es2020'.
+];

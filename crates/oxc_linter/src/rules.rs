@@ -11,6 +11,7 @@ mod import {
     pub mod default;
     pub mod export;
     pub mod exports_last;
+    pub mod extensions;
     pub mod first;
     pub mod group_exports;
     pub mod max_dependencies;
@@ -33,6 +34,7 @@ mod import {
     pub mod no_self_import;
     pub mod no_unassigned_import;
     pub mod no_webpack_loader_syntax;
+    pub mod prefer_default_export;
     pub mod unambiguous;
 }
 
@@ -719,6 +721,7 @@ oxc_macros::declare_all_lint_rules! {
     import::default,
     import::export,
     import::exports_last,
+    import::extensions,
     import::first,
     import::group_exports,
     import::no_unassigned_import,
@@ -741,6 +744,7 @@ oxc_macros::declare_all_lint_rules! {
     import::no_named_as_default_member,
     import::no_self_import,
     import::no_webpack_loader_syntax,
+    import::prefer_default_export,
     import::unambiguous,
     jest::consistent_test_it,
     jest::expect_expect,

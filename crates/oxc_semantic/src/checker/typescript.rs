@@ -144,8 +144,7 @@ pub fn check_ts_module_declaration<'a>(decl: &TSModuleDeclaration<'a>, ctx: &Sem
             AstKind::Program(_) | AstKind::TSModuleBlock(_) | AstKind::TSModuleDeclaration(_) => {
                 break;
             }
-            AstKind::ExportNamedDeclaration(_) | AstKind::ModuleDeclaration(_) => {
-                // export namespace N {}
+            m if m.is_module_declaration() => {
                 // We need to check the parent of the parent
             }
             _ => {
@@ -486,7 +485,7 @@ pub fn check_jsx_expression_container(
     ctx: &SemanticBuilder<'_>,
 ) {
     if matches!(container.expression, JSXExpression::EmptyExpression(_))
-        && matches!(ctx.nodes.parent_kind(ctx.current_node_id), Some(AstKind::JSXAttribute(_)))
+        && matches!(ctx.nodes.parent_kind(ctx.current_node_id), AstKind::JSXAttribute(_))
     {
         ctx.error(invalid_jsx_attribute_value(container.span()));
     }

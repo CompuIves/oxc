@@ -14,8 +14,8 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::{
-    AllowWarnDeny, ConfigStore, ConfigStoreBuilder, LintPlugins, LintService, LintServiceOptions,
-    Linter, Oxlintrc, RuleEnum,
+    AllowWarnDeny, BuiltinLintPlugins, ConfigStore, ConfigStoreBuilder, LintPlugins, LintService,
+    LintServiceOptions, Linter, Oxlintrc, RuleEnum,
     fixer::{FixKind, Fixer},
     options::LintOptions,
     rules::RULES,
@@ -207,7 +207,7 @@ impl RuntimeFileSystem for TesterFileSystem {
         read_to_arena_str(path, allocator)
     }
 
-    fn write_file(&self, _path: &Path, _content: String) -> Result<(), std::io::Error> {
+    fn write_file(&self, _path: &Path, _content: &str) -> Result<(), std::io::Error> {
         panic!("writing file should not be allowed in Tester");
     }
 }
@@ -304,37 +304,37 @@ impl Tester {
     }
 
     pub fn with_import_plugin(mut self, yes: bool) -> Self {
-        self.plugins.set(LintPlugins::IMPORT, yes);
+        self.plugins.builtin.set(BuiltinLintPlugins::IMPORT, yes);
         self
     }
 
     pub fn with_jest_plugin(mut self, yes: bool) -> Self {
-        self.plugins.set(LintPlugins::JEST, yes);
+        self.plugins.builtin.set(BuiltinLintPlugins::JEST, yes);
         self
     }
 
     pub fn with_vitest_plugin(mut self, yes: bool) -> Self {
-        self.plugins.set(LintPlugins::VITEST, yes);
+        self.plugins.builtin.set(BuiltinLintPlugins::VITEST, yes);
         self
     }
 
     pub fn with_jsx_a11y_plugin(mut self, yes: bool) -> Self {
-        self.plugins.set(LintPlugins::JSX_A11Y, yes);
+        self.plugins.builtin.set(BuiltinLintPlugins::JSX_A11Y, yes);
         self
     }
 
     pub fn with_nextjs_plugin(mut self, yes: bool) -> Self {
-        self.plugins.set(LintPlugins::NEXTJS, yes);
+        self.plugins.builtin.set(BuiltinLintPlugins::NEXTJS, yes);
         self
     }
 
     pub fn with_react_perf_plugin(mut self, yes: bool) -> Self {
-        self.plugins.set(LintPlugins::REACT_PERF, yes);
+        self.plugins.builtin.set(BuiltinLintPlugins::REACT_PERF, yes);
         self
     }
 
     pub fn with_node_plugin(mut self, yes: bool) -> Self {
-        self.plugins.set(LintPlugins::NODE, yes);
+        self.plugins.builtin.set(BuiltinLintPlugins::NODE, yes);
         self
     }
 
@@ -507,10 +507,16 @@ impl Tester {
                 eslint_config
                     .map_or_else(ConfigStoreBuilder::empty, |mut v| {
                         v.as_object_mut().unwrap().insert("categories".into(), json!({}));
-                        ConfigStoreBuilder::from_oxlintrc(true, Oxlintrc::deserialize(v).unwrap())
-                            .unwrap()
+                        ConfigStoreBuilder::from_oxlintrc(
+                            true,
+                            Oxlintrc::deserialize(v).unwrap(),
+                            None,
+                        )
+                        .unwrap()
                     })
-                    .with_plugins(self.plugins)
+                    .with_builtin_plugins(
+                        self.plugins.builtin.union(BuiltinLintPlugins::from(self.plugin_name)),
+                    )
                     .with_rule(rule, AllowWarnDeny::Warn)
                     .build(),
                 FxHashMap::default(),

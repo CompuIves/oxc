@@ -1,4 +1,4 @@
-use oxc_ast::AstKind;
+use oxc_ast::{AstKind, ast::AssignmentTarget};
 use oxc_diagnostics::OxcDiagnostic;
 use oxc_macros::declare_oxc_lint;
 use oxc_span::Span;
@@ -62,11 +62,20 @@ impl Rule for PreferDomNodeTextContent {
                 }
 
                 let mut ancestor_kinds = ctx.nodes().ancestor_kinds(node.id()).skip(1);
-                let (Some(parent_node_kind), Some(grand_parent_node_kind)) =
+                let (Some(parent_node_kind), Some(mut grand_parent_node_kind)) =
                     (ancestor_kinds.next(), ancestor_kinds.next())
                 else {
                     return;
                 };
+                if matches!(
+                    grand_parent_node_kind,
+                    AstKind::BindingProperty(_) | AstKind::AssignmentTargetPropertyProperty(_)
+                ) {
+                    grand_parent_node_kind = match ancestor_kinds.next() {
+                        Some(kind) => kind,
+                        None => return,
+                    };
+                }
 
                 if matches!(parent_node_kind, AstKind::PropertyKey(_))
                     && (matches!(grand_parent_node_kind, AstKind::ObjectPattern(_))
@@ -87,19 +96,23 @@ impl Rule for PreferDomNodeTextContent {
                 }
 
                 let mut ancestor_kinds = ctx.nodes().ancestor_kinds(node.id()).skip(1);
-                let (Some(parent_node_kind), Some(grand_parent_node_kind)) =
-                    (ancestor_kinds.next(), ancestor_kinds.next())
-                else {
-                    return;
-                };
+
+                let Some(mut parent_node_kind) = ancestor_kinds.next() else { return };
+                if matches!(parent_node_kind, AstKind::AssignmentTargetPropertyIdentifier(_)) {
+                    let Some(next) = ancestor_kinds.next() else { return };
+                    parent_node_kind = next;
+                }
+                let Some(grand_parent_node_kind) = ancestor_kinds.next() else { return };
 
                 if matches!(
                     parent_node_kind,
                     AstKind::ObjectAssignmentTarget(_)
                         | AstKind::AssignmentTarget(_)
                         | AstKind::SimpleAssignmentTarget(_)
-                ) && matches!(grand_parent_node_kind, AstKind::AssignmentTargetPattern(_))
-                {
+                ) && matches!(
+                    grand_parent_node_kind,
+                    AstKind::AssignmentTarget(AssignmentTarget::ObjectAssignmentTarget(_))
+                ) {
                     ctx.diagnostic(prefer_dom_node_text_content_diagnostic(identifier_ref.span));
                 }
             }
@@ -146,7 +159,7 @@ fn test() {
     ];
 
     // TODO: implement a fixer for destructuring assignment cases
-    let fix = vec![
+    let fix: Vec<(&'static str, &'static str)> = vec![
         ("node.innerText;", "node.textContent;"),
         ("node?.innerText;", "node?.textContent;"),
         ("node.innerText = 'foo';", "node.textContent = 'foo';"),

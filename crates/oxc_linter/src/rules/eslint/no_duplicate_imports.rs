@@ -303,6 +303,14 @@ fn can_merge_imports(
     current_type: &ImportType,
     existing: &[(ImportType, Span, ModuleType)],
 ) -> bool {
+    if *current_type == ImportType::AllButDefault {
+        return false;
+    }
+
+    if *current_type == ImportType::SideEffect {
+        return !existing.is_empty();
+    }
+
     let namespace = existing.iter().find(|(t, _, _)| matches!(t, ImportType::Namespace));
     let named = existing.iter().find(|(t, _, _)| matches!(t, ImportType::Named));
     let default = existing.iter().find(|(t, _, _)| matches!(t, ImportType::Default));
@@ -312,7 +320,13 @@ fn can_merge_imports(
     let has_default = default.is_some();
 
     match current_type {
-        ImportType::Named => has_named,
+        ImportType::Named => {
+            has_named
+                || (has_default
+                    && !namespace.is_some_and(|(_, namespace_span, _)| {
+                        default.unwrap().1 == *namespace_span
+                    }))
+        }
         ImportType::Namespace => {
             if has_named && has_default {
                 if let Some((_, named_span, _)) = named {
@@ -327,8 +341,7 @@ fn can_merge_imports(
             has_namespace || has_default
         }
         ImportType::Default => has_default || has_namespace || has_named,
-        ImportType::SideEffect => !existing.is_empty(),
-        ImportType::AllButDefault => false,
+        _ => unreachable!("other ImportType values should be already checked"),
     }
 }
 
@@ -492,6 +505,21 @@ fn test() {
             // https://github.com/oxc-project/oxc/pull/11320#issuecomment-2912286528
             r#"import type { PriorityDialogCustomClassNames, WeightDialogCustomClassNames } from "./HostEditDialogs";
             import { PriorityDialog, WeightDialog } from "./HostEditDialogs";"#,
+            None,
+        ),
+        (
+            "
+                import b from 'foo';
+                import { a } from 'foo';
+            ",
+            None,
+        ),
+        (
+            "
+                import * as bar from 'foo';
+                import b from 'foo';
+                import { a } from 'foo';
+            ",
             None,
         ),
     ];

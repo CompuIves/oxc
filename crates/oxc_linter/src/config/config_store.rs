@@ -5,9 +5,11 @@ use std::{
 
 use rustc_hash::FxHashMap;
 
-use super::{LintConfig, LintPlugins, categories::OxlintCategories, overrides::OxlintOverrides};
+use super::{
+    BuiltinLintPlugins, LintConfig, categories::OxlintCategories, overrides::OxlintOverrides,
+};
 use crate::{
-    AllowWarnDeny,
+    AllowWarnDeny, LintPlugins,
     rules::{RULES, RuleEnum},
 };
 
@@ -69,8 +71,8 @@ impl Config {
         }
     }
 
-    pub fn plugins(&self) -> LintPlugins {
-        self.base.config.plugins
+    pub fn plugins(&self) -> &LintPlugins {
+        &self.base.config.plugins
     }
 
     pub fn rules(&self) -> &Arc<[(RuleEnum, AllowWarnDeny)]> {
@@ -107,30 +109,37 @@ impl Config {
 
         let mut env = self.base.config.env.clone();
         let mut globals = self.base.config.globals.clone();
-        let mut plugins = self.base.config.plugins;
+        let mut plugins = self.base.config.plugins.clone();
 
         for override_config in overrides_to_apply.clone() {
-            if let Some(override_plugins) = override_config.plugins {
-                plugins |= override_plugins;
+            if let Some(override_plugins) = &override_config.plugins {
+                plugins.builtin |= override_plugins.builtin;
+                for p in &override_plugins.external {
+                    plugins.external.insert(p.clone());
+                }
             }
         }
 
         let mut rules = self
             .base_rules
             .iter()
-            .filter(|(rule, _)| plugins.contains(LintPlugins::from(rule.plugin_name())))
+            .filter(|(rule, _)| {
+                plugins.builtin.contains(BuiltinLintPlugins::from(rule.plugin_name()))
+            })
             .cloned()
             .collect::<FxHashMap<_, _>>();
 
         let all_rules = RULES
             .iter()
-            .filter(|rule| plugins.contains(LintPlugins::from(rule.plugin_name())))
+            .filter(|rule| plugins.builtin.contains(BuiltinLintPlugins::from(rule.plugin_name())))
             .cloned()
             .collect::<Vec<_>>();
 
+        // TODO: external rules.
+
         for override_config in overrides_to_apply {
-            if let Some(override_plugins) = override_config.plugins {
-                if override_plugins != plugins {
+            if let Some(override_plugins) = &override_config.plugins {
+                if *override_plugins != plugins {
                     for (rule, severity) in all_rules.iter().filter_map(|rule| {
                         self.categories
                             .get(&rule.category())
@@ -198,8 +207,8 @@ impl ConfigStore {
         &self.base.base.rules
     }
 
-    pub fn plugins(&self) -> LintPlugins {
-        self.base.base.config.plugins
+    pub fn plugins(&self) -> &LintPlugins {
+        &self.base.base.config.plugins
     }
 
     pub(crate) fn resolve(&self, path: &Path) -> ResolvedLinterState {
@@ -230,11 +239,11 @@ impl ConfigStore {
 
 #[cfg(test)]
 mod test {
-    use rustc_hash::FxHashMap;
+    use rustc_hash::{FxHashMap, FxHashSet};
 
     use super::{ConfigStore, OxlintOverrides};
     use crate::{
-        AllowWarnDeny, LintPlugins, RuleEnum,
+        AllowWarnDeny, BuiltinLintPlugins, LintPlugins, RuleEnum,
         config::{
             LintConfig, OxlintEnv, OxlintGlobals, OxlintSettings, categories::OxlintCategories,
             config_store::Config,
@@ -369,7 +378,7 @@ mod test {
     #[test]
     fn test_add_plugins() {
         let base_config = LintConfig {
-            plugins: LintPlugins::IMPORT,
+            plugins: LintPlugins::new(BuiltinLintPlugins::IMPORT, FxHashSet::default()),
             env: OxlintEnv::default(),
             settings: OxlintSettings::default(),
             globals: OxlintGlobals::default(),
@@ -387,26 +396,33 @@ mod test {
             Config::new(vec![], OxlintCategories::default(), base_config, overrides),
             FxHashMap::default(),
         );
-        assert_eq!(store.base.base.config.plugins, LintPlugins::IMPORT);
+
+        assert_eq!(store.base.base.config.plugins.builtin, BuiltinLintPlugins::IMPORT);
 
         let app = store.resolve("other.mjs".as_ref()).config;
-        assert_eq!(app.plugins, LintPlugins::IMPORT);
+        assert_eq!(app.plugins.builtin, BuiltinLintPlugins::IMPORT);
 
         let app = store.resolve("App.jsx".as_ref()).config;
-        assert_eq!(app.plugins, LintPlugins::IMPORT | LintPlugins::REACT);
+        assert_eq!(app.plugins.builtin, BuiltinLintPlugins::IMPORT | BuiltinLintPlugins::REACT);
 
         let app = store.resolve("App.ts".as_ref()).config;
-        assert_eq!(app.plugins, LintPlugins::IMPORT | LintPlugins::TYPESCRIPT);
+        assert_eq!(
+            app.plugins.builtin,
+            BuiltinLintPlugins::IMPORT | BuiltinLintPlugins::TYPESCRIPT
+        );
 
         let app = store.resolve("App.tsx".as_ref()).config;
-        assert_eq!(app.plugins, LintPlugins::IMPORT | LintPlugins::REACT | LintPlugins::TYPESCRIPT);
+        assert_eq!(
+            app.plugins.builtin,
+            BuiltinLintPlugins::IMPORT | BuiltinLintPlugins::REACT | BuiltinLintPlugins::TYPESCRIPT
+        );
     }
 
     #[test]
     fn test_add_env() {
         let base_config = LintConfig {
             env: OxlintEnv::default(),
-            plugins: LintPlugins::ESLINT,
+            plugins: BuiltinLintPlugins::ESLINT.into(),
             settings: OxlintSettings::default(),
             globals: OxlintGlobals::default(),
             path: None,
@@ -433,7 +449,7 @@ mod test {
     fn test_replace_env() {
         let base_config = LintConfig {
             env: OxlintEnv::from_iter(["es2024".into()]),
-            plugins: LintPlugins::ESLINT,
+            plugins: BuiltinLintPlugins::ESLINT.into(),
             settings: OxlintSettings::default(),
             globals: OxlintGlobals::default(),
             path: None,
@@ -460,7 +476,7 @@ mod test {
     fn test_add_globals() {
         let base_config = LintConfig {
             env: OxlintEnv::default(),
-            plugins: LintPlugins::ESLINT,
+            plugins: BuiltinLintPlugins::ESLINT.into(),
             settings: OxlintSettings::default(),
             globals: OxlintGlobals::default(),
             path: None,
@@ -490,7 +506,7 @@ mod test {
     fn test_replace_globals() {
         let base_config = LintConfig {
             env: OxlintEnv::default(),
-            plugins: LintPlugins::ESLINT,
+            plugins: BuiltinLintPlugins::ESLINT.into(),
             settings: OxlintSettings::default(),
             globals: from_json!({
                 "React": "readonly",

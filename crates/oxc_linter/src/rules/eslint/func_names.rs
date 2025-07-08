@@ -185,6 +185,9 @@ fn has_inferred_name<'a>(function: &Function<'a>, parent_node: &AstNode<'a>) -> 
             matches!(pattern.left.kind, BindingPatternKind::BindingIdentifier(_))
                 && is_same_function(&pattern.right, function)
         }
+        AstKind::AssignmentTargetPropertyIdentifier(ident) => {
+            ident.init.as_ref().is_some_and(|expr| is_same_function(expr, function))
+        }
         AstKind::ObjectAssignmentTarget(target) => {
             for property in &target.properties {
                 let AssignmentTargetProperty::AssignmentTargetPropertyIdentifier(identifier) =
@@ -245,9 +248,7 @@ impl Rule for FuncNames {
             match node.kind() {
                 // check function if it invalid, do not report it because maybe later the function is calling itself
                 AstKind::Function(func) => {
-                    let Some(parent_node) = ctx.nodes().parent_node(node.id()) else {
-                        continue;
-                    };
+                    let parent_node = ctx.nodes().parent_node(node.id());
                     let config =
                         if func.generator { &self.generators_config } else { &self.default_config };
 

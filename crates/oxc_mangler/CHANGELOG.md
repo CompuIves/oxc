@@ -4,6 +4,20 @@ All notable changes to this package will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0).
 
+## [0.76.0] - 2025-07-08
+
+### 🚜 Refactor
+
+- 54cf5cb semantic: Remove Option from parent_* methods (#12087) (Ulrich Stark)
+
+
+## [0.75.1] - 2025-07-03
+
+### 🚜 Refactor
+
+- f7a2ae4 ast: Add `AstKind` for `AssignmentTargetPropertyIdentifier`, `AssignmentTargetPropertyProperty` (#11985) (camc314)
+
+
 
 
 

@@ -4,6 +4,45 @@ All notable changes to this package will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0).
 
+## [1.6.0] - 2025-07-07
+
+### 🚀 Features
+
+- f81d336 linter: Introduce `ExternalLinter` struct (#12052) (camc314)
+
+### 🐛 Bug Fixes
+
+- 5851d2c oxlint: Always follow symlinks; remove cli flag `--symlinks` (#12048) (Boshen)
+
+### 🚜 Refactor
+
+- 2f7cbda linter: Move napi bindings out of oxc_linter (#12072) (camc314)
+- 9254252 linter: Move code (#12071) (overlookmotel)
+
+
+## [1.5.0] - 2025-07-02
+
+### 🐛 Bug Fixes
+
+- 4b2c658 oxlint: Make `--version` exit code be `0` (#11986) (camc314)
+
+
+## [1.4.0] - 2025-06-30
+
+### 🚀 Features
+
+- 9b19b40 napi: Add basic oxlint napi bindings (#11877) (camc314)
+- f102cb1 linter: Add `import/prefer-default-export` rule (#11891) (yefan)
+
+### 🐛 Bug Fixes
+
+- d991fed linter: Fix `jsx-a11y/label-has-associated-control` default values (#11832) (Sysix)
+
+### 🚜 Refactor
+
+- 2cf9fa3 linter: Derive debug for `extensions` (#11938) (camc314)
+
+
 ## [1.3.0] - 2025-06-23
 
 ### 🚜 Refactor

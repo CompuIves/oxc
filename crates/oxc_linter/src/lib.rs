@@ -8,6 +8,7 @@ mod ast_util;
 mod config;
 mod context;
 mod disable_directives;
+mod external_linter;
 mod frameworks;
 mod globals;
 mod module_graph_visitor;
@@ -28,10 +29,13 @@ use oxc_semantic::{AstNode, Semantic};
 
 pub use crate::{
     config::{
-        Config, ConfigBuilderError, ConfigStore, ConfigStoreBuilder, ESLintRule, LintPlugins,
-        Oxlintrc,
+        BuiltinLintPlugins, Config, ConfigBuilderError, ConfigStore, ConfigStoreBuilder,
+        ESLintRule, LintPlugins, Oxlintrc,
     },
     context::LintContext,
+    external_linter::{
+        ExternalLinter, ExternalLinterCb, ExternalLinterLoadPluginCb, PluginLoadResult,
+    },
     fixer::FixKind,
     frameworks::FrameworkFlags,
     loader::LINTABLE_EXTENSIONS,

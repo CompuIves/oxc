@@ -318,9 +318,7 @@ impl<'a> SemanticBuilder<'a> {
     }
 
     fn pop_ast_node(&mut self) {
-        if let Some(parent_id) = self.nodes.parent_id(self.current_node_id) {
-            self.current_node_id = parent_id;
-        }
+        self.current_node_id = self.nodes.parent_id(self.current_node_id);
     }
 
     #[inline]
@@ -1830,12 +1828,14 @@ impl<'a> Visit<'a> for SemanticBuilder<'a> {
         &mut self,
         it: &AssignmentTargetPropertyIdentifier<'a>,
     ) {
-        // NOTE: AstKind doesn't exists!
+        let kind = AstKind::AssignmentTargetPropertyIdentifier(self.alloc(it));
+        self.enter_node(kind);
         self.current_reference_flags = ReferenceFlags::Write;
         self.visit_identifier_reference(&it.binding);
         if let Some(init) = &it.init {
             self.visit_expression(init);
         }
+        self.leave_node(kind);
     }
 
     fn visit_export_default_declaration_kind(&mut self, it: &ExportDefaultDeclarationKind<'a>) {
@@ -2012,9 +2012,6 @@ impl<'a> SemanticBuilder<'a> {
             AstKind::TSTypeParameter(type_parameter) => {
                 type_parameter.bind(self);
             }
-            AstKind::TSInterfaceHeritage(_) => {
-                self.current_reference_flags = ReferenceFlags::Type;
-            }
             AstKind::TSPropertySignature(signature) => {
                 if signature.key.is_expression() {
                     // interface A { [prop]: string }
@@ -2027,31 +2024,16 @@ impl<'a> SemanticBuilder<'a> {
                 //          ^^^^^^^^
                 self.current_reference_flags = ReferenceFlags::ValueAsType;
             }
-            AstKind::TSTypeParameterInstantiation(_) => {
-                // type A<T> = typeof a<T>;
-                //                     ^^^ avoid treat T as a value and TSTypeQuery
-                self.current_reference_flags -= ReferenceFlags::ValueAsType;
-            }
-            AstKind::TSTypeName(_) => {
-                match self.nodes.parent_kind(self.current_node_id) {
-                    Some(
-                        // import A = a;
-                        //            ^
-                        AstKind::TSImportEqualsDeclaration(_),
-                    ) => {
-                        self.current_reference_flags = ReferenceFlags::Read;
-                    }
-                    Some(AstKind::TSQualifiedName(_)) => {
-                        // import A = a.b
-                        //            ^^^ Keep the current reference flag
-                    }
-                    _ => {
-                        // Handled in `AstKind::PropertySignature` or `AstKind::TSTypeQuery`
-                        if !self.current_reference_flags.is_value_as_type() {
-                            self.current_reference_flags = ReferenceFlags::Type;
-                        }
-                    }
-                }
+            AstKind::TSInterfaceHeritage(_)
+            | AstKind::TSClassImplements(_)
+            | AstKind::TSTypeReference(_) => {
+                // interface A extends B {}
+                //             ^^^^^^^^^
+                //
+                // class A implements B {}
+                //         ^^^^^^^^^^^^
+
+                self.current_reference_flags = ReferenceFlags::Type;
             }
             AstKind::IdentifierReference(ident) => {
                 self.reference_identifier(ident);
@@ -2090,9 +2072,6 @@ impl<'a> SemanticBuilder<'a> {
             }
             AstKind::CatchParameter(_) => {
                 self.resolve_references_for_current_scope();
-            }
-            AstKind::TSTypeName(_) => {
-                self.current_reference_flags -= ReferenceFlags::Type;
             }
             AstKind::TSTypeQuery(_)
             // Clear the reference flags that are set in AstKind::PropertySignature

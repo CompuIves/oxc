@@ -4,6 +4,124 @@ All notable changes to this package will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0).
 
+## [1.6.0] - 2025-07-07
+
+### 🚀 Features
+
+- f81d336 linter: Introduce `ExternalLinter` struct (#12052) (camc314)
+
+### 🐛 Bug Fixes
+
+- 3f0e03e linter: Fix inconsistent behavior in `no-duplicate-imports` rule (#12051) (yefan)
+- 6dbacea linter/no-barrel-file: No diagnostic tag when some modules arent resolved (#12049) (camc314)
+- dd6b1ee linter/extensions: False positives with non configured extensions (#11872) (camc314)
+- eb1c596 linter/consistent-index-object-style: Fix default impl for rule config (#12031) (camc314)
+
+### 🚜 Refactor
+
+- 54cf5cb semantic: Remove Option from parent_* methods (#12087) (Ulrich Stark)
+- 8d1be94 language_server: Fix todo by avoiding allocation (#12096) (Ulrich Stark)
+- 72418ca linter: `RuntimeFileSystem::write_file` take `&str` (#12075) (overlookmotel)
+- 2f7cbda linter: Move napi bindings out of oxc_linter (#12072) (camc314)
+- 2319710 linter: Shorten code (#12070) (overlookmotel)
+- 387762d linter/no-unused-vars: Simplify check for export nodes (#12044) (Dunqing)
+- f1d4086 ast: Remove `AstKind` for `ModuleDeclaration` (#12022) (camchenry)
+- 754c05a ast: Remove `AstKind` for `TSTypeName` (#11990) (camchenry)
+- 0c7f9e8 linter: Remove a branch (#12032) (overlookmotel)
+
+### 📚 Documentation
+
+- 85ec382 linter: Add good/bad example for `nextjs/no-page-custom-font` (#12092) (Sysix)
+- 9240342 linter: Add docs for `nextjs/no-script-component-in-head` (#12091) (Sysix)
+- 0878414 linter: Add good/bad example for `nextjs/no-head-import-in-document` (#12061) (Sysix)
+- 222bc73 linter: Add bad/good example for `nextjs/no-head-element` (#12059) (Sysix)
+- a7e9f50 linter: Add good/bad example for `nextjs/no-title-in-document-head` (#12065) (Sysix)
+- 51c6818 linter: Add good/bad example for `nextjs/no-document-import-in-pages` (#12064) (Sysix)
+- c7b38f9 consistent-indexed-object-style: Clarify docs (#12019) (Luca Ban)
+
+### ⚡ Performance
+
+- 04e2de5 linter: Avoid iteration when checking import is `AllButDefault` or `SideEffect` in `eslint/no-duplicate-imports` (#12093) (Sysix)
+- e2a7d6a linter: Check filepath before running `nextjs/no-head-element` (#12062) (Sysix)
+- 00a9fd9 linter: Check for filename before running `nextjs/no-head-import-in-document` rule (#12060) (Sysix)
+- 62a3ce0 linter: Replace `unicode-segmentation` crate with `icu_segmenter` (#12063) (Sysix)
+
+
+## [1.5.0] - 2025-07-02
+
+### 🚀 Features
+
+- 899b8b4 linter: Allow namespace re-export in `import/no-cycle` (#11995) (Boshen)
+
+### 🐛 Bug Fixes
+
+- f732589 linter: Panic in `consistent-type-imports` when the source contains a `{` (#12002) (camc314)
+
+### 🚜 Refactor
+
+- f7a2ae4 ast: Add `AstKind` for `AssignmentTargetPropertyIdentifier`, `AssignmentTargetPropertyProperty` (#11985) (camc314)
+- cfa52c2 ast: Add `AstKind` for `AssignmentTargetRest` (#11984) (camc314)
+- 3f91f24 linter: Remove `RulesCache` (#11981) (camc314)
+- 54582cb ast: Add `AstKind` for `BindingProperty` (#11974) (camc314)
+
+
+## [1.4.0] - 2025-06-30
+
+### 🚀 Features
+
+- 8e1573d linter: Add id-length rule from eslint (#11887) (Nicholas Rayburn)
+- 5dfcac5 linter: Add eslint/arrow-body-style rule (#11937) (yefan)
+- f102cb1 linter: Add `import/prefer-default-export` rule (#11891) (yefan)
+
+### 🐛 Bug Fixes
+
+- 114c4fb linter/no-useless-spread: Panic with multi byte char (#11964) (camc314)
+- c2e5439 linter: Fix default values for `unicorn/consistent-function-scoping` (#11960) (Sysix)
+- 214c8e7 linter: Fix default values for `import/no-absolute-path` (#11959) (Sysix)
+- b4cc222 linter: Fix `typescript/no-namespace` default values (#11958) (Sysix)
+- 11e0a43 linter/prefer-dom-node-remove: Panic when callee is ts non null expression (#11949) (camc314)
+- 4903e39 linter/no-standalone-expect: False positive in callback fn (#11940) (camc314)
+- 1e88dba oxc_linter: Make linter file paths clickable within JetBrains terminals (#11619) (Nicholas Rayburn)
+- fe4006b linter/jsx-key: False positive in react/jsx-key (#11918) (camc314)
+- d32cb4b linter: Fix default values for `eslint/no-redeclare` (#11911) (Sysix)
+- d80c19d linter: Fix default values for `eslint/max-lines-per-function` (#11910) (Sysix)
+- 41a5342 linter: Fix default values for `eslint/max-nested-callbacks` (#11909) (Sysix)
+- 2e3db4e linter: Fix default values for `eslint/max-depth` (#11908) (Sysix)
+- a358797 linter: Remove false positives for `no-extend-native` (#11888) (camchenry)
+- 6f67b52 linter: Revert prefer-promise-reject-errors to old behavior (#11889) (camchenry)
+- d991fed linter: Fix `jsx-a11y/label-has-associated-control` default values (#11832) (Sysix)
+- a0a4aa1 linter: Count own indirect export entries to the threshold for `oxc/no-barrel-file` (#11838) (Sysix)
+
+### 🚜 Refactor
+
+- 344f3f9 linter: Minor refactors to `eslint/id-length` (#11976) (camc314)
+- 46b59d8 linter: Remove unused `ContextHost::with_config` (#11970) (camc314)
+- 17e0898 linter: Move `import/no-duplicates` to style category (#11929) (Sysix)
+- dd2e196 linter: Move `unicorn/no-nested-ternary` to style category (#11928) (Sysix)
+- 8404da4 linter: Remove unused `LintPluginOptions` (#11919) (camc314)
+- 87b8496 ast: Remove `AstKind` for `MemberExpression` and replace with `StaticMemberExpression` and `PrivateFieldExpression` (#11767) (camchenry)
+- e840680 linter/no-named-as-default-members: Remove needless lambda (#11896) (camc314)
+- 2760591 linter/no-console: Early return if ident does not match (#11895) (camc314)
+- 190e390 ast: Add `AstKind` for `ComputedMemberExpression` (#11766) (camchenry)
+
+### 📚 Documentation
+
+- 940b98f linter: Fix docs for `typescript/no-this-alias` (#11963) (Sysix)
+- c4a95a2 linter: Move `jest/valid-title` options into a codeblock (#11961) (Sysix)
+- 0d3e8e7 linter: Fix prefer-string-replace-all example (#11921) (Bruno Henriques)
+- 06781ab linter: Fix doc formatting for perfer-logical-op-over-ternary (#11920) (camc314)
+
+### ⚡ Performance
+
+- 2cf63ea linter: `nextjs/no-document-import-in-page` check the filepath before running the rule (#11962) (Sysix)
+- 19cee8c linter/no-extend-native: Do not create unnecessary `CompactStr` (#11885) (overlookmotel)
+- 66dbf9d linter/no-console: Get static property name only once (#11880) (overlookmotel)
+
+### 🧪 Testing
+
+- 168f776 linter/no-console: Add more tests (#11878) (overlookmotel)
+
+
 ## [1.3.0] - 2025-06-23
 
 ### 🚀 Features

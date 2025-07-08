@@ -4,6 +4,25 @@ All notable changes to this package will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0).
 
+## [0.76.0] - 2025-07-08
+
+### ⚡ Performance
+
+- 349d395 parser: Speed up simple lookaheads by introducing `Lexer::peek_token` (#11358) (Ulrich Stark)
+- 494c29d parser: Optimize around `parse_return_type` (#12095) (Ulrich Stark)
+
+
+## [0.75.1] - 2025-07-03
+
+### 🚀 Features
+
+- b446a66 parser: Report duplicate `private` / `protected` / `public` modifier (#11996) (Boshen)
+
+### 🐛 Bug Fixes
+
+- 6c9c580 parser: Panic when parsing interface with missing implements (#11898) (camc314)
+
+
 ## [0.75.0] - 2025-06-25
 
 ### 💥 BREAKING CHANGES

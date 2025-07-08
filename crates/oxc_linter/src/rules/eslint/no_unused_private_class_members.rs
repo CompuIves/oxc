@@ -114,7 +114,7 @@ impl Rule for NoUnusedPrivateClassMembers {
 
 fn is_read(current_node_id: NodeId, nodes: &AstNodes) -> bool {
     for (curr, parent) in nodes
-        .ancestors(nodes.parent_id(current_node_id).unwrap_or(current_node_id))
+        .ancestors(nodes.parent_id(current_node_id))
         .tuple_windows::<(&AstNode<'_>, &AstNode<'_>)>()
     {
         match (curr.kind(), parent.kind()) {
@@ -131,17 +131,17 @@ fn is_read(current_node_id: NodeId, nodes: &AstNodes) -> bool {
                 | AstKind::AssignmentTargetWithDefault(_)
                 | AstKind::AssignmentTarget(_)
                 | AstKind::ObjectAssignmentTarget(_)
-                | AstKind::ArrayAssignmentTarget(_),
+                | AstKind::ArrayAssignmentTarget(_)
+                | AstKind::AssignmentTargetRest(_)
+                | AstKind::AssignmentTargetPropertyIdentifier(_)
+                | AstKind::AssignmentTargetPropertyProperty(_),
             )
             | (AstKind::SimpleAssignmentTarget(_), AstKind::AssignmentExpression(_)) => {
                 return false;
             }
             (AstKind::AssignmentTarget(_), AstKind::AssignmentExpression(_))
             | (_, AstKind::UpdateExpression(_)) => {
-                return !matches!(
-                    nodes.parent_kind(parent.id()),
-                    Some(AstKind::ExpressionStatement(_))
-                );
+                return !matches!(nodes.parent_kind(parent.id()), AstKind::ExpressionStatement(_));
             }
             _ => return true,
         }

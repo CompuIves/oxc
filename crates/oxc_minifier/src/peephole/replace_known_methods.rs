@@ -16,7 +16,7 @@ use oxc_traverse::Ancestor;
 
 use crate::ctx::Ctx;
 
-use super::{PeepholeOptimizations, State};
+use super::PeepholeOptimizations;
 
 type Arguments<'a> = oxc_allocator::Vec<'a, Argument<'a>>;
 
@@ -26,20 +26,15 @@ impl<'a> PeepholeOptimizations {
     pub fn replace_known_methods_exit_expression(
         &self,
         node: &mut Expression<'a>,
-        state: &mut State,
+
         ctx: &mut Ctx<'a, '_>,
     ) {
-        self.try_fold_concat_chain(node, state, ctx);
-        self.try_fold_known_global_methods(node, state, ctx);
-        self.try_fold_known_property_access(node, state, ctx);
+        self.try_fold_concat_chain(node, ctx);
+        self.try_fold_known_global_methods(node, ctx);
+        self.try_fold_known_property_access(node, ctx);
     }
 
-    fn try_fold_known_global_methods(
-        &self,
-        node: &mut Expression<'a>,
-        state: &mut State,
-        ctx: &mut Ctx<'a, '_>,
-    ) {
+    fn try_fold_known_global_methods(&self, node: &mut Expression<'a>, ctx: &mut Ctx<'a, '_>) {
         let Expression::CallExpression(ce) = node else { return };
         let CallExpression { span, callee, arguments, .. } = ce.as_mut();
         let (name, object) = match &callee {
@@ -86,7 +81,7 @@ impl<'a> PeepholeOptimizations {
             _ => None,
         };
         if let Some(replacement) = replacement {
-            state.changed = true;
+            ctx.state.changed = true;
             *node = replacement;
         }
     }
@@ -412,7 +407,7 @@ impl<'a> PeepholeOptimizations {
         object: &Expression<'a>,
         ctx: &mut Ctx<'a, '_>,
     ) -> Option<Expression<'a>> {
-        if self.target < ESTarget::ES2016 {
+        if ctx.options().target < ESTarget::ES2016 {
             return None;
         }
         if !Self::validate_global_reference(object, "Math", ctx)
@@ -573,12 +568,7 @@ impl<'a> PeepholeOptimizations {
 
     /// `[].concat(a).concat(b)` -> `[].concat(a, b)`
     /// `"".concat(a).concat(b)` -> `"".concat(a, b)`
-    fn try_fold_concat_chain(
-        &self,
-        node: &mut Expression<'a>,
-        state: &mut State,
-        ctx: &mut Ctx<'a, '_>,
-    ) {
+    fn try_fold_concat_chain(&self, node: &mut Expression<'a>, ctx: &mut Ctx<'a, '_>) {
         let original_span = if let Expression::CallExpression(root_call_expr) = node {
             root_call_expr.span
         } else {
@@ -654,7 +644,7 @@ impl<'a> PeepholeOptimizations {
             ),
             false,
         );
-        state.changed = true;
+        ctx.state.changed = true;
     }
 
     /// `[].concat(1, 2)` -> `[1, 2]`
@@ -726,7 +716,7 @@ impl<'a> PeepholeOptimizations {
                 }
             }
             Expression::StringLiteral(base_str) => {
-                if self.target < ESTarget::ES2015
+                if ctx.state.options.target < ESTarget::ES2015
                     || args.is_empty()
                     || !args.iter().all(Argument::is_expression)
                 {
@@ -818,12 +808,7 @@ impl<'a> PeepholeOptimizations {
         }
     }
 
-    fn try_fold_known_property_access(
-        &self,
-        node: &mut Expression<'a>,
-        state: &mut State,
-        ctx: &mut Ctx<'a, '_>,
-    ) {
+    fn try_fold_known_property_access(&self, node: &mut Expression<'a>, ctx: &mut Ctx<'a, '_>) {
         let (name, object, span) = match node {
             Expression::StaticMemberExpression(member) if !member.optional => {
                 (member.property.name.as_str(), &member.object, member.span)
@@ -840,7 +825,7 @@ impl<'a> PeepholeOptimizations {
                                 span,
                                 ctx,
                             ) {
-                                state.changed = true;
+                                ctx.state.changed = true;
                                 *node = replacement;
                             }
                         }
@@ -858,7 +843,7 @@ impl<'a> PeepholeOptimizations {
                                     span,
                                     ctx,
                                 ) {
-                                    state.changed = true;
+                                    ctx.state.changed = true;
                                     *node = replacement;
                                 }
                             }
@@ -881,7 +866,7 @@ impl<'a> PeepholeOptimizations {
             _ => None,
         };
         if let Some(replacement) = replacement {
-            state.changed = true;
+            ctx.state.changed = true;
             *node = replacement;
         }
     }
@@ -917,7 +902,7 @@ impl<'a> PeepholeOptimizations {
             "NEGATIVE_INFINITY" => num(span, f64::NEG_INFINITY),
             "NaN" => num(span, f64::NAN),
             "MAX_SAFE_INTEGER" => {
-                if self.target < ESTarget::ES2016 {
+                if ctx.options().target < ESTarget::ES2016 {
                     num(span, 2.0f64.powi(53) - 1.0)
                 } else {
                     // 2**53 - 1
@@ -925,7 +910,7 @@ impl<'a> PeepholeOptimizations {
                 }
             }
             "MIN_SAFE_INTEGER" => {
-                if self.target < ESTarget::ES2016 {
+                if ctx.options().target < ESTarget::ES2016 {
                     num(span, -(2.0f64.powi(53) - 1.0))
                 } else {
                     // -(2**53 - 1)
@@ -937,7 +922,7 @@ impl<'a> PeepholeOptimizations {
                 }
             }
             "EPSILON" => {
-                if self.target < ESTarget::ES2016 {
+                if ctx.options().target < ESTarget::ES2016 {
                     return None;
                 }
                 // 2**-52
@@ -1069,12 +1054,12 @@ mod test {
 
     use crate::{
         CompressOptions,
-        tester::{run, test, test_same},
+        tester::{test, test_options, test_same},
     };
 
     fn test_es2015(code: &str, expected: &str) {
-        let opts = CompressOptions { target: ESTarget::ES2015, ..CompressOptions::default() };
-        assert_eq!(run(code, Some(opts)), run(expected, None));
+        let options = CompressOptions { target: ESTarget::ES2015, ..CompressOptions::default() };
+        test_options(code, expected, &options);
     }
 
     fn test_value(code: &str, expected: &str) {

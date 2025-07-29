@@ -61,6 +61,9 @@ const VITEST_TEST_PATH: &str =
 
 const REGEXP_TEST_PATH: &str = "https://raw.githubusercontent.com/ota-meshi/eslint-plugin-regexp/refs/heads/master/tests/lib/rules";
 
+const VUE_TEST_PATH: &str =
+    "https://raw.githubusercontent.com/vuejs/eslint-plugin-vue/master/tests/lib/rules/";
+
 struct TestCase {
     source_text: String,
     code: Option<String>,
@@ -178,7 +181,7 @@ fn format_tagged_template_expression(tag_expr: &TaggedTemplateExpression) -> Opt
     } else if tag_expr.tag.is_specific_id("dedent") || tag_expr.tag.is_specific_id("outdent") {
         tag_expr.quasi.quasis.first().map(|quasi| util::dedent(&quasi.value.raw))
     } else {
-        tag_expr.quasi.quasi().map(|quasi| quasi.to_string())
+        tag_expr.quasi.single_quasi().map(|quasi| quasi.to_string())
     }
 }
 
@@ -225,7 +228,7 @@ impl<'a> Visit<'a> for TestCase {
                                 format_tagged_template_expression(tag_expr)
                             }
                             Expression::TemplateLiteral(tag_expr) => {
-                                tag_expr.quasi().map(|quasi| quasi.to_string())
+                                tag_expr.single_quasi().map(|quasi| quasi.to_string())
                             }
                             // handle code like ["{", "a: 1", "}"].join("\n")
                             Expression::CallExpression(call_expr) => {
@@ -266,7 +269,7 @@ impl<'a> Visit<'a> for TestCase {
                                 format_tagged_template_expression(tag_expr)
                             }
                             Expression::TemplateLiteral(tag_expr) => {
-                                tag_expr.quasi().map(|quasi| quasi.to_string())
+                                tag_expr.single_quasi().map(|quasi| quasi.to_string())
                             }
                             _ => None,
                         }
@@ -301,7 +304,7 @@ impl<'a> Visit<'a> for TestCase {
     }
 
     fn visit_template_literal(&mut self, lit: &TemplateLiteral<'a>) {
-        self.code = Some(lit.quasi().unwrap().to_string());
+        self.code = Some(lit.single_quasi().unwrap().to_string());
         self.config = None;
     }
 
@@ -600,6 +603,7 @@ pub enum RuleKind {
     Promise,
     Vitest,
     Regexp,
+    Vue,
 }
 
 impl RuleKind {
@@ -619,6 +623,7 @@ impl RuleKind {
             "promise" => Self::Promise,
             "vitest" => Self::Vitest,
             "regexp" => Self::Regexp,
+            "vue" => Self::Vue,
             _ => Self::ESLint,
         }
     }
@@ -642,6 +647,7 @@ impl Display for RuleKind {
             Self::Promise => "eslint-plugin-promise",
             Self::Vitest => "eslint-plugin-vitest",
             Self::Regexp => "eslint-plugin-regexp",
+            Self::Vue => "eslint-plugin-vue",
         };
         f.write_str(kind_name)
     }
@@ -671,6 +677,7 @@ fn main() {
         RuleKind::Promise => format!("{PROMISE_TEST_PATH}/{kebab_rule_name}.js"),
         RuleKind::Vitest => format!("{VITEST_TEST_PATH}/{kebab_rule_name}.test.ts"),
         RuleKind::Regexp => format!("{REGEXP_TEST_PATH}/{kebab_rule_name}.ts"),
+        RuleKind::Vue => format!("{VUE_TEST_PATH}/{kebab_rule_name}.js"),
         RuleKind::Oxc => String::new(),
     };
     let language = match rule_kind {
@@ -794,6 +801,7 @@ fn get_mod_name(rule_kind: RuleKind) -> String {
         RuleKind::Vitest => "vitest".into(),
         RuleKind::Node => "node".into(),
         RuleKind::Regexp => "regexp".into(),
+        RuleKind::Vue => "vue".into(),
     }
 }
 

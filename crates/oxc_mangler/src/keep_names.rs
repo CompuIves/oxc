@@ -1,4 +1,3 @@
-use itertools::Itertools;
 use oxc_ast::{AstKind, ast::*};
 use oxc_semantic::{AstNode, AstNodes, ReferenceId, Scoping, SymbolId};
 use rustc_hash::FxHashSet;
@@ -114,15 +113,29 @@ impl<'a, 'b: 'a> NameSymbolCollector<'a, 'b> {
     fn is_name_set_reference_node(&self, node: &AstNode, reference_id: ReferenceId) -> bool {
         let parent_node = self.ast_nodes.parent_node(node.id());
         match parent_node.kind() {
-            AstKind::SimpleAssignmentTarget(_) => {
-                let Some((grand_parent_node_kind, grand_grand_parent_node_kind)) =
-                    self.ast_nodes.ancestor_kinds(parent_node.id()).skip(1).take(2).collect_tuple()
-                else {
-                    return false;
-                };
-                debug_assert!(matches!(grand_parent_node_kind, AstKind::AssignmentTarget(_)));
+            // Check for direct assignment: foo = function() {}
+            AstKind::AssignmentExpression(assign_expr) => {
+                Self::is_assignment_target_id_of_specific_reference(&assign_expr.left, reference_id)
+                    && self.is_expression_whose_name_needs_to_be_kept(&assign_expr.right)
+            }
+            // Check for assignments within assignment targets with defaults: [foo = function() {}] = []
+            AstKind::AssignmentTargetWithDefault(assign_target) => {
+                Self::is_assignment_target_id_of_specific_reference(
+                    &assign_target.binding,
+                    reference_id,
+                ) && self.is_expression_whose_name_needs_to_be_kept(&assign_target.init)
+            }
+            AstKind::IdentifierReference(_)
+            | AstKind::TSAsExpression(_)
+            | AstKind::TSSatisfiesExpression(_)
+            | AstKind::TSNonNullExpression(_)
+            | AstKind::TSTypeAssertion(_)
+            | AstKind::ComputedMemberExpression(_)
+            | AstKind::PrivateFieldExpression(_)
+            | AstKind::StaticMemberExpression(_) => {
+                let grand_parent_node_kind = self.ast_nodes.parent_kind(parent_node.id());
 
-                match grand_grand_parent_node_kind {
+                match grand_parent_node_kind {
                     AstKind::AssignmentExpression(assign_expr) => {
                         Self::is_assignment_target_id_of_specific_reference(
                             &assign_expr.left,

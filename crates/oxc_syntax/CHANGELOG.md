@@ -4,6 +4,23 @@ All notable changes to this package will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0).
 
+## [0.78.0] - 2025-07-24
+
+### 💥 BREAKING CHANGES
+
+- ccbcf3e transformer, minifier, syntax: [**BREAKING**] Remove `ESTarget::ES5` (#12448) (Dunqing)
+
+
+
+
+
+## [0.77.0] - 2025-07-12
+
+### 🚜 Refactor
+
+- 228cff5 semantic,linter: Assert that Program is always the first node (#12123) (Ulrich Stark)
+
+
 
 ## [0.75.1] - 2025-07-03
 

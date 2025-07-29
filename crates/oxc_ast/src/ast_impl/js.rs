@@ -4,7 +4,7 @@ use std::{
     fmt::{self, Display},
 };
 
-use oxc_span::{Atom, Span};
+use oxc_span::{Atom, GetSpan, Span};
 use oxc_syntax::{operator::UnaryOperator, scope::ScopeFlags};
 
 use crate::ast::*;
@@ -341,7 +341,7 @@ impl<'a> Expression<'a> {
     /// or [`ImportExpression`].
     pub fn is_call_like_expression(&self) -> bool {
         self.is_call_expression()
-            && matches!(self, Expression::NewExpression(_) | Expression::ImportExpression(_))
+            || matches!(self, Expression::NewExpression(_) | Expression::ImportExpression(_))
     }
 
     /// Returns `true` if this [`Expression`] is a [`BinaryExpression`] or [`LogicalExpression`].
@@ -434,11 +434,20 @@ impl<'a> From<Argument<'a>> for ArrayExpressionElement<'a> {
     }
 }
 
-impl ObjectPropertyKind<'_> {
+impl<'a> ObjectPropertyKind<'a> {
     /// Returns `true` if this object property is a [spread](SpreadElement).
     #[inline]
     pub fn is_spread(&self) -> bool {
         matches!(self, Self::SpreadProperty(_))
+    }
+
+    /// Returns [`Some`] for non-spread [object properties](ObjectProperty).
+    #[inline]
+    pub fn as_property(&self) -> Option<&ObjectProperty<'a>> {
+        match self {
+            Self::ObjectProperty(prop) => Some(prop),
+            Self::SpreadProperty(_) => None,
+        }
     }
 }
 
@@ -459,9 +468,7 @@ impl<'a> PropertyKey<'a> {
             Self::NumericLiteral(lit) => Some(Cow::Owned(lit.value.to_string())),
             Self::BigIntLiteral(lit) => Some(Cow::Borrowed(lit.value.as_str())),
             Self::NullLiteral(_) => Some(Cow::Borrowed("null")),
-            Self::TemplateLiteral(lit) => {
-                lit.expressions.is_empty().then(|| lit.quasi()).flatten().map(Into::into)
-            }
+            Self::TemplateLiteral(lit) => lit.single_quasi().map(Into::into),
             _ => None,
         }
     }
@@ -544,12 +551,12 @@ impl<'a> TemplateLiteral<'a> {
     /// - `` `foo` `` => `true`
     /// - `` `foo${bar}qux` `` => `false`
     pub fn is_no_substitution_template(&self) -> bool {
-        self.expressions.is_empty() && self.quasis.len() == 1
+        self.quasis.len() == 1
     }
 
     /// Get single quasi from `template`
-    pub fn quasi(&self) -> Option<Atom<'a>> {
-        self.quasis.first().and_then(|quasi| quasi.value.cooked)
+    pub fn single_quasi(&self) -> Option<Atom<'a>> {
+        if self.is_no_substitution_template() { self.quasis[0].value.cooked } else { None }
     }
 }
 
@@ -788,6 +795,50 @@ impl CallExpression<'_> {
             _ => None,
         }
     }
+
+    /// Returns the span covering **all** arguments in this call expression.
+    ///
+    /// The span starts at the beginning of the first argument and ends at the end
+    /// of the last argument (inclusive).
+    ///
+    /// # Examples
+    /// ```ts
+    /// foo(bar, baz);
+    /// //  ^^^^^^^^  <- arguments_span() covers this range
+    /// ```
+    ///
+    /// If the call expression has no arguments, [`None`] is returned.
+    pub fn arguments_span(&self) -> Option<Span> {
+        self.arguments.first().map(|first| {
+            // The below will never panic since the len of `self.arguments` must be >= 1
+            #[expect(clippy::missing_panics_doc)]
+            let last = self.arguments.last().unwrap();
+            Span::new(first.span().start, last.span().end)
+        })
+    }
+}
+
+impl NewExpression<'_> {
+    /// Returns the span covering **all** arguments in this new call expression.
+    ///
+    /// The span starts at the beginning of the first argument and ends at the end
+    /// of the last argument (inclusive).
+    ///
+    /// # Examples
+    /// ```ts
+    /// new Foo(bar, baz);
+    /// //      ^^^^^^^^  <- arguments_span() covers this range
+    /// ```
+    ///
+    /// If the new expression has no arguments, [`None`] is returned.
+    pub fn arguments_span(&self) -> Option<Span> {
+        self.arguments.first().map(|first| {
+            // The below will never panic since the len of `self.arguments` must be >= 1
+            #[expect(clippy::missing_panics_doc)]
+            let last = self.arguments.last().unwrap();
+            Span::new(first.span().start, last.span().end)
+        })
+    }
 }
 
 impl Argument<'_> {
@@ -924,6 +975,21 @@ impl<'a> AssignmentTargetMaybeDefault<'a> {
             AssignmentTargetMaybeDefault::AssignmentTargetIdentifier(id) => Some(id),
             Self::AssignmentTargetWithDefault(target) => {
                 if let AssignmentTarget::AssignmentTargetIdentifier(id) = &target.binding {
+                    Some(id)
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// Returns mut identifier bound by this assignment target.
+    pub fn identifier_mut(&mut self) -> Option<&mut IdentifierReference<'a>> {
+        match self {
+            AssignmentTargetMaybeDefault::AssignmentTargetIdentifier(id) => Some(id),
+            Self::AssignmentTargetWithDefault(target) => {
+                if let AssignmentTarget::AssignmentTargetIdentifier(id) = &mut target.binding {
                     Some(id)
                 } else {
                     None

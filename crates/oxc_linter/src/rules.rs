@@ -198,6 +198,7 @@ mod typescript {
     pub mod consistent_type_definitions;
     pub mod consistent_type_imports;
     pub mod explicit_function_return_type;
+    pub mod explicit_module_boundary_types;
     pub mod no_confusing_non_null_assertion;
     pub mod no_duplicate_enum_values;
     pub mod no_dynamic_delete;
@@ -511,6 +512,7 @@ mod nextjs {
     pub mod no_duplicate_head;
     pub mod no_head_element;
     pub mod no_head_import_in_document;
+    pub mod no_html_link_for_pages;
     pub mod no_img_element;
     pub mod no_page_custom_font;
     pub mod no_script_component_in_head;
@@ -866,6 +868,7 @@ oxc_macros::declare_all_lint_rules! {
     nextjs::no_title_in_document_head,
     nextjs::no_typos,
     nextjs::no_unwanted_polyfillio,
+    nextjs::no_html_link_for_pages,
     node::no_exports_assign,
     node::no_new_require,
     oxc::approx_constant,
@@ -956,6 +959,7 @@ oxc_macros::declare_all_lint_rules! {
     typescript::consistent_indexed_object_style,
     typescript::consistent_type_definitions,
     typescript::consistent_type_imports,
+    typescript::explicit_module_boundary_types,
     typescript::explicit_function_return_type,
     typescript::no_inferrable_types,
     typescript::no_confusing_non_null_assertion,

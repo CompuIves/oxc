@@ -4,6 +4,101 @@ All notable changes to this package will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0).
 
+## [1.8.0] - 2025-07-22
+
+### 🚀 Features
+
+- 6d2b549 napi/oxlint: Pass AST in buffer to JS (#12350) (overlookmotel)
+- 14f0159 linter/exhaustive-deps: Add auto-fixer (#12354) (Don Isaac)
+
+### 🐛 Bug Fixes
+
+- 99e105f linter: Correct autofix in `unicorn/prefer-number-properties` for Infinity (#12445) (yefan)
+- 0b539e3 linter: `unicorn/catch-error-name` wasn't using the ignore property (#12446) (Parbez)
+- 05fba9b linter: Don't panic on `TSNonNullExpression` in `unicorn/prefer-array-find` (#12400) (Sysix)
+- 4621872 linter: Parse second script block for `svelte` files (#12390) (Sysix)
+- fbe7eb4 linter/filename-case: Fix default config when no config is provided (#12389) (camc314)
+- fea9df4 linter: Report errors with the correct severity for custom plugins (#12362) (camc314)
+- 652c038 linter: Mark correctly enabled default rules for `--rules` (#12163) (Sysix)
+- eadc359 linter: Correct source text for vue files having script attributes containig ">" char inside (#12375) (Sysix)
+- 54d143a linter/exhaustive-deps: More descriptive messages for always-rerender violations (#12336) (Don Isaac)
+- dac4db9 linter/exhaustive-deps: Better diagnostics for missing dependencies (#12337) (Don Isaac)
+- 119d23a linter/prefer-array-flat-map: Error for `.flat(1.0)` (#12360) (overlookmotel)
+
+### 🚜 Refactor
+
+- 2d9291c linter/prefer-number-properties: Simplify fixer logic (#12451) (camc314)
+- c5dff1e linter, napi/parser: Add `source_len` field to `RawTransferMetadata` (#12383) (overlookmotel)
+- 5e3b415 linter: Duplicate `RawTransferMetadata` in `oxc_linter` crate (#12382) (overlookmotel)
+- 773fd88 linter: Pass `&Allocator` into `Linter::run_external_rules` (#12374) (overlookmotel)
+- b10ed11 linter: Make unwrap unconditional (#12371) (overlookmotel)
+- a0631d4 linter: Move running external rules into feature-gated function (#12370) (overlookmotel)
+- 4fc4e7c linter: Make feature gates for `oxlint2` feature consistent (#12369) (overlookmotel)
+- 50b1786 linter: Clarify usage of `Allocator` and `AllocatorGuard` (#12332) (overlookmotel)
+- 26d3a39 linter: Remove `ModuleContentOwner` abstraction (#12331) (overlookmotel)
+
+### 📚 Documentation
+
+- 3c21d94 linter: Correct comment on `RawTransferMetadata2` type (#12428) (overlookmotel)
+
+
+## [1.7.0] - 2025-07-16
+
+### 🚀 Features
+
+- 5e428a4 linter/eslint-plugin-next: No-html-link-for-pages rule addition (#12194) (Gabriel Díaz Aguilera)
+- 9b14fbc ast: Add `ThisExpression` to `TSTypeName` (#12156) (Boshen)
+- c551b8f linter: Report diagnostics from custom plugins (#12219) (camc314)
+- d387729 linter: JS custom rules config (#12160) (camc314)
+- bde1ef1 linter: Load custom JS plugins (#11980) (camc314)
+- d4ebd14 linter: Add `oxlint2`/`disable_oxlint2` feature flags (#12130) (camc314)
+- a4dae73 linter: Introduce `LintPlugins` to store builtin + custom plugins (#12117) (camc314)
+
+### 🐛 Bug Fixes
+
+- 3f9a1f0 linter/no-unused-private-class-members: Fix false positive with nullish coalescing assignments (#12317) (camc314)
+- 47fad0e linter/no-empty-file: False positive with empty file with triple slash directive (#12293) (camc314)
+- 633ba30 linter: False positive with unknown plugins when unmatched eslint rule (#12285) (camc314)
+- 98708eb linter: Fix inconsistent behavior in `no-duplicate-imports` rule (#12192) (yefan)
+
+### 🚜 Refactor
+
+- ee761de ast: Remove `AstKind` for `AssignmentTarget` (#12252) (Tyler Earls)
+- c68b607 ast: Rename `TemplateLiteral::quasi` to `TemplateLiteral::single_quasi` (#12266) (Dunqing)
+- 32c32af ast: Check whether there is a single `quasi` in `TemplateLiteral::quasi` (#12265) (Dunqing)
+- 8f6a1da linter/js-plugins: Use `u32` for IDs (#12243) (overlookmotel)
+- 36cd364 linter/js-plugins: Clean up code (#12242) (overlookmotel)
+- 8c02ebd linter/js-plugins: Rename `specifiers` to `paths` (#12241) (overlookmotel)
+- 3adaf98 linter: Simplify getting nodes count (#12239) (overlookmotel)
+- 6e54645 language_server: Store `LintService` instead of `Linter` (#12016) (Sysix)
+- 113cf8c linter: Move `LintServiceOptions.paths` to `LintService.with_paths` (#12015) (Sysix)
+- 729b82b linter: Rename `plugin_name` to `plugin_specifier` (#12148) (overlookmotel)
+- 532b816 linter: Use `to_string` instead of `into` (#12147) (overlookmotel)
+- 89f2a69 linter: TODO comment (#12146) (overlookmotel)
+- f90d3e1 linter: Feature gate `load_external_plugin` by both `oxlint2` and `disable_oxlint2` features (#12141) (overlookmotel)
+- 12e4ec7 linter: Make `tokio` dependency optional (#12140) (overlookmotel)
+- 1d2eaca oxlint2: Introduce `force_test_reporter` feature for consistent graphical outputs (#12133) (camc314)
+- 8814c53 ast: Remove `AstKind` for `PropertyKey` (#12108) (camchenry)
+- 228cff5 semantic,linter: Assert that Program is always the first node (#12123) (Ulrich Stark)
+- e8e2a25 ast: Remove `AstKind` for `AssignmentTargetPattern` (#12105) (camchenry)
+- f7c675d linter: Rename `LintPlugins` to `BuiltinLintPlugins` (#12116) (camc314)
+- a9e5ec0 linter: Access plugins through config instead of storing directly (#12115) (camc314)
+- 9736a7f linter: Simplify `unicorn/require-post-message-target-origin` (#12110) (shulaoda)
+
+### 📚 Documentation
+
+- 2e3db46 linter: Add missing backtick preventing website from building (#12113) (camc314)
+
+### ⚡ Performance
+
+- d0f8b88 linter/js-plugins: Do not copy `Vec` (#12248) (overlookmotel)
+- 4284d19 linter/js-plugins: Use hashmap `Entry` API + remove temp `Vec` (#12247) (overlookmotel)
+- c7889c3 semantic,linter: Simplify implementation and uses of ancestors iterators (#12164) (Ulrich Stark)
+- f99959c linter: Move work out of loop (#12145) (overlookmotel)
+- 514d40c linter: Do not create `Resolver` unless required (#12142) (overlookmotel)
+- 7103527 linter/no-constructor-return: Optimize loop (#12138) (overlookmotel)
+
+
 ## [1.6.0] - 2025-07-07
 
 ### 🚀 Features

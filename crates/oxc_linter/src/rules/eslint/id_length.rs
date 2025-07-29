@@ -220,17 +220,18 @@ impl IdLength {
         let graphemes_length = segmenter.segment_str(&ident_name).count() - 1;
         let is_too_long = self.is_too_long(graphemes_length);
         let is_too_short = self.is_too_short(graphemes_length);
+
         if !is_too_long && !is_too_short {
             return;
         }
 
         let parent_node = ctx.nodes().parent_node(node.id());
+
         match parent_node.kind() {
             AstKind::ImportSpecifier(import_specifier) => {
                 if import_specifier.imported.name() == import_specifier.local.name {
                     return;
                 }
-                // TODO: Is there a better way to do this check?
                 if !import_specifier.local.content_eq(ident) {
                     return;
                 }
@@ -271,13 +272,16 @@ impl IdLength {
 
         let segmenter = GraphemeClusterSegmenter::new();
         let graphemes_length = segmenter.segment_str(&ident_name).count() - 1;
+
         let is_too_long = self.is_too_long(graphemes_length);
         let is_too_short = self.is_too_short(graphemes_length);
+
         if !is_too_long && !is_too_short {
             return;
         }
 
         let parent_node = ctx.nodes().parent_node(node.id());
+
         match parent_node.kind() {
             AstKind::ExportSpecifier(_)
             | AstKind::ImportAttribute(_)
@@ -288,16 +292,12 @@ impl IdLength {
             AstKind::ComputedMemberExpression(_)
             | AstKind::PrivateFieldExpression(_)
             | AstKind::StaticMemberExpression(_) => {
-                let AstKind::SimpleAssignmentTarget(_) = ctx.nodes().parent_kind(parent_node.id())
-                else {
-                    return;
-                };
-
-                if self.properties == PropertyKind::Never {
+                if !self.should_check_member_expression_property(parent_node, ctx) {
                     return;
                 }
             }
-            AstKind::PropertyKey(property_key) => {
+            property_key if property_key.is_property_key() => {
+                let property_key = property_key.as_property_key_kind().unwrap();
                 if self.properties == PropertyKind::Never {
                     return;
                 }
@@ -313,7 +313,7 @@ impl IdLength {
                         let binding_property_option = object_pattern
                             .properties
                             .iter()
-                            .find(|x| x.key.content_eq(property_key));
+                            .find(|x| x.key.span().contains_inclusive(property_key.span()));
 
                         if IdLength::is_binding_identifier_or_object_pattern(
                             binding_property_option,
@@ -326,6 +326,32 @@ impl IdLength {
                         return;
                     }
                     _ => {}
+                }
+            }
+            AstKind::BindingProperty(binding_prop) => {
+                if self.properties == PropertyKind::Never {
+                    return;
+                }
+                // If this node is the original identifier in a binding property, we can skip it
+                //
+                // let {a: foo} = bar;
+                //      ^
+                if IdLength::is_binding_identifier_or_object_pattern(Some(binding_prop)) {
+                    return;
+                }
+            }
+            AstKind::ObjectProperty(_) => {
+                if self.properties == PropertyKind::Never {
+                    return;
+                }
+            }
+            AstKind::AssignmentTargetPropertyProperty(assignment_target) => {
+                // Skip node when it is the original identifier in an assignment target property
+                //
+                // ({x: a}) = {};
+                //   ^
+                if assignment_target.name.span() == ident.span {
+                    return;
                 }
             }
             _ => {}
@@ -394,6 +420,37 @@ impl IdLength {
 
     fn is_too_short(&self, ident_length: usize) -> bool {
         ident_length < usize::try_from(self.min).unwrap_or(0)
+    }
+
+    fn should_check_member_expression_property(&self, node: &AstNode, ctx: &LintContext) -> bool {
+        // Only check property names in member expressions if properties == Always
+        if self.properties != PropertyKind::Always {
+            return false;
+        }
+
+        // Check if this member expression is on the left side of an assignment
+        let parent_kind = ctx.nodes().parent_kind(node.id());
+
+        let is_valid_context = if let AstKind::AssignmentExpression(assignment) = parent_kind {
+            // Check if this node is the left operand (not the right)
+            assignment.left.span() == node.span()
+        } else {
+            // Allow destructuring patterns
+            matches!(parent_kind, AstKind::AssignmentTargetPropertyProperty(_))
+        };
+
+        if !is_valid_context {
+            return false;
+        }
+
+        // Only check the rightmost property in a chain
+        let grandparent_kind = ctx.nodes().parent_kind(node.id());
+        !matches!(
+            grandparent_kind,
+            AstKind::StaticMemberExpression(_)
+                | AstKind::ComputedMemberExpression(_)
+                | AstKind::PrivateFieldExpression(_)
+        )
     }
 }
 

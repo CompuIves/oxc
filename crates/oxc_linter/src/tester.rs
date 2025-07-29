@@ -7,15 +7,17 @@ use std::{
 };
 
 use cow_utils::CowUtils;
-use oxc_allocator::{Allocator, AllocatorPool};
-use oxc_diagnostics::{GraphicalReportHandler, GraphicalTheme, NamedSource};
 use rustc_hash::FxHashMap;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
+use oxc_allocator::{Allocator, AllocatorPool};
+use oxc_diagnostics::{GraphicalReportHandler, GraphicalTheme, NamedSource};
+
 use crate::{
     AllowWarnDeny, BuiltinLintPlugins, ConfigStore, ConfigStoreBuilder, LintPlugins, LintService,
     LintServiceOptions, Linter, Oxlintrc, RuleEnum,
+    external_plugin_store::ExternalPluginStore,
     fixer::{FixKind, Fixer},
     options::LintOptions,
     rules::RULES,
@@ -501,6 +503,7 @@ impl Tester {
     ) -> TestResult {
         let allocator = Allocator::default();
         let rule = self.find_rule().read_json(rule_config.unwrap_or_default());
+        let mut external_plugin_store = ExternalPluginStore::default();
         let linter = Linter::new(
             self.lint_options,
             ConfigStore::new(
@@ -511,6 +514,7 @@ impl Tester {
                             true,
                             Oxlintrc::deserialize(v).unwrap(),
                             None,
+                            &mut external_plugin_store,
                         )
                         .unwrap()
                     })
@@ -520,7 +524,9 @@ impl Tester {
                     .with_rule(rule, AllowWarnDeny::Warn)
                     .build(),
                 FxHashMap::default(),
+                external_plugin_store,
             ),
+            None,
         )
         .with_fix(fix_kind.into());
 
@@ -537,12 +543,14 @@ impl Tester {
 
         let cwd = self.current_working_directory.clone();
         let paths = vec![Arc::<OsStr>::from(path_to_lint.as_os_str())];
-        let options =
-            LintServiceOptions::new(cwd, paths).with_cross_module(self.plugins.has_import());
-        let mut lint_service =
-            LintService::new(&linter, AllocatorPool::default(), options).with_file_system(
-                Box::new(TesterFileSystem::new(path_to_lint, source_text.to_string())),
-            );
+        let options = LintServiceOptions::new(cwd).with_cross_module(self.plugins.has_import());
+        let mut lint_service = LintService::new(linter, AllocatorPool::default(), options);
+        lint_service
+            .with_file_system(Box::new(TesterFileSystem::new(
+                path_to_lint,
+                source_text.to_string(),
+            )))
+            .with_paths(paths);
 
         let (sender, _receiver) = mpsc::channel();
         let result = lint_service.run_test_source(&allocator, false, &sender);

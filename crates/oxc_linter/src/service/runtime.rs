@@ -22,7 +22,6 @@ use oxc_resolver::Resolver;
 use oxc_semantic::{Semantic, SemanticBuilder};
 use oxc_span::{CompactStr, SourceType, VALID_EXTENSIONS};
 
-use super::LintServiceOptions;
 use crate::{
     Fixer, Linter, Message,
     fixer::PossibleFixes,
@@ -34,11 +33,13 @@ use crate::{
 #[cfg(feature = "language_server")]
 use crate::fixer::MessageWithPosition;
 
-pub struct Runtime<'l> {
+use super::LintServiceOptions;
+
+pub struct Runtime {
     cwd: Box<Path>,
     /// All paths to lint
     paths: IndexSet<Arc<OsStr>, FxBuildHasher>,
-    pub(super) linter: &'l Linter,
+    pub(super) linter: Linter,
     resolver: Option<Resolver>,
 
     pub(super) file_system: Box<dyn RuntimeFileSystem + Sync + Send>,
@@ -87,7 +88,7 @@ struct ResolvedModuleRecord {
 
 self_cell! {
     struct ModuleContent<'alloc_pool> {
-        owner: ModuleContentOwner<'alloc_pool>,
+        owner: AllocatorGuard<'alloc_pool>,
         #[not_covariant]
         dependent: ModuleContentDependent,
     }
@@ -99,10 +100,6 @@ struct ModuleContentDependent<'a> {
 
 // Safety: dependent borrows from owner. They're safe to be sent together.
 unsafe impl Send for ModuleContent<'_> {}
-
-struct ModuleContentOwner<'alloc_pool> {
-    allocator: AllocatorGuard<'alloc_pool>,
-}
 
 /// source text and semantic for each source section. They are in the same order as `ProcessedModule.section_module_records`
 type SectionContents<'a> = SmallVec<[SectionContent<'a>; 1]>;
@@ -176,9 +173,9 @@ impl RuntimeFileSystem for OsFileSystem {
     }
 }
 
-impl<'l> Runtime<'l> {
+impl Runtime {
     pub(super) fn new(
-        linter: &'l Linter,
+        linter: Linter,
         allocator_pool: AllocatorPool,
         options: LintServiceOptions,
     ) -> Self {
@@ -188,7 +185,7 @@ impl<'l> Runtime<'l> {
         Self {
             allocator_pool,
             cwd: options.cwd,
-            paths: options.paths.iter().cloned().collect(),
+            paths: IndexSet::with_capacity_and_hasher(0, FxBuildHasher),
             linter,
             resolver,
             file_system: Box::new(OsFileSystem),
@@ -196,10 +193,15 @@ impl<'l> Runtime<'l> {
     }
 
     pub fn with_file_system(
-        mut self,
+        &mut self,
         file_system: Box<dyn RuntimeFileSystem + Sync + Send>,
-    ) -> Self {
+    ) -> &mut Self {
         self.file_system = file_system;
+        self
+    }
+
+    pub fn with_paths(&mut self, paths: Vec<Arc<OsStr>>) -> &mut Self {
+        self.paths = paths.into_iter().collect();
         self
     }
 
@@ -496,7 +498,7 @@ impl<'l> Runtime<'l> {
     pub(super) fn run(&mut self, tx_error: &DiagnosticSender) {
         rayon::scope(|scope| {
             self.resolve_modules(scope, true, tx_error, |me, mut module_to_lint| {
-                module_to_lint.content.with_dependent_mut(|_owner, dep| {
+                module_to_lint.content.with_dependent_mut(|allocator_guard, dep| {
                     // If there are fixes, we will accumulate all of them and write to the file at the end.
                     // This means we do not write multiple times to the same file if there are multiple sources
                     // in the same file (for example, multiple scripts in an `.astro` file).
@@ -522,6 +524,7 @@ impl<'l> Runtime<'l> {
                                 path,
                                 Rc::new(section.semantic.unwrap()),
                                 Arc::clone(&module_record),
+                                allocator_guard,
                             ),
                             Err(errors) => errors
                                 .into_iter()
@@ -557,7 +560,7 @@ impl<'l> Runtime<'l> {
                                 section.source.start,
                                 errors,
                             );
-                            tx_error.send(Some((path.to_path_buf(), diagnostics))).unwrap();
+                            tx_error.send((path.to_path_buf(), diagnostics)).unwrap();
                         }
                     }
                     // If the new source text is owned, that means it was modified,
@@ -611,7 +614,7 @@ impl<'l> Runtime<'l> {
         rayon::scope(|scope| {
             self.resolve_modules(scope, true, &sender, |me, mut module| {
                 module.content.with_dependent_mut(
-                    |_owner, ModuleContentDependent { source_text, section_contents }| {
+                    |allocator_guard, ModuleContentDependent { source_text, section_contents }| {
                         assert_eq!(module.section_module_records.len(), section_contents.len());
 
                         let rope = &Rope::from_str(source_text);
@@ -632,6 +635,7 @@ impl<'l> Runtime<'l> {
                                         Path::new(&module.path),
                                         Rc::new(section.semantic.unwrap()),
                                         Arc::clone(&module_record),
+                                        allocator_guard,
                                     );
 
                                     messages.lock().unwrap().extend(section_message.iter().map(
@@ -748,7 +752,7 @@ impl<'l> Runtime<'l> {
         rayon::scope(|scope| {
             self.resolve_modules(scope, check_syntax_errors, tx_error, |me, mut module| {
                 module.content.with_dependent_mut(
-                    |_owner, ModuleContentDependent { source_text: _, section_contents }| {
+                    |allocator_guard, ModuleContentDependent { source_text: _, section_contents }| {
                         assert_eq!(module.section_module_records.len(), section_contents.len());
                         for (record_result, section) in module
                             .section_module_records
@@ -761,6 +765,7 @@ impl<'l> Runtime<'l> {
                                         Path::new(&module.path),
                                         Rc::new(section.semantic.unwrap()),
                                         Arc::clone(&module_record),
+                                        allocator_guard,
                                     ),
                                     Err(errors) => errors
                                         .into_iter()
@@ -804,11 +809,10 @@ impl<'l> Runtime<'l> {
         let mut module_content: Option<ModuleContent> = None;
 
         if self.paths.contains(path) {
-            let allocator = self.allocator_pool.get();
+            let allocator_guard = self.allocator_pool.get();
 
-            let build = ModuleContent::try_new(ModuleContentOwner { allocator }, |owner| {
-                let Some(stt) =
-                    self.get_source_type_and_text(Path::new(path), ext, &owner.allocator)
+            let build = ModuleContent::try_new(allocator_guard, |allocator| {
+                let Some(stt) = self.get_source_type_and_text(Path::new(path), ext, allocator)
                 else {
                     return Err(());
                 };
@@ -816,7 +820,7 @@ impl<'l> Runtime<'l> {
                 let (source_type, source_text) = match stt {
                     Ok(v) => v,
                     Err(e) => {
-                        tx_error.send(Some((Path::new(path).to_path_buf(), vec![e]))).unwrap();
+                        tx_error.send((Path::new(path).to_path_buf(), vec![e])).unwrap();
                         return Err(());
                     }
                 };
@@ -828,7 +832,7 @@ impl<'l> Runtime<'l> {
                     check_syntax_errors,
                     source_type,
                     source_text,
-                    &owner.allocator,
+                    allocator,
                     Some(&mut section_contents),
                 );
 
@@ -840,16 +844,17 @@ impl<'l> Runtime<'l> {
                 Err(()) => return default_output(),
             };
         } else {
-            let allocator = self.allocator_pool.get();
+            let allocator_guard = self.allocator_pool.get();
+            let allocator = &*allocator_guard;
 
-            let Some(stt) = self.get_source_type_and_text(Path::new(path), ext, &allocator) else {
+            let Some(stt) = self.get_source_type_and_text(Path::new(path), ext, allocator) else {
                 return default_output();
             };
 
             let (source_type, source_text) = match stt {
                 Ok(v) => v,
                 Err(e) => {
-                    tx_error.send(Some((Path::new(path).to_path_buf(), vec![e]))).unwrap();
+                    tx_error.send((Path::new(path).to_path_buf(), vec![e])).unwrap();
                     return default_output();
                 }
             };
@@ -860,7 +865,7 @@ impl<'l> Runtime<'l> {
                 check_syntax_errors,
                 source_type,
                 source_text,
-                &allocator,
+                allocator,
                 None,
             );
         }

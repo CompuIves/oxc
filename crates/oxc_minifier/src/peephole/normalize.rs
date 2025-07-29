@@ -6,7 +6,10 @@ use oxc_span::GetSpan;
 use oxc_syntax::scope::ScopeFlags;
 use oxc_traverse::{Ancestor, ReusableTraverseCtx, Traverse, traverse_mut_with_ctx};
 
-use crate::ctx::{Ctx, MinifierState, TraverseCtx};
+use crate::{
+    ctx::{Ctx, TraverseCtx},
+    state::MinifierState,
+};
 
 #[derive(Default)]
 pub struct NormalizeOptions {
@@ -391,7 +394,10 @@ impl<'a> Normalize {
 
 #[cfg(test)]
 mod test {
-    use crate::tester::{test, test_same};
+    use crate::{
+        CompressOptions,
+        tester::{default_options, test, test_options, test_same},
+    };
 
     #[test]
     fn test_while() {
@@ -430,11 +436,13 @@ mod test {
 
     #[test]
     fn drop_console() {
-        test("console.log()", "");
-        test("(() => console.log())()", "");
-        test(
+        let options = CompressOptions { drop_console: true, ..default_options() };
+        test_options("console.log()", "", &options);
+        test_options("(() => console.log())()", "", &options);
+        test_options(
             "(() => { try { return console.log() } catch {} })()",
             "(() => { try { return } catch {} })()",
+            &options,
         );
     }
 
@@ -446,7 +454,8 @@ mod test {
     #[test]
     fn fold_number_nan() {
         test("foo(Number.NaN)", "foo(NaN)");
-        test_same("let Number; foo(Number.NaN)");
+        test_same("var Number; foo(Number.NaN)");
+        test_same("let Number; foo((void 0).NaN)");
     }
 
     #[test]

@@ -6,7 +6,7 @@ use oxc::{
     CompilerInterface,
     allocator::Allocator,
     ast::{
-        AstKind, Comment,
+        Comment,
         ast::{Program, RegExpLiteral},
     },
     ast_visit::{Visit, walk},
@@ -92,12 +92,7 @@ impl CompilerInterface for Driver {
 
     fn after_semantic(&mut self, ret: &mut SemanticBuilderReturn) -> ControlFlow<()> {
         if self.check_semantic {
-            let Some(root_node) = ret.semantic.nodes().root_node() else {
-                return ControlFlow::Break(());
-            };
-            let AstKind::Program(program) = root_node.kind() else {
-                return ControlFlow::Break(());
-            };
+            let program = ret.semantic.nodes().program();
             if let Some(errors) = check_semantic_ids(program) {
                 self.errors.extend(errors);
                 return ControlFlow::Break(());

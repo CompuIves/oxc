@@ -1,6 +1,7 @@
 use std::{borrow::Cow, ops::Deref};
 
 use bitflags::bitflags;
+
 use oxc_allocator::{Allocator, CloneIn};
 use oxc_span::{GetSpan, SPAN, Span};
 
@@ -343,7 +344,7 @@ impl<'a> Fix<'a> {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub enum PossibleFixes<'a> {
     None,
     Single(Fix<'a>),

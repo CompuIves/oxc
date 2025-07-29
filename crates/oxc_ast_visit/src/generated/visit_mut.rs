@@ -1531,14 +1531,12 @@ pub mod walk_mut {
 
     #[inline]
     pub fn walk_property_key<'a, V: VisitMut<'a>>(visitor: &mut V, it: &mut PropertyKey<'a>) {
-        let kind = AstType::PropertyKey;
-        visitor.enter_node(kind);
+        // No `AstType` for this type
         match it {
             PropertyKey::StaticIdentifier(it) => visitor.visit_identifier_name(it),
             PropertyKey::PrivateIdentifier(it) => visitor.visit_private_identifier(it),
             match_expression!(PropertyKey) => visitor.visit_expression(it.to_expression_mut()),
         }
-        visitor.leave_node(kind);
     }
 
     #[inline]
@@ -1790,8 +1788,7 @@ pub mod walk_mut {
         visitor: &mut V,
         it: &mut AssignmentTarget<'a>,
     ) {
-        let kind = AstType::AssignmentTarget;
-        visitor.enter_node(kind);
+        // No `AstType` for this type
         match it {
             match_simple_assignment_target!(AssignmentTarget) => {
                 visitor.visit_simple_assignment_target(it.to_simple_assignment_target_mut())
@@ -1800,15 +1797,13 @@ pub mod walk_mut {
                 visitor.visit_assignment_target_pattern(it.to_assignment_target_pattern_mut())
             }
         }
-        visitor.leave_node(kind);
     }
 
     pub fn walk_simple_assignment_target<'a, V: VisitMut<'a>>(
         visitor: &mut V,
         it: &mut SimpleAssignmentTarget<'a>,
     ) {
-        let kind = AstType::SimpleAssignmentTarget;
-        visitor.enter_node(kind);
+        // No `AstType` for this type
         match it {
             SimpleAssignmentTarget::AssignmentTargetIdentifier(it) => {
                 visitor.visit_identifier_reference(it)
@@ -1825,7 +1820,6 @@ pub mod walk_mut {
                 visitor.visit_member_expression(it.to_member_expression_mut())
             }
         }
-        visitor.leave_node(kind);
     }
 
     #[inline]
@@ -3743,6 +3737,7 @@ pub mod walk_mut {
         match it {
             TSTypeName::IdentifierReference(it) => visitor.visit_identifier_reference(it),
             TSTypeName::QualifiedName(it) => visitor.visit_ts_qualified_name(it),
+            TSTypeName::ThisExpression(it) => visitor.visit_this_expression(it),
         }
     }
 
@@ -4156,7 +4151,8 @@ pub mod walk_mut {
         visitor: &mut V,
         it: &mut TSFunctionType<'a>,
     ) {
-        // No `AstType` for this type
+        let kind = AstType::TSFunctionType;
+        visitor.enter_node(kind);
         visitor.enter_scope(ScopeFlags::empty(), &it.scope_id);
         visitor.visit_span(&mut it.span);
         if let Some(type_parameters) = &mut it.type_parameters {
@@ -4168,6 +4164,7 @@ pub mod walk_mut {
         visitor.visit_formal_parameters(&mut it.params);
         visitor.visit_ts_type_annotation(&mut it.return_type);
         visitor.leave_scope();
+        visitor.leave_node(kind);
     }
 
     #[inline]

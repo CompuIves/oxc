@@ -22,6 +22,12 @@ pub trait MayHaveSideEffects<'a> {
     fn may_have_side_effects(&self, ctx: &impl MayHaveSideEffectsContext<'a>) -> bool;
 }
 
+impl<'a, T: MayHaveSideEffects<'a>> MayHaveSideEffects<'a> for Option<T> {
+    fn may_have_side_effects(&self, ctx: &impl MayHaveSideEffectsContext<'a>) -> bool {
+        self.as_ref().is_some_and(|t| t.may_have_side_effects(ctx))
+    }
+}
+
 impl<'a> MayHaveSideEffects<'a> for Expression<'a> {
     fn may_have_side_effects(&self, ctx: &impl MayHaveSideEffectsContext<'a>) -> bool {
         match self {
@@ -351,7 +357,11 @@ impl<'a> MayHaveSideEffects<'a> for Class<'a> {
         // Example cases: `class A extends 0 {}`, `class A extends (async function() {}) {}`
         // Considering these cases is difficult and requires to de-opt most classes with a super class.
         // To allow classes with a super class to be removed, we ignore this side effect.
-        if self.super_class.as_ref().is_some_and(|sup| sup.may_have_side_effects(ctx)) {
+        if self.super_class.as_ref().is_some_and(|sup| {
+            // `(class C extends (() => {}))` is TypeError.
+            matches!(sup.without_parentheses(), Expression::ArrowFunctionExpression(_))
+                || sup.may_have_side_effects(ctx)
+        }) {
             return true;
         }
 
@@ -417,13 +427,9 @@ impl<'a> MayHaveSideEffects<'a> for ComputedMemberExpression<'a> {
             Expression::StringLiteral(s) => {
                 property_access_may_have_side_effects(&self.object, &s.value, ctx)
             }
-            Expression::TemplateLiteral(t) if t.is_no_substitution_template() => {
-                property_access_may_have_side_effects(
-                    &self.object,
-                    &t.quasi().expect("template literal must have at least one quasi"),
-                    ctx,
-                )
-            }
+            Expression::TemplateLiteral(t) => t.single_quasi().is_some_and(|quasi| {
+                property_access_may_have_side_effects(&self.object, &quasi, ctx)
+            }),
             Expression::NumericLiteral(n) => !n.value.to_integer_index().is_some_and(|n| {
                 !integer_index_property_access_may_have_side_effects(&self.object, n, ctx)
             }),

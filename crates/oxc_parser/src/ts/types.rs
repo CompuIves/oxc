@@ -786,14 +786,14 @@ impl<'a> ParserImpl<'a> {
 
     pub(crate) fn parse_ts_type_name(&mut self) -> TSTypeName<'a> {
         let span = self.start_span();
-        let ident = self.parse_identifier_name();
-        let ident = self.ast.alloc_identifier_reference(ident.span, ident.name);
-        let left_name = TSTypeName::IdentifierReference(ident);
-        if self.at(Kind::Dot) {
-            self.parse_ts_qualified_type_name(span, left_name)
+        let left = if self.at(Kind::This) {
+            self.bump_any();
+            self.ast.ts_type_name_this_expression(self.end_span(span))
         } else {
-            left_name
-        }
+            let ident = self.parse_identifier_name();
+            self.ast.ts_type_name_identifier_reference(ident.span, ident.name)
+        };
+        if self.at(Kind::Dot) { self.parse_ts_qualified_type_name(span, left) } else { left }
     }
 
     pub(crate) fn parse_ts_qualified_type_name(

@@ -2,6 +2,8 @@ use std::{fmt::Debug, pin::Pin, sync::Arc};
 
 use serde::{Deserialize, Serialize};
 
+use oxc_allocator::Allocator;
+
 pub type ExternalLinterLoadPluginCb = Arc<
     dyn Fn(
             String,
@@ -16,28 +18,47 @@ pub type ExternalLinterLoadPluginCb = Arc<
         + 'static,
 >;
 
-pub type ExternalLinterCb = Arc<
-    dyn Fn() -> Pin<
-        Box<dyn Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>> + Send>,
-    >,
->;
+pub type ExternalLinterLintFileCb =
+    Arc<dyn Fn(String, Vec<u32>, &Allocator) -> Result<Vec<LintFileResult>, String> + Sync + Send>;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub enum PluginLoadResult {
-    Success,
+    #[serde(rename_all = "camelCase")]
+    Success {
+        name: String,
+        offset: usize,
+        rule_names: Vec<String>,
+    },
     Failure(String),
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LintFileResult {
+    pub rule_index: u32,
+    pub message: String,
+    pub loc: Loc,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct Loc {
+    pub start: u32,
+    pub end: u32,
+}
+
 #[derive(Clone)]
-#[expect(dead_code)]
+#[cfg_attr(not(all(feature = "oxlint2", not(feature = "disable_oxlint2"))), expect(dead_code))]
 pub struct ExternalLinter {
     pub(crate) load_plugin: ExternalLinterLoadPluginCb,
-    pub(crate) run: ExternalLinterCb,
+    pub(crate) lint_file: ExternalLinterLintFileCb,
 }
 
 impl ExternalLinter {
-    pub fn new(run: ExternalLinterCb, load_plugin: ExternalLinterLoadPluginCb) -> Self {
-        Self { load_plugin, run }
+    pub fn new(
+        load_plugin: ExternalLinterLoadPluginCb,
+        lint_file: ExternalLinterLintFileCb,
+    ) -> Self {
+        Self { load_plugin, lint_file }
     }
 }
 

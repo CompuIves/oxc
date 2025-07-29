@@ -55,6 +55,13 @@ impl<T: Case> Suite<T> for TypeScriptSuite<T> {
             "privateNamesIncompatibleModifiersJs.ts",
             // Exporting JSDoc types from `.js`
             "importingExportingTypes.ts",
+            // This is just a binary file
+            "TransportStream.ts",
+            // Emits TS5052 (complains compilerOptions are invalid, which we do not support), also implies TS2564 but not emitted
+            "esDecorators-emitDecoratorMetadata.ts",
+            // These tests just check `let` as variable name under `target:es6`
+            "downlevelLetConst6.ts",
+            "VariableDeclaration6_es6.ts",
         ]
         .iter()
         .any(|p| path.to_string_lossy().contains(p));
@@ -132,12 +139,104 @@ impl Case for TypeScriptCase {
 }
 
 // spellchecker:off
-// TODO: Filter out more not-supported error codes here
 static NOT_SUPPORTED_ERROR_CODES: phf::Set<&'static str> = phf::phf_set![
-    "2315",  // Type 'U' is not generic.
-    "7005",  // Variable 'x' implicitly has an 'any' type.
-    "7006",  // Parameter 'x' implicitly has an 'any' type.
-    "7008",  // Member 'v' implicitly has an 'any' type.
+    // TODO: More not-supported error codes here
+    "2011",  // Cannot convert 'string' to 'number'.
+    "2209", // The project root is ambiguous, but is required to resolve export map entry '.' in file 'package.json'. Supply the `rootDir` compiler option to disambiguate.
+    "2210", // The project root is ambiguous, but is required to resolve import map entry '.' in file 'package.json'. Supply the `rootDir` compiler option to disambiguate.
+    "2301", // Initializer of instance member variable 'y' cannot reference identifier 'aaa' declared in the constructor.
+    "2302", // Static members cannot reference class type parameters.
+    "2303", // Circular definition of import alias 'A'.
+    "2304", // Cannot find name 'a'.
+    "2305", // Module '"./b"' has no exported member 'default'.
+    "2306", // File '/node_modules/@types/react/index.d.ts' is not a module.
+    "2307", // Cannot find module './SubModule' or its corresponding type declarations.
+    "2308", // Module "./b" has already exported a member named '__foo'. Consider explicitly re-exporting to resolve the ambiguity.
+    "2310", // Type 'M2' recursively references itself as a base type.
+    "2312", // An interface can only extend an object type or intersection of object types with statically known members.
+    "2313", // Type parameter 'K' has a circular constraint.
+    "2314", // Generic type 'Array<T>' requires 1 type argument(s).
+    "2315", // Type 'D' is not generic.
+    "2317", // Global type 'Array' must have 1 type parameter(s).
+    "2318", // Cannot find global type 'AsyncDisposable'.
+    "2320", // Interface 'Z' cannot simultaneously extend types 'X' and 'Y'.
+    "2322", // Type 'number' is not assignable to type 'string'.
+    "2328", // Types of parameters 'f' and 'f' are incompatible.
+    "2665", // Invalid module name in augmentation. Module 'foo' resolves to an untyped module at '/node_modules/foo/index.js', which cannot be augmented.
+    "4023", // Exported variable 'foo' has or is using name 'Foo' from external module "type" but cannot be named.
+    "4025", // Exported variable 'b' has or is using private name 'a'.
+    "4032", // Property 'val' of exported interface has or is using name 'I' from private module '"a"'.
+    "4081", // Exported type alias 'MyClass' has or is using private name 'myClass'.
+    "4094", // Property '_assertIsStripped' of exported anonymous class type may not be private or protected.
+    "4104", // The type 'readonly string[]' is 'readonly' and cannot be assigned to the mutable type 'string[]'.
+    "4105", // Private or protected member 'a' cannot be accessed on a type parameter.
+    "4109", // Type arguments for 'NumArray' circularly reference themselves.
+    "4110", // Tuple type arguments circularly reference themselves.
+    "4111", // Property 'foo' comes from an index signature, so it must be accessed with ['foo'].
+    "4112", // This member cannot have an 'override' modifier because its containing class 'C' does not extend another class.
+    "4113", // This member cannot have an 'override' modifier because it is not declared in the base class 'B'.
+    "4114", // This member must have an 'override' modifier because it overrides a member in the base class 'B'.
+    "4115", // This parameter property must have an 'override' modifier because it overrides a member in base class 'B'.
+    "4116", // This member must have an 'override' modifier because it overrides an abstract method that is declared in the base class 'AB'.
+    "4117", // This member cannot have an 'override' modifier because it is not declared in the base class 'A'. Did you mean 'doSomething'?
+    "4118", // The type of this node cannot be serialized because its property '[timestampSymbol]' cannot be serialized.
+    "4119", // This member must have a JSDoc comment with an '@override' tag because it overrides a member in the base class 'A'.
+    "4121", // This member cannot have a JSDoc comment with an '@override' tag because its containing class 'C' does not extend another class.
+    "4122", // This member cannot have a JSDoc comment with an '@override' tag because it is not declared in the base class 'A'.
+    "4123", // This member cannot have a JSDoc comment with an 'override' tag because it is not declared in the base class 'A'. Did you mean 'doSomething'?
+    "5009", // Cannot find the common subdirectory path for the input files.
+    "5052", // Option 'checkJs' cannot be specified without specifying option 'allowJs'.
+    "5053", // Option 'mapRoot' cannot be specified with option 'inlineSourceMap'.
+    "5055", // Cannot write file 'a.d.ts' because it would overwrite input file.
+    "5056", // Cannot write file 'a.js' because it would be overwritten by multiple input files.
+    "5059", // Invalid value for '--reactNamespace'. 'my-React-Lib' is not a valid identifier.
+    "5061", // Pattern 'too*many*asterisks' can have at most one '*' character.
+    "5062", // Substitution '*2*' in pattern '*1*' can have at most one '*' character.
+    "5063", // Substitutions for pattern '*' should be an array.
+    "5064", // Substitution '1' for pattern '*' has incorrect type, expected 'string', got 'number'.
+    "5066", // Substitutions for pattern 'foo' shouldn't be an empty array.
+    "5067", // Invalid value for 'jsxFactory'. 'Element.createElement=' is not a valid identifier or qualified-name.
+    "5069", // Option 'emitDeclarationOnly' cannot be specified without specifying option 'declaration' or option 'composite'.
+    "5070", // Option '--resolveJsonModule' cannot be specified when 'moduleResolution' is set to 'classic'.
+    "5071", // Option '--resolveJsonModule' cannot be specified when 'module' is set to 'none', 'system', or 'umd'.
+    "5074", // Option '--incremental' can only be specified using tsconfig, emitting to single file or when option '--tsBuildInfoFile' is specified.
+    "5088", // The inferred type of 'foo' references a type with a cyclic structure which cannot be trivially serialized. A type annotation is necessary.
+    "5090", // Non-relative paths are not allowed when 'baseUrl' is not set. Did you forget a leading './'?
+    "5091", // Option 'preserveConstEnums' cannot be disabled when 'isolatedModules' is enabled.
+    "5095", // Option 'bundler' can only be used when 'module' is set to 'preserve' or to 'es2015' or later.
+    "5097", // An import path can only end with a '.ts' extension when 'allowImportingTsExtensions' is enabled.
+    "5098", // Option 'customConditions' can only be used when 'moduleResolution' is set to 'node16', 'nodenext', or 'bundler'.
+    "5101", // Option 'noImplicitUseStrict' is deprecated and will stop functioning in TypeScript 5.5. Specify compilerOption '"ignoreDeprecations": "5.0"' to silence this error.
+    "5102", // Option 'noImplicitUseStrict' has been removed. Please remove it from your configuration.
+    "5103", // Invalid value for '--ignoreDeprecations'.
+    "5105", // Option 'verbatimModuleSyntax' cannot be used when 'module' is set to 'UMD', 'AMD', or 'System'.
+    "5107", // Option 'target=ES3' is deprecated and will stop functioning in TypeScript 5.5. Specify compilerOption '"ignoreDeprecations": "5.0"' to silence this error.
+    "5108", // Option 'target=ES3' has been removed. Please remove it from your configuration.
+    "5109", // Option 'moduleResolution' must be set to 'Node16' (or left unspecified) when option 'module' is set to 'Node18'.
+    "5110", // Option 'module' must be set to 'Node16' when option 'moduleResolution' is set to 'Node16'.
+    "6053", // File 'invalid.ts' not found.
+    "6054", // File 'b.js.map' has an unsupported extension. The only supported extensions are '.ts', '.tsx', '.d.ts', '.js', '.jsx', '.cts', '.d.cts', '.cjs', '.mts', '.d.mts', '.mjs'.
+    "6082", // Only 'amd' and 'system' modules are supported alongside --outFile.
+    "6131", // Cannot compile modules using option 'outFile' unless the '--module' flag is 'amd' or 'system'.
+    "6133", // 'f1' is declared but its value is never read.
+    "6137", // Cannot import type declaration files. Consider importing 'foo-bar' instead of '@types/foo-bar'.
+    "6138", // Property 'used' is declared but its value is never read.
+    "6142", // Module '/foo' was resolved to '/foo.jsx', but '--jsx' is not set.
+    "6192", // All imports in import declaration are unused.
+    "6196", // 'i1' is declared but never used.
+    "6198", // All destructured elements are unused.
+    "6199", // All variables are unused.
+    "6200", // Definitions of the following identifiers conflict with those in another file: A, B, C, D, E, F, G, H, I
+    "6205", // All type parameters are unused.
+    "6229", // Tag 'MyComp4' expects at least '4' arguments, but the JSX factory 'React.createElement' provides at most '2'.
+    "6231", // Could not resolve the path 'invalid' with the extensions: '.ts', '.tsx', '.d.ts', '.js', '.jsx', '.cts', '.d.cts', '.cjs', '.mts', '.d.mts', '.mjs'.
+    "6232", // Declaration augments declaration in another file. This cannot be serialized.
+    "6234", // This expression is not callable because it is a 'get' accessor. Did you mean to use it without '()'?
+    "6263", // Module './dir/native.node' was resolved to 'dir/native.d.node.ts', but '--allowArbitraryExtensions' is not set.
+    "6379", // Composite projects may not disable incremental compilation.
+    "7005", // Variable 'x' implicitly has an 'any' type.
+    "7006", // Parameter 'x' implicitly has an 'any' type.
+    "7008", // Member 'v' implicitly has an 'any' type.
     "7009", // 'new' expression, whose target lacks a construct signature, implicitly has an 'any' type.
     "7010", // 'temp', which lacks return-type annotation, implicitly has an 'any' return type.
     "7011", // Function expression, which lacks return-type annotation, implicitly has an 'any' return type.
@@ -155,12 +254,17 @@ static NOT_SUPPORTED_ERROR_CODES: phf::Set<&'static str> = phf::phf_set![
     "7024", // Function implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.
     "7025", // Generator implicitly has yield type 'any'. Consider supplying a return type annotation.
     "7026", // JSX element implicitly has type 'any' because no interface 'JSX.IntrinsicElements' exists.
+    "7027", // Unreachable code detected.
+    "7028", // Unused label.
+    "7029", // Fallthrough case in switch.
+    "7030", // Not all code paths return a value.
     "7031", // Binding element 'a5' implicitly has an 'any' type.
     "7032", // Property 'message' implicitly has type 'any', because its set accessor lacks a parameter type annotation.
     "7033", // Property 'message' implicitly has type 'any', because its get accessor lacks a return type annotation.
     "7034", // Variable 'x' implicitly has type 'any[]' in some locations where its type cannot be determined.
     "7036", // Dynamic import's specifier must be of type 'string', but here has type 'null'.
     "7039", // Mapped object type implicitly has an 'any' template type.
+    "7041", // The containing arrow function captures the global value of 'this'.
     "7052", // Element implicitly has an 'any' type because type '{ get: (key: string) => string; }' has no index signature. Did you mean to call 'c.get'?
     "7053", // Element implicitly has an 'any' type because expression of type 'string' can't be used to index type '{}'.
     "7055", // 'h', which lacks return-type annotation, implicitly has an 'any' yield type.

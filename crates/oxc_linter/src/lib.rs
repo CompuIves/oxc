@@ -41,7 +41,7 @@ mod generated {
 pub use crate::{
     config::{
         BuiltinLintPlugins, Config, ConfigBuilderError, ConfigStore, ConfigStoreBuilder,
-        ESLintRule, LintPlugins, Oxlintrc,
+        ESLintRule, LintPlugins, Oxlintrc, ResolvedLinterState,
     },
     context::LintContext,
     external_linter::{
@@ -61,7 +61,7 @@ pub use crate::{
     utils::read_to_string,
 };
 use crate::{
-    config::{LintConfig, OxlintEnv, OxlintGlobals, OxlintSettings, ResolvedLinterState},
+    config::{LintConfig, OxlintEnv, OxlintGlobals, OxlintSettings},
     context::ContextHost,
     fixer::{Fixer, Message},
     rules::RuleEnum,
@@ -136,7 +136,7 @@ impl Linter {
 
         let rules = rules
             .iter()
-            .filter(|(rule, _)| rule.should_run(&ctx_host))
+            .filter(|(rule, _)| rule.should_run(&ctx_host) && !rule.is_tsgolint_rule())
             .map(|(rule, severity)| (rule, Rc::clone(&ctx_host).spawn(rule, *severity)));
 
         let semantic = ctx_host.semantic();
@@ -255,7 +255,7 @@ impl Linter {
         let metadata = RawTransferMetadata::new(program_offset);
         let metadata_ptr = allocator.end_ptr().cast::<RawTransferMetadata>();
         // SAFETY: `Allocator` was created by `FixedSizeAllocator` which reserved space after `end_ptr`
-        // for a `RawTransferMetadata`. `end_ptr` is aligned for `FixedSizeAllocator`.
+        // for a `RawTransferMetadata`. `end_ptr` is aligned for `RawTransferMetadata`.
         unsafe { metadata_ptr.write(metadata) };
 
         // Pass AST and rule IDs to JS

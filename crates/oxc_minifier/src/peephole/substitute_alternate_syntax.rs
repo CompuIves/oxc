@@ -2,13 +2,12 @@ use std::iter::repeat_with;
 
 use oxc_allocator::{CloneIn, TakeIn, Vec};
 use oxc_ast::{NONE, ast::*};
-use oxc_ecmascript::constant_evaluation::DetermineValueType;
+use oxc_ecmascript::constant_evaluation::{ConstantEvaluation, ConstantValue, DetermineValueType};
 use oxc_ecmascript::{ToJsString, ToNumber, side_effects::MayHaveSideEffects};
 use oxc_span::GetSpan;
 use oxc_span::SPAN;
 use oxc_syntax::{
     es_target::ESTarget,
-    identifier::is_identifier_name,
     number::NumberBase,
     operator::{BinaryOperator, UnaryOperator},
 };
@@ -16,7 +15,7 @@ use oxc_traverse::Ancestor;
 
 use crate::ctx::Ctx;
 
-use super::{LatePeepholeOptimizations, PeepholeOptimizations};
+use super::PeepholeOptimizations;
 
 /// A peephole optimization that minimizes code by simplifying conditional
 /// expressions, replacing IFs with HOOKs, replacing object constructors
@@ -165,6 +164,7 @@ impl<'a> PeepholeOptimizations {
             Expression::BinaryExpression(e) => Self::swap_binary_expressions(e),
             Expression::FunctionExpression(e) => self.try_remove_name_from_functions(e, ctx),
             Expression::ClassExpression(e) => self.try_remove_name_from_classes(e, ctx),
+            Expression::NewExpression(e) => Self::try_compress_typed_array_constructor(e, ctx),
             _ => {}
         }
 
@@ -186,6 +186,8 @@ impl<'a> PeepholeOptimizations {
                     Self::try_fold_object_or_array_constructor(e.span, name, &mut e.arguments, ctx)
                 })
                 .or_else(|| self.try_fold_simple_function_call(e, ctx)),
+            Expression::BooleanLiteral(_) => Self::try_compress_boolean(expr, ctx),
+            Expression::ArrayExpression(_) => Self::try_compress_array_expression(expr, ctx),
             _ => None,
         } {
             *expr = folded_expr;
@@ -655,18 +657,10 @@ impl<'a> PeepholeOptimizations {
                 match arg {
                     // `String()` -> `''`
                     None => Some(ctx.ast.expression_string_literal(span, "", None)),
-                    // `String(a)` -> `'' + (a)`
-                    Some(arg) => {
-                        if !arg.is_literal() {
-                            return None;
-                        }
-                        Some(ctx.ast.expression_binary(
-                            span,
-                            ctx.ast.expression_string_literal(call_expr.span, "", None),
-                            BinaryOperator::Addition,
-                            arg.take_in(ctx.ast),
-                        ))
-                    }
+                    Some(arg) => arg
+                        .evaluate_value_to_string(ctx)
+                        .filter(|_| !arg.may_have_side_effects(ctx))
+                        .map(|s| ctx.value_to_expr(call_expr.span, ConstantValue::String(s))),
                 }
             }
             "Number" => Some(ctx.ast.expression_numeric_literal(
@@ -877,35 +871,40 @@ impl<'a> PeepholeOptimizations {
         computed: &mut bool,
         ctx: &mut Ctx<'a, '_>,
     ) {
-        if let PropertyKey::NumericLiteral(_) = key {
-            if *computed {
-                *computed = false;
+        match key {
+            PropertyKey::NumericLiteral(_) => {
+                if *computed {
+                    *computed = false;
+                }
             }
-            return;
-        }
-        let PropertyKey::StringLiteral(s) = key else { return };
-        let value = s.value.as_str();
-        if is_identifier_name(value) {
-            *computed = false;
-            *key = PropertyKey::StaticIdentifier(ctx.ast.alloc_identifier_name(s.span, s.value));
-            ctx.state.changed = true;
-            return;
-        }
-        if let Some(value) = Ctx::string_to_equivalent_number_value(value) {
-            if value >= 0.0 {
-                *computed = false;
-                *key = PropertyKey::NumericLiteral(ctx.ast.alloc_numeric_literal(
-                    s.span,
-                    value,
-                    None,
-                    NumberBase::Decimal,
-                ));
-                ctx.state.changed = true;
-                return;
+            PropertyKey::StringLiteral(s) => {
+                let value = s.value.as_str();
+                if Ctx::is_identifier_name_patched(value) {
+                    *computed = false;
+                    *key = PropertyKey::StaticIdentifier(
+                        ctx.ast.alloc_identifier_name(s.span, s.value),
+                    );
+                    ctx.state.changed = true;
+                    return;
+                }
+                if let Some(value) = Ctx::string_to_equivalent_number_value(value) {
+                    if value >= 0.0 {
+                        *computed = false;
+                        *key = PropertyKey::NumericLiteral(ctx.ast.alloc_numeric_literal(
+                            s.span,
+                            value,
+                            None,
+                            NumberBase::Decimal,
+                        ));
+                        ctx.state.changed = true;
+                        return;
+                    }
+                }
+                if *computed {
+                    *computed = false;
+                }
             }
-        }
-        if *computed {
-            *computed = false;
+            _ => {}
         }
     }
 
@@ -995,22 +994,6 @@ impl<'a> PeepholeOptimizations {
         if class.id.as_ref().is_some_and(|id| ctx.scoping().symbol_is_unused(id.symbol_id())) {
             class.id = None;
             ctx.state.changed = true;
-        }
-    }
-}
-
-impl<'a> LatePeepholeOptimizations {
-    pub fn substitute_exit_expression(expr: &mut Expression<'a>, ctx: &mut Ctx<'a, '_>) {
-        if let Expression::NewExpression(e) = expr {
-            Self::try_compress_typed_array_constructor(e, ctx);
-        }
-
-        if let Some(folded_expr) = match expr {
-            Expression::BooleanLiteral(_) => Self::try_compress_boolean(expr, ctx),
-            Expression::ArrayExpression(_) => Self::try_compress_array_expression(expr, ctx),
-            _ => None,
-        } {
-            *expr = folded_expr;
         }
     }
 
@@ -1685,6 +1668,21 @@ mod test {
         test_same("v = +foo - bar");
         test_same("v = foo - +bar");
         test_same("v = 1 + +foo"); // cannot compress into `1 + foo` because `foo` can be a string
+
+        test("v = +d / 1000", "v = d / 1000");
+        test("v = 1000 * +d", "v = 1000 * d");
+        test("v = +d * 1000", "v = d * 1000");
+        test("v = 2 - +this._x.call(null, node.data)", "v = 2 - this._x.call(null, node.data)");
+
+        test("v = 5 | +b", "v = 5 | b");
+        test("v = +b | 5", "v = b | 5");
+        test("v = 7 & +c", "v = 7 & c");
+        test("v = 3 ^ +d", "v = 3 ^ d");
+        // Don't remove - unsafe for BigInt operations
+        test_same("v = a - +b");
+        test_same("v = +a - b");
+        test_same("v = a | +b");
+        test_same("v = +a | b");
     }
 
     #[test]
@@ -1743,6 +1741,13 @@ mod test {
             "class C { static accessor ['__proto__'] = 0 }",
             "class C { static accessor __proto__ = 0 }",
         );
+
+        // Patch KATAKANA MIDDLE DOT and HALFWIDTH KATAKANA MIDDLE DOT
+        // <https://github.com/oxc-project/unicode-id-start/pull/3>
+        test_same("x = { 'x・': 0 };");
+        test_same("x = { 'x･': 0 };");
+        test_same("x = y['x・'];");
+        test_same("x = y['x･'];");
 
         // <https://tc39.es/ecma262/2024/multipage/ecmascript-language-functions-and-classes.html#sec-static-semantics-classelementkind>
         // <https://tc39.es/ecma262/2024/multipage/ecmascript-language-functions-and-classes.html#sec-class-definitions-static-semantics-early-errors>
@@ -1822,6 +1827,8 @@ mod test {
         test_same("var a = String?.(23)");
 
         test("var a = String('hello')", "var a = 'hello'");
+        test("var a = String(true)", "var a = 'true'");
+        test("var a = String(!0)", "var a = 'true'");
         // Don't fold the existence check to preserve behavior
         test_same("var a = String?.('hello')");
 

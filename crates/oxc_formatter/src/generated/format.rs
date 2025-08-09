@@ -787,19 +787,13 @@ impl<'a> Format<'a> for AstNode<'a, TryStatement<'a>> {
 
 impl<'a> Format<'a> for AstNode<'a, CatchClause<'a>> {
     fn fmt(&self, f: &mut Formatter<'_, 'a>) -> FormatResult<()> {
-        self.format_leading_comments(f)?;
-        let result = self.write(f);
-        self.format_trailing_comments(f)?;
-        result
+        self.write(f)
     }
 }
 
 impl<'a> Format<'a> for AstNode<'a, CatchParameter<'a>> {
     fn fmt(&self, f: &mut Formatter<'_, 'a>) -> FormatResult<()> {
-        self.format_leading_comments(f)?;
-        let result = self.write(f);
-        self.format_trailing_comments(f)?;
-        result
+        self.write(f)
     }
 }
 
@@ -920,10 +914,7 @@ impl<'a> Format<'a> for AstNode<'a, FormalParameter<'a>> {
 
 impl<'a> Format<'a> for AstNode<'a, FunctionBody<'a>> {
     fn fmt(&self, f: &mut Formatter<'_, 'a>) -> FormatResult<()> {
-        self.format_leading_comments(f)?;
-        let result = self.write(f);
-        self.format_trailing_comments(f)?;
-        result
+        self.write(f)
     }
 }
 
@@ -2004,6 +1995,21 @@ impl<'a> Format<'a> for AstNode<'a, TSTypeQueryExprName<'a>> {
 }
 
 impl<'a> Format<'a> for AstNode<'a, TSImportType<'a>> {
+    fn fmt(&self, f: &mut Formatter<'_, 'a>) -> FormatResult<()> {
+        self.format_leading_comments(f)?;
+        let result = self.write(f);
+        self.format_trailing_comments(f)?;
+        result
+    }
+}
+
+impl<'a> Format<'a> for AstNode<'a, TSImportTypeQualifier<'a>> {
+    fn fmt(&self, f: &mut Formatter<'_, 'a>) -> FormatResult<()> {
+        self.write(f)
+    }
+}
+
+impl<'a> Format<'a> for AstNode<'a, TSImportTypeQualifiedName<'a>> {
     fn fmt(&self, f: &mut Formatter<'_, 'a>) -> FormatResult<()> {
         self.format_leading_comments(f)?;
         let result = self.write(f);

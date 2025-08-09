@@ -1,6 +1,7 @@
 use std::path::Path;
 
 use nonmax::NonMaxU32;
+
 use oxc_index::{Idx, IndexVec};
 use oxc_span::Span;
 use oxc_syntax::identifier::{LS, PS};
@@ -547,7 +548,7 @@ mod test {
         // The name `b` -> `c`, save `b` to token.
         assert_eq!(
             sm.get_source_view_token(1_u32).as_ref().and_then(|token| token.get_name()),
-            Some("b")
+            Some(&"b".into())
         );
     }
 

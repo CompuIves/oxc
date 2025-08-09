@@ -1,12 +1,11 @@
 use oxc_allocator::TakeIn;
 use oxc_ast::ast::*;
-use oxc_syntax::identifier::is_identifier_name;
 
 use crate::ctx::Ctx;
 
-use super::LatePeepholeOptimizations;
+use super::PeepholeOptimizations;
 
-impl<'a> LatePeepholeOptimizations {
+impl<'a> PeepholeOptimizations {
     /// Converts property accesses from quoted string or bracket access syntax to dot or unquoted string
     /// syntax, where possible. Dot syntax is more compact.
     ///
@@ -17,7 +16,7 @@ impl<'a> LatePeepholeOptimizations {
     pub fn convert_to_dotted_properties(expr: &mut MemberExpression<'a>, ctx: &mut Ctx<'a, '_>) {
         let MemberExpression::ComputedMemberExpression(e) = expr else { return };
         let Expression::StringLiteral(s) = &e.expression else { return };
-        if is_identifier_name(&s.value) {
+        if Ctx::is_identifier_name_patched(&s.value) {
             let property = ctx.ast.identifier_name(s.span, s.value);
             *expr =
                 MemberExpression::StaticMemberExpression(ctx.ast.alloc_static_member_expression(

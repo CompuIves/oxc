@@ -143,6 +143,7 @@ mod eslint {
     pub mod no_ternary;
     pub mod no_this_before_super;
     pub mod no_throw_literal;
+    pub mod no_unassigned_vars;
     pub mod no_undef;
     pub mod no_undefined;
     pub mod no_unexpected_multiline;
@@ -166,6 +167,7 @@ mod eslint {
     pub mod no_void;
     pub mod no_with;
     pub mod operator_assignment;
+    pub mod prefer_destructuring;
     pub mod prefer_exponentiation_operator;
     pub mod prefer_numeric_literals;
     pub mod prefer_object_has_own;
@@ -207,9 +209,11 @@ mod typescript {
     pub mod no_explicit_any;
     pub mod no_extra_non_null_assertion;
     pub mod no_extraneous_class;
+    pub mod no_floating_promises;
     pub mod no_import_type_side_effects;
     pub mod no_inferrable_types;
     pub mod no_misused_new;
+    pub mod no_misused_promises;
     pub mod no_namespace;
     pub mod no_non_null_asserted_nullish_coalescing;
     pub mod no_non_null_asserted_optional_chain;
@@ -600,6 +604,7 @@ oxc_macros::declare_all_lint_rules! {
     eslint::max_nested_callbacks,
     eslint::max_params,
     eslint::new_cap,
+    eslint::no_unassigned_vars,
     eslint::no_extra_bind,
     eslint::no_alert,
     eslint::no_array_constructor,
@@ -704,6 +709,7 @@ oxc_macros::declare_all_lint_rules! {
     eslint::no_void,
     eslint::no_with,
     eslint::operator_assignment,
+    eslint::prefer_destructuring,
     eslint::prefer_promise_reject_errors,
     eslint::prefer_exponentiation_operator,
     eslint::prefer_numeric_literals,
@@ -961,6 +967,8 @@ oxc_macros::declare_all_lint_rules! {
     typescript::consistent_type_imports,
     typescript::explicit_module_boundary_types,
     typescript::explicit_function_return_type,
+    typescript::no_misused_promises,
+    typescript::no_floating_promises,
     typescript::no_inferrable_types,
     typescript::no_confusing_non_null_assertion,
     typescript::no_duplicate_enum_values,

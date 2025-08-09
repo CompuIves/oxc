@@ -10,18 +10,20 @@ use std::{
 
 use cow_utils::CowUtils;
 use ignore::{gitignore::Gitignore, overrides::OverrideBuilder};
+use rustc_hash::{FxHashMap, FxHashSet};
+use serde_json::Value;
+
 use oxc_allocator::AllocatorPool;
 use oxc_diagnostics::{DiagnosticSender, DiagnosticService, GraphicalReportHandler, OxcDiagnostic};
 use oxc_linter::{
     AllowWarnDeny, Config, ConfigStore, ConfigStoreBuilder, ExternalLinter, ExternalPluginStore,
     InvalidFilterKind, LintFilter, LintOptions, LintService, LintServiceOptions, Linter, Oxlintrc,
 };
-use rustc_hash::{FxHashMap, FxHashSet};
-use serde_json::Value;
 
 use crate::{
     cli::{CliRunResult, LintCommand, MiscOptions, ReportUnusedDirectives, WarningOptions},
     output_formatter::{LintCommandInfo, OutputFormatter},
+    tsgolint::TsGoLintState,
     walk::Walk,
 };
 
@@ -276,21 +278,44 @@ impl LintRunner {
             || nested_configs.values().any(|config| config.plugins().has_import());
         let mut options = LintServiceOptions::new(self.cwd).with_cross_module(use_cross_module);
 
-        let lint_config = config_builder.build();
+        let lint_config = match config_builder.build(&external_plugin_store) {
+            Ok(config) => config,
+            Err(e) => {
+                print_and_flush_stdout(
+                    stdout,
+                    &format!(
+                        "Failed to build configuration.\n{}\n",
+                        render_report(&handler, &OxcDiagnostic::error(e.to_string()))
+                    ),
+                );
+                return CliRunResult::InvalidOptionConfig;
+            }
+        };
 
         let report_unused_directives = match inline_config_options.report_unused_directives {
             ReportUnusedDirectives::WithoutSeverity(true) => Some(AllowWarnDeny::Warn),
             ReportUnusedDirectives::WithSeverity(Some(severity)) => Some(severity),
             _ => None,
         };
+        let (mut diagnostic_service, tx_error) =
+            Self::get_diagnostic_service(&output_formatter, &warning_options, &misc_options);
 
-        let linter = Linter::new(
-            LintOptions::default(),
-            ConfigStore::new(lint_config, nested_configs, external_plugin_store),
-            self.external_linter,
-        )
-        .with_fix(fix_options.fix_kind())
-        .with_report_unused_directives(report_unused_directives);
+        let config_store = ConfigStore::new(lint_config, nested_configs, external_plugin_store);
+
+        // Run type-aware linting through tsgolint
+        // TODO: Add a warning message if `tsgolint` cannot be found, but type-aware rules are enabled
+        if let Some(ret) = self
+            .options
+            .type_aware
+            .then(|| TsGoLintState::new(tx_error.clone(), config_store.clone(), &paths, &options))
+            .and_then(|s| s.lint(stdout))
+        {
+            return ret;
+        }
+
+        let linter = Linter::new(LintOptions::default(), config_store, self.external_linter)
+            .with_fix(fix_options.fix_kind())
+            .with_report_unused_directives(report_unused_directives);
 
         let tsconfig = basic_options.tsconfig;
         if let Some(path) = tsconfig.as_ref() {
@@ -310,9 +335,6 @@ impl LintRunner {
                 return CliRunResult::InvalidOptionTsConfig;
             }
         }
-
-        let (mut diagnostic_service, tx_error) =
-            Self::get_diagnostic_service(&output_formatter, &warning_options, &misc_options);
 
         let number_of_rules = linter.number_of_rules();
 
@@ -445,7 +467,10 @@ impl LintRunner {
             while let Some(dir) = current {
                 // NOTE: Initial benchmarking showed that it was faster to iterate over the directories twice
                 // rather than constructing the configs in one iteration. It's worth re-benchmarking that though.
-                directories.insert(dir);
+                let inserted = directories.insert(dir);
+                if !inserted {
+                    break;
+                }
                 current = dir.parent();
             }
         }
@@ -486,7 +511,19 @@ impl LintRunner {
             }
             .with_filters(filters);
 
-            let config = builder.build();
+            let config = match builder.build(external_plugin_store) {
+                Ok(config) => config,
+                Err(e) => {
+                    print_and_flush_stdout(
+                        stdout,
+                        &format!(
+                            "Failed to build configuration.\n{}\n",
+                            render_report(handler, &OxcDiagnostic::error(e.to_string()))
+                        ),
+                    );
+                    return Err(CliRunResult::InvalidOptionConfig);
+                }
+            };
             nested_configs.insert(dir.to_path_buf(), config);
         }
 
@@ -544,7 +581,7 @@ impl LintRunner {
     }
 }
 
-fn print_and_flush_stdout(stdout: &mut dyn Write, message: &str) {
+pub fn print_and_flush_stdout(stdout: &mut dyn Write, message: &str) {
     stdout.write_all(message.as_bytes()).or_else(check_for_writer_error).unwrap();
     stdout.flush().unwrap();
 }
@@ -860,29 +897,12 @@ mod test {
 
     #[test]
     fn test_fix() {
-        use std::fs;
-        let file = "fixtures/linter/fix.js";
-        let args = &["--fix", file];
-        let content_original = fs::read_to_string(file).unwrap();
-        #[expect(clippy::disallowed_methods)]
-        let content = content_original.replace("\r\n", "\n");
-        assert_eq!(&content, "debugger\n");
-
-        // Apply fix to the file.
-        Tester::new().test(args);
-        #[expect(clippy::disallowed_methods)]
-        let new_content = fs::read_to_string(file).unwrap().replace("\r\n", "\n");
-        assert_eq!(new_content, "\n");
-
-        // File should not be modified if no fix is applied.
-        let modified_before: std::time::SystemTime =
-            fs::metadata(file).unwrap().modified().unwrap();
-        Tester::new().test(args);
-        let modified_after = fs::metadata(file).unwrap().modified().unwrap();
-        assert_eq!(modified_before, modified_after);
-
-        // Write the file back.
-        fs::write(file, content_original).unwrap();
+        Tester::test_fix("fixtures/fix_argument/fix.js", "debugger\n", "\n");
+        Tester::test_fix(
+            "fixtures/fix_argument/fix.vue",
+            "<script>debugger;</script>\n<script>debugger;</script>\n",
+            "<script></script>\n<script></script>\n",
+        );
     }
 
     #[test]
@@ -1192,5 +1212,20 @@ mod test {
     fn test_jsx_a11y_label_has_associated_control() {
         let args = &["-c", ".oxlintrc.json"];
         Tester::new().with_cwd("fixtures/issue_11644".into()).test_and_snapshot(args);
+    }
+
+    // ToDo: `tsgolint` does not support `big-endian`?
+    #[test]
+    #[cfg(not(target_endian = "big"))]
+    fn test_tsgolint() {
+        let args = &["--type-aware"];
+        Tester::new().with_cwd("fixtures/tsgolint".into()).test_and_snapshot(args);
+    }
+
+    #[test]
+    #[cfg(not(any(target_os = "windows", target_endian = "big")))]
+    fn test_tsgolint_config() {
+        let args = &["--type-aware", "-c", "config-test.json"];
+        Tester::new().with_cwd("fixtures/tsgolint".into()).test_and_snapshot(args);
     }
 }

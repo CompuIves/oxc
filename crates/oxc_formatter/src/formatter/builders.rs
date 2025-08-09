@@ -10,8 +10,11 @@ use oxc_span::{GetSpan, Span};
 use oxc_syntax::identifier::{is_line_terminator, is_white_space_single_line};
 
 use super::{
-    Argument, Arguments, Buffer, GroupId, TextSize, TokenText, VecBuffer, format_element,
-    format_element::tag::{Condition, Tag},
+    Argument, Arguments, Buffer, Comments, GroupId, TextSize, TokenText, VecBuffer,
+    format_element::{
+        self,
+        tag::{Condition, Tag},
+    },
     prelude::{
         tag::{DedentMode, GroupMode, LabelId},
         *,
@@ -146,7 +149,7 @@ pub const fn empty_line() -> Line {
 ///
 /// # Examples
 ///
-/// The line breaks are emitted as spaces if the enclosing `Group` fits on a a single line:
+/// The line breaks are emitted as spaces if the enclosing `Group` fits on a single line:
 /// ```
 /// use biome_formatter::{format, format_args};
 /// use biome_formatter::prelude::*;
@@ -863,7 +866,7 @@ impl std::fmt::Debug for Indent<'_, '_> {
 ///                         text("Aligned, and indented"),
 ///                         dedent(&format_args![
 ///                             hard_line_break(),
-///                             text("aligned, not Intended"),
+///                             text("aligned, not indented"),
 ///                         ]),
 ///                     ])
 ///                 ]
@@ -872,7 +875,7 @@ impl std::fmt::Debug for Indent<'_, '_> {
 ///         ]
 ///     )?;
 ///     assert_eq!(
-///      "root\n        Indented\n          Indented and aligned\n        Indented, not aligned\n  Aligned\n          Aligned, and indented\n  aligned, not Intended\nroot level",
+///      "root\n        Indented\n          Indented and aligned\n        Indented, not aligned\n  Aligned\n          Aligned, and indented\n  aligned, not indented\nroot level",
 ///      elements.print()?.as_code()
 ///  );
 /// #    Ok(())

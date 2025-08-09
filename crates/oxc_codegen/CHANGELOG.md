@@ -4,6 +4,43 @@ All notable changes to this package will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0).
 
+## [0.81.0] - 2025-08-06
+
+### 💥 BREAKING CHANGES
+
+- 50b91ac ast: [**BREAKING**] Remove `IdentifierReference` from `qualifier` field of `TSImportType` (#12799) (camc314)
+
+### 🐛 Bug Fixes
+
+- 3eed87a codegen: Wrap parens for `TSUnionType` (#12830) (Boshen)
+
+### ⚡ Performance
+
+- 2c4369a syntax,codegen: Replace `ryu_js` with `dragonbox_ecma` for floating point formatting (#12821) (Copilot)
+
+
+## [0.80.0] - 2025-08-03
+
+### 💥 BREAKING CHANGES
+
+- cd93174 ast: [**BREAKING**] Introduce `WithClauseKeyword` (#12741) (overlookmotel)
+
+### 🚀 Features
+
+- af4d558 codegen: Add options to control indentation (#12691) (Copilot)
+
+### 📚 Documentation
+
+- 514322c rust: Add minimal documentation to example files in crates directory (#12731) (Copilot)
+- de1de35 rust: Add comprehensive README.md documentation for all Rust crates (#12706) (Copilot)
+
+### 🎨 Styling
+
+- c15da81 codegen, formatter, linter, minifier, transformer: Re-order imports (#12725) (Copilot)
+
+
+
+
 ## [0.78.0] - 2025-07-24
 
 ### 🚀 Features

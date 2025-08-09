@@ -4,6 +4,63 @@ All notable changes to this package will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0).
 
+## [0.81.0] - 2025-08-06
+
+### 🐛 Bug Fixes
+
+- 44b37f7 minifier: Keep classes with static properties + side effect initializer (#12848) (Boshen)
+- 00fda91 minifier: Fix `KATAKANA MIDDLE DOT` syntax error for unicode 4.1 to 15 (#12829) (Boshen)
+
+
+## [0.80.0] - 2025-08-03
+
+### 🐛 Bug Fixes
+
+- 7dae2e4 minifier: Keep class if class has decorators (#12669) (Boshen)
+
+### 🚜 Refactor
+
+- 5f50bc3 minifier: Move string method constant evaluation from minifier to ecmascript crate (#12672) (Copilot)
+
+### 📚 Documentation
+
+- 514322c rust: Add minimal documentation to example files in crates directory (#12731) (Copilot)
+
+### 🎨 Styling
+
+- c15da81 codegen, formatter, linter, minifier, transformer: Re-order imports (#12725) (Copilot)
+
+### 🧪 Testing
+
+- 16312d7 minifier: Add more tests (#12722) (Copilot)
+
+
+## [0.79.1] - 2025-07-31
+
+### 🚀 Features
+
+- a286dd4 minifier: Remove unnecessary 'use strict' directive (#12642) (Boshen)
+- 763a618 minifier: Inline small constant values (#12639) (Boshen)
+- f46818a minifier: Remove unused class expression (#12618) (Boshen)
+
+### 🐛 Bug Fixes
+
+- 08a7379 minifier: Do not read constant value from for loop init (#12654) (Boshen)
+- 5642b29 minifier: Initialize constant value in DCE (#12610) (Boshen)
+
+
+## [0.79.0] - 2025-07-30
+
+### 🚀 Features
+
+- 23f7f82 minifier: Remove unused assignment expression (#12509) (Boshen)
+- b877039 minifier: Inline `const` variables that are only used once (#12488) (Boshen)
+
+### 🐛 Bug Fixes
+
+- fe9c8e1 minifier: Do not remove non-plain empty functions (#12573) (Boshen)
+
+
 ## [0.78.0] - 2025-07-24
 
 ### 🚀 Features

@@ -1,4 +1,3 @@
-use core::f64;
 use std::borrow::Cow;
 
 use num_bigint::BigInt;
@@ -35,6 +34,10 @@ impl<'a> ConstantValue<'a> {
 
     pub fn is_undefined(&self) -> bool {
         matches!(self, Self::Undefined)
+    }
+
+    pub fn is_null(&self) -> bool {
+        matches!(self, Self::Null)
     }
 
     pub fn into_string(self) -> Option<Cow<'a, str>> {

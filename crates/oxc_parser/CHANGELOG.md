@@ -4,6 +4,44 @@ All notable changes to this package will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0).
 
+## [0.82.3] - 2025-08-20
+
+### 🐛 Bug Fixes
+
+- ade2ccb parser: Produce syntax error for `export enum` and similar ts syntaxes (#13208) (Boshen)
+
+### 🚜 Refactor
+
+- b2d59a2 parser: Improve safety of char to bytes conversions (#13193) (overlookmotel)
+
+
+## [0.82.2] - 2025-08-17
+
+### 🚜 Refactor
+
+- fdfec21 lexer: Simplify byte handler macros (#13057) (overlookmotel)
+
+### 📚 Documentation
+
+- 56ae824 lexer: Update comment to match code (#13103) (overlookmotel)
+
+
+
+## [0.82.0] - 2025-08-12
+
+### 💥 BREAKING CHANGES
+
+- 128b527 data_structures: [**BREAKING**] Remove `PointerExt` trait (#12903) (overlookmotel)
+
+### 🚜 Refactor
+
+- 51aaafd rust: Enable `unnecessary_unwrap` lint (#12908) (camc314)
+
+### ⚡ Performance
+
+- 47a565f lexer: Only check for hashbang at start of file (#12521) (overlookmotel)
+
+
 ## [0.81.0] - 2025-08-06
 
 ### 💥 BREAKING CHANGES

@@ -2,6 +2,7 @@ mod call_expr;
 mod equality_comparison;
 mod is_int32_or_uint32;
 mod is_literal_value;
+mod url_encoding;
 mod value;
 mod value_type;
 
@@ -19,7 +20,7 @@ use oxc_ast::{AstBuilder, ast::*};
 use equality_comparison::{abstract_equality_comparison, strict_equality_comparison};
 
 use crate::{
-    ToBigInt, ToBoolean, ToInt32, ToJsString as ToJsStringTrait, ToNumber,
+    ToBigInt, ToBoolean, ToInt32, ToJsString as ToJsStringTrait, ToNumber, ToUint32,
     is_less_than::is_less_than,
     side_effects::{MayHaveSideEffects, MayHaveSideEffectsContext},
     to_numeric::ToNumeric,
@@ -122,9 +123,9 @@ impl<'a> ConstantEvaluation<'a> for IdentifierReference<'a> {
         _target_ty: Option<ValueType>,
     ) -> Option<ConstantValue<'a>> {
         match self.name.as_str() {
-            "undefined" if ctx.is_global_reference(self)? => Some(ConstantValue::Undefined),
-            "NaN" if ctx.is_global_reference(self)? => Some(ConstantValue::Number(f64::NAN)),
-            "Infinity" if ctx.is_global_reference(self)? => {
+            "undefined" if ctx.is_global_reference(self) => Some(ConstantValue::Undefined),
+            "NaN" if ctx.is_global_reference(self) => Some(ConstantValue::Number(f64::NAN)),
+            "Infinity" if ctx.is_global_reference(self) => {
                 Some(ConstantValue::Number(f64::INFINITY))
             }
             _ => self
@@ -264,29 +265,26 @@ fn binary_operation_evaluate_value_to<'a>(
             }
             Some(ConstantValue::Number(result))
         }
-        #[expect(clippy::cast_sign_loss)]
         BinaryOperator::ShiftLeft => {
             let left = left.evaluate_value_to_number(ctx)?;
             let right = right.evaluate_value_to_number(ctx)?;
             let left = left.to_int_32();
-            let right = (right.to_int_32() as u32) & 31;
+            let right = right.to_uint_32() & 31;
             Some(ConstantValue::Number(f64::from(left << right)))
         }
-        #[expect(clippy::cast_sign_loss)]
         BinaryOperator::ShiftRight => {
             let left = left.evaluate_value_to_number(ctx)?;
             let right = right.evaluate_value_to_number(ctx)?;
             let left = left.to_int_32();
-            let right = (right.to_int_32() as u32) & 31;
+            let right = right.to_uint_32() & 31;
             Some(ConstantValue::Number(f64::from(left >> right)))
         }
-        #[expect(clippy::cast_sign_loss)]
         BinaryOperator::ShiftRightZeroFill => {
             let left = left.evaluate_value_to_number(ctx)?;
             let right = right.evaluate_value_to_number(ctx)?;
-            let left = left.to_int_32();
-            let right = (right.to_int_32() as u32) & 31;
-            Some(ConstantValue::Number(f64::from((left as u32) >> right)))
+            let left = left.to_uint_32();
+            let right = right.to_uint_32() & 31;
+            Some(ConstantValue::Number(f64::from(left >> right)))
         }
         BinaryOperator::LessThan => is_less_than(ctx, left, right).map(|value| match value {
             ConstantValue::Undefined => ConstantValue::Boolean(false),
@@ -346,7 +344,7 @@ fn binary_operation_evaluate_value_to<'a>(
             if let Expression::Identifier(right_ident) = right {
                 let name = right_ident.name.as_str();
                 if matches!(name, "Object" | "Number" | "Boolean" | "String")
-                    && ctx.is_global_reference(right_ident) == Some(true)
+                    && ctx.is_global_reference(right_ident)
                 {
                     let left_ty = left.value_type(ctx);
                     if left_ty.is_undetermined() {
@@ -494,15 +492,7 @@ impl<'a> ConstantEvaluation<'a> for StaticMemberExpression<'a> {
         _target_ty: Option<ValueType>,
     ) -> Option<ConstantValue<'a>> {
         match self.property.name.as_str() {
-            "length" => {
-                if let Some(ConstantValue::String(s)) = self.object.evaluate_value(ctx) {
-                    Some(ConstantValue::Number(s.encode_utf16().count().to_f64().unwrap()))
-                } else if let Expression::ArrayExpression(arr) = &self.object {
-                    Some(ConstantValue::Number(arr.elements.len().to_f64().unwrap()))
-                } else {
-                    None
-                }
-            }
+            "length" => evaluate_value_length(&self.object, ctx),
             _ => None,
         }
     }
@@ -516,16 +506,27 @@ impl<'a> ConstantEvaluation<'a> for ComputedMemberExpression<'a> {
     ) -> Option<ConstantValue<'a>> {
         match &self.expression {
             Expression::StringLiteral(s) if s.value == "length" => {
-                if let Some(ConstantValue::String(s)) = self.object.evaluate_value(ctx) {
-                    Some(ConstantValue::Number(s.encode_utf16().count().to_f64().unwrap()))
-                } else if let Expression::ArrayExpression(arr) = &self.object {
-                    Some(ConstantValue::Number(arr.elements.len().to_f64().unwrap()))
-                } else {
-                    None
-                }
+                evaluate_value_length(&self.object, ctx)
             }
             _ => None,
         }
+    }
+}
+
+fn evaluate_value_length<'a>(
+    object: &Expression<'a>,
+    ctx: &impl ConstantEvaluationCtx<'a>,
+) -> Option<ConstantValue<'a>> {
+    if let Some(ConstantValue::String(s)) = object.evaluate_value(ctx) {
+        Some(ConstantValue::Number(s.encode_utf16().count().to_f64().unwrap()))
+    } else if let Expression::ArrayExpression(arr) = object {
+        if arr.elements.iter().any(|e| matches!(e, ArrayExpressionElement::SpreadElement(_))) {
+            None
+        } else {
+            Some(ConstantValue::Number(arr.elements.len().to_f64().unwrap()))
+        }
+    } else {
+        None
     }
 }
 

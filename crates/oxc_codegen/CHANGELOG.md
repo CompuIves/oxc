@@ -4,6 +4,65 @@ All notable changes to this package will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0).
 
+## [0.82.3] - 2025-08-20
+
+### 🐛 Bug Fixes
+
+- 8f533aa codegen: Correct `CRLF` handling in comment processing (#13169) (copilot-swe-agent)
+- f10ac33 codegen: Remove end sourcemaps for `}`, `]`, `)` (#13180) (Boshen)
+
+### 🚜 Refactor
+
+- 51ca0ad codegen: Reduce repeated code (#13191) (overlookmotel)
+- 3548cf4 sourcemap: Improve sourcemap visualization code (#13177) (Boshen)
+
+### ⚡ Performance
+
+- e3bfff1 codegen: Faster splitting comments into lines (#13190) (overlookmotel)
+
+
+## [0.82.2] - 2025-08-17
+
+### 🚀 Features
+
+- df3829c oxc_codegen: Support configure initial indent when using `oxc_codegen` (#13091) (IWANABETHATGUY)
+
+### 🚜 Refactor
+
+- 5223562 codegen: Adjust some source mappings (#13084) (Boshen)
+
+### ⚡ Performance
+
+- 1385c71 codegen: Further reduce memory allocations in `generate_line_offset_tables` (#13056) (overlookmotel)
+- ab685bd codegen: Reduce memory allocations in `generate_line_offset_tables` (#13054) (Boshen)
+
+
+## [0.82.1] - 2025-08-13
+
+### 🚀 Features
+
+- 2c5fa58 codegen: Allow attaching comment to the top of the file. (#13048) (Boshen)
+
+
+## [0.82.0] - 2025-08-12
+
+### 💥 BREAKING CHANGES
+
+- 128b527 data_structures: [**BREAKING**] Remove `PointerExt` trait (#12903) (overlookmotel)
+
+### 🚜 Refactor
+
+- f6475e1 codegen: Remove the redundant `base_len` variable (#12882) (Dunqing)
+
+### ⚡ Performance
+
+- 017e200 codegen: Comprehensive optimization of `print_minified_number` method (#12847) (Copilot)
+
+### 🎨 Styling
+
+- af065ff codegen: Re-order imports (#12918) (overlookmotel)
+
+
 ## [0.81.0] - 2025-08-06
 
 ### 💥 BREAKING CHANGES

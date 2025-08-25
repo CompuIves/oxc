@@ -4,6 +4,50 @@ All notable changes to this package will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0).
 
+## [0.82.3] - 2025-08-20
+
+### 🐛 Bug Fixes
+
+- f10ac33 codegen: Remove end sourcemaps for `}`, `]`, `)` (#13180) (Boshen)
+
+
+## [0.82.3] - 2025-08-20
+
+### 🐛 Bug Fixes
+
+- f10ac33 codegen: Remove end sourcemaps for `}`, `]`, `)` (#13180) (Boshen)
+
+
+## [0.82.2] - 2025-08-17
+
+### 🚜 Refactor
+
+- 5223562 codegen: Adjust some source mappings (#13084) (Boshen)
+
+
+## [0.82.2] - 2025-08-17
+
+### 🚜 Refactor
+
+- 5223562 codegen: Adjust some source mappings (#13084) (Boshen)
+
+
+## [0.82.1] - 2025-08-13
+
+### 🚀 Features
+
+- 993db89 minifier: `.minify` and `.dce` methods; run dce in loop (#13026) (Boshen)
+
+
+## [0.82.1] - 2025-08-13
+
+### 🚀 Features
+
+- 993db89 minifier: `.minify` and `.dce` methods; run dce in loop (#13026) (Boshen)
+
+
+
+
 
 
 ## [0.80.0] - 2025-08-03

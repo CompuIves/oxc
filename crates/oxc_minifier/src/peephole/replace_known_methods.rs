@@ -19,21 +19,10 @@ use super::PeepholeOptimizations;
 
 type Arguments<'a> = oxc_allocator::Vec<'a, Argument<'a>>;
 
+/// Minimize With Known Methods
+/// <https://github.com/google/closure-compiler/blob/v20240609/src/com/google/javascript/jscomp/PeepholeReplaceKnownMethods.java>
 impl<'a> PeepholeOptimizations {
-    /// Minimize With Known Methods
-    /// <https://github.com/google/closure-compiler/blob/v20240609/src/com/google/javascript/jscomp/PeepholeReplaceKnownMethods.java>
-    pub fn replace_known_methods_exit_expression(
-        &self,
-        node: &mut Expression<'a>,
-
-        ctx: &mut Ctx<'a, '_>,
-    ) {
-        self.try_fold_concat_chain(node, ctx);
-        self.try_fold_known_global_methods(node, ctx);
-        self.try_fold_known_property_access(node, ctx);
-    }
-
-    fn try_fold_known_global_methods(&self, node: &mut Expression<'a>, ctx: &mut Ctx<'a, '_>) {
+    pub fn replace_known_global_methods(node: &mut Expression<'a>, ctx: &mut Ctx<'a, '_>) {
         let Expression::CallExpression(ce) = node else { return };
 
         // Use constant evaluation for known method calls
@@ -58,8 +47,8 @@ impl<'a> PeepholeOptimizations {
             _ => return,
         };
         let replacement = match name {
-            "concat" => self.try_fold_concat(*span, arguments, callee, ctx),
-            "pow" => self.try_fold_pow(*span, arguments, object, ctx),
+            "concat" => Self::try_fold_concat(*span, arguments, callee, ctx),
+            "pow" => Self::try_fold_pow(*span, arguments, object, ctx),
             "of" => Self::try_fold_array_of(*span, arguments, name, object, ctx),
             _ => None,
         };
@@ -71,11 +60,10 @@ impl<'a> PeepholeOptimizations {
 
     /// `Math.pow(a, b)` -> `+(a) ** +b`
     fn try_fold_pow(
-        &self,
         span: Span,
         arguments: &mut Arguments<'a>,
         object: &Expression<'a>,
-        ctx: &mut Ctx<'a, '_>,
+        ctx: &Ctx<'a, '_>,
     ) -> Option<Expression<'a>> {
         if ctx.options().target < ESTarget::ES2016 {
             return None;
@@ -113,7 +101,7 @@ impl<'a> PeepholeOptimizations {
         arguments: &mut Arguments<'a>,
         name: &str,
         object: &Expression<'a>,
-        ctx: &mut Ctx<'a, '_>,
+        ctx: &Ctx<'a, '_>,
     ) -> Option<Expression<'a>> {
         if !Self::validate_global_reference(object, "Array", ctx) {
             return None;
@@ -129,7 +117,7 @@ impl<'a> PeepholeOptimizations {
 
     /// `[].concat(a).concat(b)` -> `[].concat(a, b)`
     /// `"".concat(a).concat(b)` -> `"".concat(a, b)`
-    fn try_fold_concat_chain(&self, node: &mut Expression<'a>, ctx: &mut Ctx<'a, '_>) {
+    pub fn replace_concat_chain(node: &mut Expression<'a>, ctx: &mut Ctx<'a, '_>) {
         let original_span = if let Expression::CallExpression(root_call_expr) = node {
             root_call_expr.span
         } else {
@@ -211,11 +199,10 @@ impl<'a> PeepholeOptimizations {
     /// `[].concat(1, 2)` -> `[1, 2]`
     /// `"".concat(a, "b")` -> "`${a}b`"
     fn try_fold_concat(
-        &self,
         span: Span,
         args: &mut Arguments<'a>,
         callee: &mut Expression<'a>,
-        ctx: &mut Ctx<'a, '_>,
+        ctx: &Ctx<'a, '_>,
     ) -> Option<Expression<'a>> {
         // let concat chaining reduction handle it first
         if let Ancestor::StaticMemberExpressionObject(parent_member) = ctx.parent() {
@@ -369,7 +356,15 @@ impl<'a> PeepholeOptimizations {
         }
     }
 
-    fn try_fold_known_property_access(&self, node: &mut Expression<'a>, ctx: &mut Ctx<'a, '_>) {
+    pub fn replace_known_property_access(node: &mut Expression<'a>, ctx: &mut Ctx<'a, '_>) {
+        // property access should be kept to keep `this` value
+        if matches!(
+            ctx.parent(),
+            Ancestor::CallExpressionCallee(_) | Ancestor::TaggedTemplateExpressionTag(_)
+        ) {
+            return;
+        }
+
         let (name, object, span) = match node {
             Expression::StaticMemberExpression(member) if !member.optional => {
                 (member.property.name.as_str(), &member.object, member.span)
@@ -423,7 +418,7 @@ impl<'a> PeepholeOptimizations {
         }
 
         let replacement = match ident.name.as_str() {
-            "Number" => self.try_fold_number_constants(name, span, ctx),
+            "Number" => Self::try_fold_number_constants(name, span, ctx),
             _ => None,
         };
         if let Some(replacement) = replacement {
@@ -434,10 +429,9 @@ impl<'a> PeepholeOptimizations {
 
     /// replace `Number.*` constants
     fn try_fold_number_constants(
-        &self,
         name: &str,
         span: Span,
-        ctx: &mut Ctx<'a, '_>,
+        ctx: &Ctx<'a, '_>,
     ) -> Option<Expression<'a>> {
         let num = |span: Span, n: f64| {
             ctx.ast.expression_numeric_literal(span, n, None, NumberBase::Decimal)
@@ -503,7 +497,7 @@ impl<'a> PeepholeOptimizations {
         object: &mut Expression<'a>,
         property: u32,
         span: Span,
-        ctx: &mut Ctx<'a, '_>,
+        ctx: &Ctx<'a, '_>,
     ) -> Option<Expression<'a>> {
         if object.may_have_side_effects(ctx) {
             return None;
@@ -542,11 +536,7 @@ impl<'a> PeepholeOptimizations {
         }
     }
 
-    fn validate_global_reference(
-        expr: &Expression<'a>,
-        target: &str,
-        ctx: &mut Ctx<'a, '_>,
-    ) -> bool {
+    fn validate_global_reference(expr: &Expression<'a>, target: &str, ctx: &Ctx<'a, '_>) -> bool {
         let Expression::Identifier(ident) = expr else { return false };
         ctx.is_global_reference(ident) && ident.name == target
     }
@@ -579,6 +569,7 @@ mod test {
         test_same(format!("x = {code}").as_str());
     }
 
+    #[expect(clippy::literal_string_with_formatting_args)]
     #[test]
     fn test_string_index_of() {
         test("x = 'abcdef'.indexOf('g')", "x = -1");
@@ -1029,9 +1020,9 @@ mod test {
     }
 
     #[test]
-    #[ignore]
     fn test_fold_math_functions_imul() {
         test_same_value("Math.imul(Math.random(),2)");
+        test_value("Math.imul()", "0");
         test_value("Math.imul(-1,1)", "-1");
         test_value("Math.imul(2,2)", "4");
         test_value("Math.imul(2)", "0");
@@ -1113,27 +1104,33 @@ mod test {
     }
 
     #[test]
-    #[ignore]
     fn test_fold_math_functions_clz32() {
-        test("Math.clz32(0)", "32");
-        let mut x = 1;
+        test_value("Math.clz32(0)", "32");
+        test_value("Math.clz32(0.0)", "32");
+        test_value("Math.clz32(-0.0)", "32");
+        let mut x = 1_i64;
         for i in (0..=31).rev() {
-            test(&format!("{x}.leading_zeros()"), &i.to_string());
-            test(&format!("{}.leading_zeros()", 2 * x - 1), &i.to_string());
+            test_value(&format!("Math.clz32({x})"), &i.to_string());
+            test_value(&format!("Math.clz32({})", 2 * x - 1), &i.to_string());
             x *= 2;
         }
-        test("Math.clz32('52')", "26");
-        test("Math.clz32([52])", "26");
-        test("Math.clz32([52, 53])", "32");
+        test_value("Math.clz32('52')", "26");
+        test_value("Math.clz32([52])", "26");
+        test_value("Math.clz32([52, 53])", "32");
 
         // Overflow cases
-        test("Math.clz32(0x100000000)", "32");
-        test("Math.clz32(0x100000001)", "31");
+        test_value("Math.clz32(0x100000000)", "32");
+        test_value("Math.clz32(0x100000001)", "31");
+
+        // Negative cases
+        test_value("Math.clz32(-1)", "0");
+        test_value("Math.clz32(-2147483647)", "0");
+        test_value("Math.clz32(-2147483649)", "1");
 
         // NaN -> 0
-        test("Math.clz32(NaN)", "32");
-        test("Math.clz32('foo')", "32");
-        test("Math.clz32(Infinity)", "32");
+        test_value("Math.clz32(NaN)", "32");
+        test_value("Math.clz32('foo')", "32");
+        test_value("Math.clz32(Infinity)", "32");
     }
 
     #[test]
@@ -1209,15 +1206,14 @@ mod test {
     }
 
     #[test]
-    #[ignore]
     fn test_fold_parse_numbers() {
-        // Template Strings
-        test_same("x = parseInt(`123`)");
-        test_same("x = parseInt(` 123`)");
+        test("x = parseInt('123')", "x = 123");
+        test("x = parseInt(`123`)", "x = 123");
+        test("x = parseInt(` 123`)", "x = 123");
         test_same("x = parseInt(`12 ${a}`)");
-        test_same("x = parseFloat(`1.23`)");
-
-        // setAcceptedLanguage(LanguageMode.ECMASCRIPT5);
+        test("x = parseFloat('1.23')", "x = 1.23");
+        test("x = parseFloat(`1.23`)", "x = 1.23");
+        test_same("x = parseFloat(`1.${a}`)");
 
         test("x = parseInt('123')", "x = 123");
         test("x = parseInt(' 123')", "x = 123");
@@ -1242,44 +1238,56 @@ mod test {
         test("x = parseInt('17', 8)", "x = 15");
         test("x = parseInt('015', 10)", "x = 15");
         test("x = parseInt('1111', 2)", "x = 15");
-        test("x = parseInt('12', 13)", "x = 15");
+        test_same("x = parseInt('12', 13)");
         test("x = parseInt(15.99, 10)", "x = 15");
         test("x = parseInt(-15.99, 10)", "x = -15");
-        // Java's Integer.parseInt("-15.99", 10) throws an exception, because of the decimal point.
-        test_same("x = parseInt('-15.99', 10)");
+        test("x = parseInt('-15.99', 10)", "x = -15");
         test("x = parseFloat('3.14')", "x = 3.14");
         test("x = parseFloat(3.14)", "x = 3.14");
         test("x = parseFloat(-3.14)", "x = -3.14");
         test("x = parseFloat('-3.14')", "x = -3.14");
         test("x = parseFloat('-0')", "x = -0");
 
-        // Valid calls - unable to fold
-        test_same("x = parseInt('FXX123', 16)");
-        test_same("x = parseInt('15*3', 10)");
-        test_same("x = parseInt('15e2', 10)");
-        test_same("x = parseInt('15px', 10)");
-        test_same("x = parseInt('-0x08')");
-        test_same("x = parseInt('1', -1)");
-        test_same("x = parseFloat('3.14more non-digit characters')");
-        test_same("x = parseFloat('314e-2')");
-        test_same("x = parseFloat('0.0314E+2')");
-        test_same("x = parseFloat('3.333333333333333333333333')");
+        test("x = parseInt('FXX123', 16)", "x = 15"); // Parses 'F' (15 in hex)
+        test("x = parseInt('15*3', 10)", "x = 15"); // Parses '15', stops at '*'
+        test("x = parseInt('15e2', 10)", "x = 15"); // Parses '15', stops at 'e'
+        test("x = parseInt('15px', 10)", "x = 15"); // Parses '15', stops at 'p'
+        test("x = parseInt('-0x08')", "x = -8");
+        test("x = parseInt('1', -1)", "x = NaN");
+        test("x = parseFloat('3.14more non-digit characters')", "x = 3.14"); // Parses '3.14', stops at 'm'
+        test("x = parseFloat('314e-2')", "x = 3.14");
+        test("x = parseFloat('0.0314E+2')", "x = 3.14");
+        test("x = parseFloat('3.333333333333333333333333')", "x = 3.3333333333333335");
 
-        // Invalid calls
-        test_same("x = parseInt('0xa', 10)");
-        test_same("x = parseInt('')");
-
-        // setAcceptedLanguage(LanguageMode.ECMASCRIPT3);
-        test_same("x = parseInt('08')");
+        test("x = parseInt('0xa', 10)", "x = 0"); // Parses '0' in base 10, stops at 'x'
+        test("x = parseInt('')", "x = NaN");
     }
 
     #[test]
-    #[ignore]
     fn test_fold_parse_octal_numbers() {
-        // setAcceptedLanguage(LanguageMode.ECMASCRIPT5);
-
         test("x = parseInt('021', 8)", "x = 17");
         test("x = parseInt('-021', 8)", "x = -17");
+    }
+
+    #[test]
+    fn test_fold_parse_numbers_additional() {
+        test_value("parseInt('+1')", "1");
+        test_value("parseFloat('+1')", "1");
+        test_value("parseInt('10', 0)", "10");
+        test_value("parseInt('0x10', 16)", "16");
+        test_value("parseInt('')", "NaN");
+        test_value("parseInt(' ')", "NaN");
+        test_value("parseInt('abc')", "NaN");
+        test_value("parseFloat('')", "NaN");
+        test_value("parseFloat(' ')", "NaN");
+        test_value("parseFloat('abc')", "NaN");
+        test_value("parseFloat('Infinity')", "Infinity");
+        test_value("parseFloat('-Infinity')", "-Infinity");
+        test_value("parseFloat('+Infinity')", "Infinity");
+        test_same_value("parseInt(unknown)");
+        test_same_value("parseInt((foo, '0'))"); // foo may have side effects
+        test_same_value("parseFloat(unknown)");
+        test_same_value("parseFloat((foo, '0'))"); // foo may have side effects
     }
 
     #[test]
@@ -1437,7 +1445,7 @@ mod test {
         test("x = String.fromCharCode(0)", "x = '\\0'");
         test("x = String.fromCharCode(120)", "x = 'x'");
         test("x = String.fromCharCode(120, 121)", "x = 'xy'");
-        test_same("String.fromCharCode(55358, 56768)");
+        test_same("x = String.fromCharCode(55358, 56768)");
         test("x = String.fromCharCode(0x10000)", "x = '\\0'");
         test("x = String.fromCharCode(0x10078, 0x10079)", "x = 'xy'");
         test("x = String.fromCharCode(0x1_0000_FFFF)", "x = '\u{ffff}'");
@@ -1612,6 +1620,20 @@ mod test {
         test_same("v = [...a, 1][1]");
         test_same("v = [1, ...a][0]");
         test("v = [1, ...[1,2]][0]", "v = 1");
+
+        // property access should be kept to keep `this` value
+        test_same(
+            "
+            function f(){ console.log(this[0]) }
+            ['PASS',f][1]()
+        ",
+        );
+        test_same(
+            "
+            function f(){ console.log(this[0]) }
+            ['PASS',f][1]``
+        ",
+        );
     }
 
     #[test]
@@ -1623,5 +1645,137 @@ mod test {
             "const node_env = 'production'; v = node_env.toLowerCase().startsWith('prod')",
             "const node_env = 'production'; v = !0",
         );
+    }
+
+    #[test]
+    fn test_fold_encode_uri() {
+        test("x = encodeURI()", "x = 'undefined'");
+        test("x = encodeURI('hello')", "x = 'hello'");
+        test("x = encodeURI('hello world')", "x = 'hello%20world'");
+        test(
+            "x = encodeURI('http://example.com/path?a=1&b=2#hash')",
+            "x = 'http://example.com/path?a=1&b=2#hash'",
+        );
+        test("x = encodeURI('a;b,c/d?e:f@g&h=i+j$k')", "x = 'a;b,c/d?e:f@g&h=i+j$k'");
+        test("x = encodeURI('ABC-_abc.!~*()123')", "x = 'ABC-_abc.!~*()123'");
+        test("x = encodeURI('hello<>\"')", "x = 'hello%3C%3E%22'");
+        test("x = encodeURI('hello\\t\\n')", "x = 'hello%09%0A'");
+        test("x = encodeURI('café')", "x = 'caf%C3%A9'"); // spellchecker:disable-line
+        test("x = encodeURI('测试')", "x = '%E6%B5%8B%E8%AF%95'");
+
+        test_same("x = encodeURI('a', 'b')");
+        test_same("x = encodeURI(x)");
+    }
+
+    #[test]
+    fn test_fold_encode_uri_component() {
+        test("x = encodeURIComponent()", "x = 'undefined'");
+        test("x = encodeURIComponent('hello')", "x = 'hello'");
+        test("x = encodeURIComponent('ABC-_abc.!~*()123')", "x = 'ABC-_abc.!~*()123'");
+        test(
+            "x = encodeURIComponent('a;b,c/d?e:f@g&h=i+j$k')",
+            "x = 'a%3Bb%2Cc%2Fd%3Fe%3Af%40g%26h%3Di%2Bj%24k'",
+        );
+        test("x = encodeURIComponent('#')", "x = '%23'");
+        test("x = encodeURIComponent('hello world')", "x = 'hello%20world'");
+        test("x = encodeURIComponent('hello<>\"')", "x = 'hello%3C%3E%22'");
+        test("x = encodeURIComponent('café')", "x = 'caf%C3%A9'"); // spellchecker:disable-line
+        test("x = encodeURIComponent('测试')", "x = '%E6%B5%8B%E8%AF%95'");
+
+        test_same("x = encodeURIComponent('a', 'b')");
+        test_same("x = encodeURIComponent(x)");
+    }
+
+    #[test]
+    fn test_fold_decode_uri() {
+        test("x = decodeURI()", "x = 'undefined'");
+        test("x = decodeURI('hello%20world')", "x = 'hello world'");
+        test("x = decodeURI('hello')", "x = 'hello'");
+        test(
+            "x = decodeURI('a%3Bb%2Cc%2Fd%3Fe%3Af%40g%26h%3Di%2Bj%24k')",
+            "x = 'a%3Bb%2Cc%2Fd%3Fe%3Af%40g%26h%3Di%2Bj%24k'",
+        );
+        test("x = decodeURI('%2f')", "x = '%2f'"); // `/`, lower case
+        test("x = decodeURI('%23')", "x = '%23'"); // `#`
+        test("x = decodeURI('%23hash')", "x = '%23hash'");
+        test("x = decodeURI('hello%3C%3E%22')", "x = 'hello<>\"'");
+        test("x = decodeURI('hello%09%0A')", "x = 'hello\\t\\n'");
+        test("x = decodeURI('caf%C3%A9')", "x = 'café'"); // spellchecker:disable-line
+        test("x = decodeURI('%E6%B5%8B%E8%AF%95')", "x = '测试'");
+
+        test_same("x = decodeURI('%ZZ')"); // URIError
+        test_same("x = decodeURI('%A')"); // URIError
+
+        test_same("x = decodeURI('a', 'b')");
+        test_same("x = decodeURI(x)");
+    }
+
+    #[test]
+    fn test_fold_decode_uri_component() {
+        test("x = decodeURIComponent()", "x = 'undefined'");
+        test("x = decodeURIComponent('hello%20world')", "x = 'hello world'");
+        test("x = decodeURIComponent('hello')", "x = 'hello'");
+        test(
+            "x = decodeURIComponent('a%3Bb%2Cc%2Fd%3Fe%3Af%40g%26h%3Di%2Bj%24k')",
+            "x = 'a;b,c/d?e:f@g&h=i+j$k'",
+        );
+        test("x = decodeURIComponent('%23')", "x = '#'");
+        test("x = decodeURIComponent('%23hash')", "x = '#hash'");
+        test("x = decodeURIComponent('hello%3C%3E%22')", "x = 'hello<>\"'");
+        test("x = decodeURIComponent('hello%09%0A')", "x = 'hello\\t\\n'");
+        test("x = decodeURIComponent('caf%C3%A9')", "x = 'café'"); // spellchecker:disable-line
+        test("x = decodeURIComponent('%E6%B5%8B%E8%AF%95')", "x = '测试'");
+
+        test_same("x = decodeURIComponent('%ZZ')"); // URIError
+        test_same("x = decodeURIComponent('%A')"); // URIError
+
+        test_same("x = decodeURIComponent('a', 'b')");
+        test_same("x = decodeURIComponent(x)");
+    }
+
+    #[test]
+    fn test_fold_uri_roundtrip() {
+        test("x = decodeURI(encodeURI('hello world'))", "x = 'hello world'");
+        test("x = decodeURIComponent(encodeURIComponent('hello world'))", "x = 'hello world'");
+        test(
+            "x = decodeURIComponent(encodeURIComponent('a;b,c/d?e:f@g&h=i+j$k'))",
+            "x = 'a;b,c/d?e:f@g&h=i+j$k'",
+        );
+        test("x = decodeURI(encodeURI('café'))", "x = 'café'");
+        test("x = decodeURIComponent(encodeURIComponent('测试'))", "x = '测试'");
+    }
+
+    #[test]
+    fn test_fold_global_is_nan() {
+        test_value("isNaN()", "!0");
+        test_value("isNaN(NaN)", "!0");
+        test_value("isNaN(123)", "!1");
+        test_value("isNaN('123')", "!1");
+        test_value("isNaN('abc')", "!0");
+        test_value("isNaN('')", "!1");
+        test_value("isNaN(' ')", "!1");
+        test_value("isNaN(null)", "!1");
+        test_value("isNaN(Infinity)", "!1");
+        test_value("isNaN(-Infinity)", "!1");
+
+        test_same_value("isNaN(unknown)");
+        test_same_value("isNaN((foo, 0))"); // foo may have sideeffect
+    }
+
+    #[test]
+    fn test_fold_global_is_finite() {
+        test_value("isFinite()", "!1");
+        test_value("isFinite(123)", "!0");
+        test_value("isFinite(123.45)", "!0");
+        test_value("isFinite('123')", "!0");
+        test_value("isFinite('')", "!0");
+        test_value("isFinite(' ')", "!0");
+        test_value("isFinite(null)", "!0");
+        test_value("isFinite(NaN)", "!1");
+        test_value("isFinite(Infinity)", "!1");
+        test_value("isFinite(-Infinity)", "!1");
+        test_value("isFinite('abc')", "!1");
+        test_same_value("isFinite(unknown)");
+        test_same_value("isFinite((foo, 0))"); // foo may have sideeffect
     }
 }

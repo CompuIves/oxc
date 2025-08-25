@@ -4,6 +4,7 @@ use oxc_ecmascript::{
     constant_evaluation::{ConstantEvaluation, ConstantValue, DetermineValueType},
     side_effects::MayHaveSideEffects,
 };
+use oxc_semantic::ReferenceFlags;
 use oxc_span::GetSpan;
 use oxc_syntax::es_target::ESTarget;
 
@@ -15,54 +16,6 @@ use super::PeepholeOptimizations;
 ///
 /// <https://github.com/google/closure-compiler/blob/v20240609/src/com/google/javascript/jscomp/PeepholeMinimizeConditions.java>
 impl<'a> PeepholeOptimizations {
-    pub fn minimize_conditions_exit_expression(
-        &self,
-        expr: &mut Expression<'a>,
-        ctx: &mut Ctx<'a, '_>,
-    ) {
-        let mut changed = false;
-        loop {
-            let mut local_change = false;
-            if let Some(folded_expr) = match expr {
-                Expression::UnaryExpression(e) => self.try_minimize_not(e, ctx),
-                Expression::BinaryExpression(e) => {
-                    if Self::try_compress_is_loose_boolean(e, ctx) {
-                        local_change = true;
-                    }
-                    Self::try_minimize_binary(e, ctx)
-                }
-                Expression::LogicalExpression(e) => self.minimize_logical_expression(e, ctx),
-                Expression::ConditionalExpression(logical_expr) => {
-                    if self.try_fold_expr_in_boolean_context(&mut logical_expr.test, ctx) {
-                        local_change = true;
-                    }
-                    self.try_minimize_conditional(logical_expr, ctx)
-                }
-                Expression::AssignmentExpression(e) => {
-                    if self.try_compress_normal_assignment_to_combined_logical_assignment(e, ctx) {
-                        local_change = true;
-                    }
-                    if Self::try_compress_normal_assignment_to_combined_assignment(e, ctx) {
-                        local_change = true;
-                    }
-                    Self::try_compress_assignment_to_update_expression(e, ctx)
-                }
-                _ => None,
-            } {
-                *expr = folded_expr;
-                local_change = true;
-            }
-            if local_change {
-                changed = true;
-            } else {
-                break;
-            }
-        }
-        if changed {
-            ctx.state.changed = true;
-        }
-    }
-
     // The goal of this function is to "rotate" the AST if it's possible to use the
     // left-associative property of the operator to avoid unnecessary parentheses.
     //
@@ -70,7 +23,6 @@ impl<'a> PeepholeOptimizations {
     // associative. For example, the "+" operator is not associative for
     // floating-point numbers.
     pub fn join_with_left_associative_op(
-        &self,
         span: Span,
         op: LogicalOperator,
         a: Expression<'a>,
@@ -82,7 +34,7 @@ impl<'a> PeepholeOptimizations {
             if let Some(right) = sequence_expr.expressions.pop() {
                 sequence_expr
                     .expressions
-                    .push(self.join_with_left_associative_op(span, op, right, b, ctx));
+                    .push(Self::join_with_left_associative_op(span, op, right, b, ctx));
             }
             return Expression::SequenceExpression(sequence_expr);
         }
@@ -94,7 +46,7 @@ impl<'a> PeepholeOptimizations {
             if let Expression::LogicalExpression(logical_expr) = &mut b {
                 if logical_expr.operator == op {
                     let right = logical_expr.left.take_in(ctx.ast);
-                    a = self.join_with_left_associative_op(span, op, a, right, ctx);
+                    a = Self::join_with_left_associative_op(span, op, a, right, ctx);
                     b = logical_expr.right.take_in(ctx.ast);
                     continue;
                 }
@@ -103,9 +55,9 @@ impl<'a> PeepholeOptimizations {
         }
         // "a op b" => "a op b"
         // "(a op b) op c" => "(a op b) op c"
-        let mut logic_expr = ctx.ast.logical_expression(span, a, op, b);
-        self.minimize_logical_expression(&mut logic_expr, ctx)
-            .unwrap_or_else(|| Expression::LogicalExpression(ctx.ast.alloc(logic_expr)))
+        let mut logic_expr = ctx.ast.expression_logical(span, a, op, b);
+        Self::minimize_logical_expression(&mut logic_expr, ctx);
+        logic_expr
     }
 
     // `typeof foo === 'number'` -> `typeof foo == 'number'`
@@ -115,17 +67,15 @@ impl<'a> PeepholeOptimizations {
     //  ^^^^^^^^^^^^^^ `ctx.expression_value_type(&e.left).is_boolean()` is `true`.
     // `x >> +y !== 0` -> `x >> +y`
     //  ^^^^^^^ ctx.expression_value_type(&e.left).is_number()` is `true`.
-    fn try_minimize_binary(
-        e: &mut BinaryExpression<'a>,
-        ctx: &mut Ctx<'a, '_>,
-    ) -> Option<Expression<'a>> {
+    pub fn minimize_binary(expr: &mut Expression<'a>, ctx: &mut Ctx<'a, '_>) {
+        let Expression::BinaryExpression(e) = expr else { return };
         if !e.operator.is_equality() {
-            return None;
+            return;
         }
         let left = e.left.value_type(ctx);
         let right = e.right.value_type(ctx);
         if left.is_undetermined() || right.is_undetermined() {
-            return None;
+            return;
         }
         if left == right {
             match e.operator {
@@ -139,12 +89,14 @@ impl<'a> PeepholeOptimizations {
             }
         }
         if !left.is_boolean() {
-            return None;
+            return;
         }
         if e.right.may_have_side_effects(ctx) {
-            return None;
+            return;
         }
-        let mut b = e.right.evaluate_value(ctx).and_then(ConstantValue::into_boolean)?;
+        let Some(mut b) = e.right.evaluate_value(ctx).and_then(ConstantValue::into_boolean) else {
+            return;
+        };
         match e.operator {
             BinaryOperator::Inequality | BinaryOperator::StrictInequality => {
                 e.operator = BinaryOperator::Equality;
@@ -154,14 +106,15 @@ impl<'a> PeepholeOptimizations {
                 e.operator = BinaryOperator::Equality;
             }
             BinaryOperator::Equality => {}
-            _ => return None,
+            _ => return,
         }
-        Some(if b {
+        *expr = if b {
             e.left.take_in(ctx.ast)
         } else {
             let argument = e.left.take_in(ctx.ast);
             ctx.ast.expression_unary(e.span, UnaryOperator::LogicalNot, argument)
-        })
+        };
+        ctx.state.changed = true;
     }
 
     /// Compress `foo == true` into `foo == 1`.
@@ -171,11 +124,11 @@ impl<'a> PeepholeOptimizations {
     ///
     /// In `IsLooselyEqual`, `true` and `false` are converted to `1` and `0` first.
     /// <https://tc39.es/ecma262/multipage/abstract-operations.html#sec-islooselyequal>
-    fn try_compress_is_loose_boolean(e: &mut BinaryExpression<'a>, ctx: &mut Ctx<'a, '_>) -> bool {
+    pub fn minimize_loose_boolean(e: &mut Expression<'a>, ctx: &mut Ctx<'a, '_>) {
+        let Expression::BinaryExpression(e) = e else { return };
         if !matches!(e.operator, BinaryOperator::Equality | BinaryOperator::Inequality) {
-            return false;
+            return;
         }
-
         if let Some(ConstantValue::Boolean(left_bool)) = e.left.evaluate_value(ctx) {
             e.left = ctx.ast.expression_numeric_literal(
                 e.left.span(),
@@ -183,7 +136,8 @@ impl<'a> PeepholeOptimizations {
                 None,
                 NumberBase::Decimal,
             );
-            return true;
+            ctx.state.changed = true;
+            return;
         }
         if let Some(ConstantValue::Boolean(right_bool)) = e.right.evaluate_value(ctx) {
             e.right = ctx.ast.expression_numeric_literal(
@@ -192,9 +146,8 @@ impl<'a> PeepholeOptimizations {
                 None,
                 NumberBase::Decimal,
             );
-            return true;
+            ctx.state.changed = true;
         }
-        false
     }
 
     /// Returns the identifier or the assignment target's identifier of the given expression.
@@ -218,19 +171,18 @@ impl<'a> PeepholeOptimizations {
     /// Compress `a = a || b` to `a ||= b`
     ///
     /// This can only be done for resolved identifiers as this would avoid setting `a` when `a` is truthy.
-    fn try_compress_normal_assignment_to_combined_logical_assignment(
-        &self,
+    pub fn minimize_normal_assignment_to_combined_logical_assignment(
         expr: &mut AssignmentExpression<'a>,
         ctx: &mut Ctx<'a, '_>,
-    ) -> bool {
+    ) {
         if ctx.options().target < ESTarget::ES2020 {
-            return false;
+            return;
         }
         if !matches!(expr.operator, AssignmentOperator::Assign) {
-            return false;
+            return;
         }
 
-        let Expression::LogicalExpression(logical_expr) = &mut expr.right else { return false };
+        let Expression::LogicalExpression(logical_expr) = &mut expr.right else { return };
         // NOTE: if the right hand side is an anonymous function, applying this compression will
         // set the `name` property of that function.
         // Since codes relying on the fact that function's name is undefined should be rare,
@@ -241,64 +193,70 @@ impl<'a> PeepholeOptimizations {
             Expression::Identifier(read_id_ref),
         ) = (&expr.left, &logical_expr.left)
         else {
-            return false;
+            return;
         };
         // It should also early return when the reference might refer to a reference value created by a with statement
         // when the minifier supports with statements
         if write_id_ref.name != read_id_ref.name || ctx.is_global_reference(write_id_ref) {
-            return false;
+            return;
         }
+
+        let reference = ctx.scoping_mut().get_reference_mut(write_id_ref.reference_id());
+        reference.flags_mut().insert(ReferenceFlags::Read);
 
         let new_op = logical_expr.operator.to_assignment_operator();
         expr.operator = new_op;
         expr.right = logical_expr.right.take_in(ctx.ast);
-        true
+        ctx.state.changed = true;
     }
 
     /// Compress `a = a + b` to `a += b`
-    fn try_compress_normal_assignment_to_combined_assignment(
+    pub fn minimize_normal_assignment_to_combined_assignment(
         expr: &mut AssignmentExpression<'a>,
         ctx: &mut Ctx<'a, '_>,
-    ) -> bool {
+    ) {
         if !matches!(expr.operator, AssignmentOperator::Assign) {
-            return false;
+            return;
         }
-
-        let Expression::BinaryExpression(binary_expr) = &mut expr.right else { return false };
-        let Some(new_op) = binary_expr.operator.to_assignment_operator() else { return false };
-
+        let Expression::BinaryExpression(binary_expr) = &mut expr.right else { return };
+        let Some(new_op) = binary_expr.operator.to_assignment_operator() else { return };
         if !Self::has_no_side_effect_for_evaluation_same_target(&expr.left, &binary_expr.left, ctx)
         {
-            return false;
+            return;
         }
+
+        Self::mark_assignment_target_as_read(&expr.left, ctx);
 
         expr.operator = new_op;
         expr.right = binary_expr.right.take_in(ctx.ast);
-        true
+        ctx.state.changed = true;
     }
 
     /// Compress `a -= 1` to `--a` and `a -= -1` to `++a`
     #[expect(clippy::float_cmp)]
-    fn try_compress_assignment_to_update_expression(
-        expr: &mut AssignmentExpression<'a>,
+    pub fn minimize_assignment_to_update_expression(
+        expr: &mut Expression<'a>,
         ctx: &mut Ctx<'a, '_>,
-    ) -> Option<Expression<'a>> {
-        if !matches!(expr.operator, AssignmentOperator::Subtraction) {
-            return None;
+    ) {
+        let Expression::AssignmentExpression(e) = expr else { return };
+        if !matches!(e.operator, AssignmentOperator::Subtraction) {
+            return;
         }
-        let Expression::NumericLiteral(num) = &expr.right else {
-            return None;
-        };
-        let target = expr.left.as_simple_assignment_target_mut()?;
-        let operator = if num.value == 1.0 {
-            UpdateOperator::Decrement
-        } else if num.value == -1.0 {
-            UpdateOperator::Increment
+        let operator = if let Expression::NumericLiteral(num) = &e.right {
+            if num.value == 1.0 {
+                UpdateOperator::Decrement
+            } else if num.value == -1.0 {
+                UpdateOperator::Increment
+            } else {
+                return;
+            }
         } else {
-            return None;
+            return;
         };
+        let Some(target) = e.left.as_simple_assignment_target_mut() else { return };
         let target = target.take_in(ctx.ast);
-        Some(ctx.ast.expression_update(expr.span, operator, true, target))
+        *expr = ctx.ast.expression_update(e.span, operator, true, target);
+        ctx.state.changed = true;
     }
 }
 
@@ -307,7 +265,7 @@ impl<'a> PeepholeOptimizations {
 mod test {
     use crate::{
         CompressOptions,
-        tester::{test, test_same, test_same_options},
+        tester::{test, test_options, test_same, test_same_options},
     };
     use oxc_syntax::es_target::ESTarget;
 
@@ -1436,6 +1394,21 @@ mod test {
         let target = ESTarget::ES2019;
         let options = CompressOptions { target, ..CompressOptions::default() };
         test_same_options("x || (x = 3)", &options);
+
+        test("x || (a, x = 3)", "x ||= (a, 3)");
+        test("x && (a, x = 3)", "x &&= (a, 3)");
+        test("x ?? (a, x = 3)", "x ??= (a, 3)");
+        test("x || (a, x = g())", "x ||= (a, g())");
+        test("x && (a, x = g())", "x &&= (a, g())");
+        test("x ?? (a, x = g())", "x ??= (a, g())");
+        test("var x; x.y || (a, x.y = 3)", "var x; x.y ||= (a, 3)");
+        test("var x; x.y && (a, x.y = 3)", "var x; x.y &&= (a, 3)");
+        test("var x; x.y ?? (a, x.y = 3)", "var x; x.y ??= (a, 3)");
+        // x may have a sideeffect
+        // Example case: `var a; Object.defineProperty(globalThis, 'x', { get() { console.log('x'); return {} } }); x.y || (a, x.y = 3);`
+        test_same("x.y || (a, x.y = 3)");
+        test_same("x.y && (a, x.y = 3)");
+        test_same("x.y ?? (a, x.y = 3)");
     }
 
     #[test]
@@ -1459,7 +1432,7 @@ mod test {
 
         let target = ESTarget::ES2019;
         let options = CompressOptions { target, ..CompressOptions::default() };
-        test_same_options("var x; x = x || 1", &options);
+        test_options("var x; x = x || 1", "var x = x || 1", &options);
     }
 
     #[test]

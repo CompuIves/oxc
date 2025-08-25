@@ -21,7 +21,7 @@ const FORMATTER_CRATE_PATH: &str = "crates/oxc_formatter";
 /// Based on the printing comments algorithm, the last child of these AST nodes don't need to print comments.
 /// Without following nodes could lead to only print comments that before the end of the node, which is what we want.
 const AST_NODE_WITHOUT_FOLLOWING_NODE_LIST: &[&str] =
-    &["AssignmentExpression", "FormalParameters", "StaticMemberExpression"];
+    &["AssignmentExpression", "FormalParameters", "StaticMemberExpression", "ObjectProperty"];
 
 const AST_NODE_WITH_FOLLOWING_NODE_LIST: &[&str] = &["Function", "Class"];
 
@@ -185,6 +185,13 @@ impl Generator for FormatterAstNodesGenerator {
                 pub parent: &'a AstNodes<'a>,
                 pub(super) allocator: &'a Allocator,
                 pub(super) following_node: Option<SiblingNode<'a>>,
+            }
+
+
+            impl<T: GetSpan> GetSpan for &AstNode<'_, T> {
+                fn span(&self) -> Span {
+                    self.inner.span()
+                }
             }
 
             #ast_node_ast_nodes_impls

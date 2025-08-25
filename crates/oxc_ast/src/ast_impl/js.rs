@@ -91,6 +91,7 @@ impl<'a> Expression<'a> {
     /// Returns `true` for [string literals](StringLiteral) matching the
     /// expected value. Note that [non-substitution template
     /// literals](TemplateLiteral) are not considered.
+    #[inline]
     pub fn is_specific_string_literal(&self, string: &str) -> bool {
         match self {
             Self::StringLiteral(s) => s.value == string,
@@ -733,6 +734,18 @@ impl<'a> ChainElement<'a> {
     }
 }
 
+impl<'a> From<ChainElement<'a>> for Expression<'a> {
+    fn from(value: ChainElement<'a>) -> Self {
+        match value {
+            ChainElement::CallExpression(e) => Expression::CallExpression(e),
+            ChainElement::TSNonNullExpression(e) => Expression::TSNonNullExpression(e),
+            match_member_expression!(ChainElement) => {
+                Expression::from(value.into_member_expression())
+            }
+        }
+    }
+}
+
 impl CallExpression<'_> {
     /// Returns the static name of the callee, if it has one, or `None` otherwise.
     pub fn callee_name(&self) -> Option<&str> {
@@ -1166,6 +1179,11 @@ impl VariableDeclarationKind {
     /// Returns `true` if declared using `let`, `const` or `using` (such as `let x` or `const x`)
     pub fn is_lexical(self) -> bool {
         matches!(self, Self::Const | Self::Let | Self::Using | Self::AwaitUsing)
+    }
+
+    /// Returns `true` if declared with `using` (such as `using x` or `await using x`)
+    pub fn is_using(self) -> bool {
+        self == Self::Using || self == Self::AwaitUsing
     }
 
     /// Returns `true` if declared using `await using` (such as `await using x`)

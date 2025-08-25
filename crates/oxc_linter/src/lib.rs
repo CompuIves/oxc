@@ -25,6 +25,7 @@ mod module_record;
 mod options;
 mod rule;
 mod service;
+mod tsgolint;
 mod utils;
 
 pub mod fixer;
@@ -57,8 +58,8 @@ pub use crate::{
     options::{AllowWarnDeny, InvalidFilterKind, LintFilter, LintFilterKind},
     rule::{RuleCategory, RuleFixMeta, RuleMeta},
     service::{LintService, LintServiceOptions, RuntimeFileSystem},
-    utils::read_to_arena_str,
-    utils::read_to_string,
+    tsgolint::TsGoLintState,
+    utils::{read_to_arena_str, read_to_string},
 };
 use crate::{
     config::{LintConfig, OxlintEnv, OxlintGlobals, OxlintSettings},
@@ -118,8 +119,8 @@ impl Linter {
     /// Returns the number of rules that will are being used, unless there
     /// nested configurations in use, in which case it returns `None` since the
     /// number of rules depends on which file is being linted.
-    pub fn number_of_rules(&self) -> Option<usize> {
-        self.config.number_of_rules()
+    pub fn number_of_rules(&self, type_aware: bool) -> Option<usize> {
+        self.config.number_of_rules(type_aware)
     }
 
     pub fn run<'a>(

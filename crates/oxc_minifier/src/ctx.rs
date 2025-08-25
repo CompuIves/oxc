@@ -13,6 +13,7 @@ use oxc_syntax::{
     identifier::{is_identifier_part, is_identifier_start},
     reference::ReferenceId,
 };
+use oxc_traverse::Ancestor;
 
 use crate::{options::CompressOptions, state::MinifierState, symbol_value::SymbolValue};
 
@@ -26,24 +27,23 @@ impl<'a, 'b> Ctx<'a, 'b> {
     }
 }
 
-impl<'a, 'b> Deref for Ctx<'a, 'b> {
-    type Target = &'b mut TraverseCtx<'a>;
+impl<'a> Deref for Ctx<'a, '_> {
+    type Target = TraverseCtx<'a>;
 
     fn deref(&self) -> &Self::Target {
-        &self.0
+        self.0
     }
 }
 
-#[expect(clippy::mut_mut)]
-impl<'a, 'b> DerefMut for Ctx<'a, 'b> {
-    fn deref_mut(&mut self) -> &mut &'b mut TraverseCtx<'a> {
-        &mut self.0
+impl<'a> DerefMut for Ctx<'a, '_> {
+    fn deref_mut(&mut self) -> &mut TraverseCtx<'a> {
+        self.0
     }
 }
 
-impl<'a> oxc_ecmascript::is_global_reference::IsGlobalReference<'a> for Ctx<'a, '_> {
-    fn is_global_reference(&self, ident: &IdentifierReference<'_>) -> Option<bool> {
-        Some(ident.is_global_reference(self.0.scoping()))
+impl<'a> oxc_ecmascript::GlobalContext<'a> for Ctx<'a, '_> {
+    fn is_global_reference(&self, ident: &IdentifierReference<'_>) -> bool {
+        ident.is_global_reference(self.0.scoping())
     }
 
     fn get_constant_value_for_reference_id(
@@ -253,5 +253,16 @@ impl<'a> Ctx<'a, '_> {
         let mut chars = s.chars();
         chars.next().is_some_and(is_identifier_start)
             && chars.all(|c| is_identifier_part(c) && c != '・' && c != '･')
+    }
+
+    /// Whether the closest function scope is created by an async generator
+    pub fn is_closest_function_scope_an_async_generator(&self) -> bool {
+        self.ancestors()
+            .find_map(|ancestor| match ancestor {
+                Ancestor::FunctionBody(body) => Some(*body.r#async() && *body.generator()),
+                Ancestor::ArrowFunctionExpressionBody(_) => Some(false),
+                _ => None,
+            })
+            .unwrap_or_default()
     }
 }

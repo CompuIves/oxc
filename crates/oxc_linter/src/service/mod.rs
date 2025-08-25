@@ -66,12 +66,8 @@ pub struct LintService {
 }
 
 impl LintService {
-    pub fn new(
-        linter: Linter,
-        allocator_pool: oxc_allocator::AllocatorPool,
-        options: LintServiceOptions,
-    ) -> Self {
-        let runtime = Runtime::new(linter, allocator_pool, options);
+    pub fn new(linter: Linter, options: LintServiceOptions) -> Self {
+        let runtime = Runtime::new(linter, options);
         Self { runtime }
     }
 
@@ -96,16 +92,21 @@ impl LintService {
     #[cfg(feature = "language_server")]
     pub fn run_source<'a>(
         &mut self,
-        allocator: &'a oxc_allocator::Allocator,
+        allocator: &'a mut oxc_allocator::Allocator,
     ) -> Vec<crate::MessageWithPosition<'a>> {
         self.runtime.run_source(allocator)
+    }
+
+    #[cfg(feature = "language_server")]
+    pub fn should_ignore(&self, path: &Path) -> bool {
+        self.runtime.linter.config.should_ignore(path)
     }
 
     /// For tests
     #[cfg(test)]
     pub(crate) fn run_test_source<'a>(
         &mut self,
-        allocator: &'a oxc_allocator::Allocator,
+        allocator: &'a mut oxc_allocator::Allocator,
         check_syntax_errors: bool,
         tx_error: &DiagnosticSender,
     ) -> Vec<crate::Message<'a>> {

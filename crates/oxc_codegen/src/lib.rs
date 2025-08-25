@@ -197,6 +197,7 @@ impl<'a> Codegen<'a> {
     pub fn build(mut self, program: &Program<'a>) -> CodegenReturn {
         self.quote = if self.options.single_quote { Quote::Single } else { Quote::Double };
         self.source_text = Some(program.source_text);
+        self.indent = self.options.initial_indent;
         self.code.reserve(program.source_text.len());
         self.build_comments(&program.comments);
         if let Some(path) = &self.options.source_map_path {
@@ -513,7 +514,6 @@ impl<'a> Codegen<'a> {
             self.dedent();
             self.print_indent();
         }
-        self.add_source_mapping_end(span);
         self.print_ascii_byte(b'}');
     }
 
@@ -524,10 +524,9 @@ impl<'a> Codegen<'a> {
         self.indent();
     }
 
-    fn print_block_end(&mut self, span: Span) {
+    fn print_block_end(&mut self, _span: Span) {
         self.dedent();
         self.print_indent();
-        self.add_source_mapping_end(span);
         self.print_ascii_byte(b'}');
     }
 
@@ -770,17 +769,15 @@ impl<'a> Codegen<'a> {
         }
 
         let mut best_candidate = s.cow_replacen("e+", "e", 1);
-        let mut best_len = best_candidate.len();
         let mut is_hex = false;
 
         // Track the best candidate found so far
         if num.fract() == 0.0 {
             // For integers, check hex format and other optimizations
             let hex_candidate = format!("0x{:x}", num as u128);
-            if hex_candidate.len() < best_len {
+            if hex_candidate.len() < best_candidate.len() {
                 is_hex = true;
                 best_candidate = hex_candidate.into();
-                best_len = best_candidate.len();
             }
         }
         // Check for scientific notation optimizations for numbers starting with ".0"
@@ -793,10 +790,9 @@ impl<'a> Codegen<'a> {
                 let exp_str_len = itoa::Buffer::new().format(exp).len();
                 // Calculate expected length: digits + 'e-' + exp_length
                 let expected_len = digits.len() + 2 + exp_str_len;
-                if expected_len < best_len {
+                if expected_len < best_candidate.len() {
                     best_candidate = format!("{digits}e-{exp}").into();
                     debug_assert_eq!(best_candidate.len(), expected_len);
-                    best_len = best_candidate.len();
                 }
             }
         }
@@ -810,10 +806,9 @@ impl<'a> Codegen<'a> {
                 let exp_str_len = itoa::Buffer::new().format(len).len();
                 // Calculate expected length: base + 'e' + len
                 let expected_len = base.len() + 1 + exp_str_len;
-                if expected_len < best_len {
+                if expected_len < best_candidate.len() {
                     best_candidate = format!("{base}e{len}").into();
                     debug_assert_eq!(best_candidate.len(), expected_len);
-                    best_len = expected_len;
                 }
             }
         }
@@ -827,7 +822,7 @@ impl<'a> Codegen<'a> {
             let new_exp_str_len = itoa::Buffer::new().format(new_expr).len();
             // Calculate expected length: integer + point + 'e' + new_exp_str_len
             let expected_len = integer.len() + point.len() + 1 + new_exp_str_len;
-            if expected_len < best_len {
+            if expected_len < best_candidate.len() {
                 best_candidate = format!("{integer}{point}e{new_expr}").into();
                 debug_assert_eq!(best_candidate.len(), expected_len);
             }
@@ -844,14 +839,6 @@ impl<'a> Codegen<'a> {
         if let Some(sourcemap_builder) = self.sourcemap_builder.as_mut() {
             if !span.is_empty() {
                 sourcemap_builder.add_source_mapping(self.code.as_bytes(), span.start, None);
-            }
-        }
-    }
-
-    fn add_source_mapping_end(&mut self, span: Span) {
-        if let Some(sourcemap_builder) = self.sourcemap_builder.as_mut() {
-            if !span.is_empty() {
-                sourcemap_builder.add_source_mapping(self.code.as_bytes(), span.end, None);
             }
         }
     }

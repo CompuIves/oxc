@@ -98,7 +98,7 @@ impl<'a> Comments<'a> {
         let comments = self.comments_after(start);
         while index < comments.len() {
             let comment = &comments[index];
-            if self.source_text[start as usize..comment.span.end as usize]
+            if self.source_text[start as usize..comment.span.start as usize]
                 .contains(character as char)
             {
                 return &comments[..index];
@@ -349,16 +349,6 @@ impl<'a> Comments<'a> {
         // The preceding_node is the callee of the call expression or new expression, let following node to print it.
         // Based on https://github.com/prettier/prettier/blob/7584432401a47a26943dd7a9ca9a8e032ead7285/src/language-js/comments/handle-comments.js#L726-L741
         if matches!(enclosing_node, SiblingNode::CallExpression(CallExpression { callee, ..}) | SiblingNode::NewExpression(NewExpression { callee, ..}) if callee.span().contains_inclusive(preceding_node.span()))
-        {
-            return &[];
-        }
-
-        // No need to print trailing comments for the most right side for `BinaryExpression` and `LogicalExpression`,
-        // instead, print trailing comments for expression itself.
-        if matches!(
-            enclosing_node,
-            SiblingNode::BinaryExpression(_) | SiblingNode::LogicalExpression(_)
-        ) && matches!(following_node, Some(SiblingNode::ExpressionStatement(_)))
         {
             return &[];
         }

@@ -3110,6 +3110,11 @@ pub struct AstNode<'a, T> {
     pub(super) allocator: &'a Allocator,
     pub(super) following_node: Option<SiblingNode<'a>>,
 }
+impl<T: GetSpan> GetSpan for &AstNode<'_, T> {
+    fn span(&self) -> Span {
+        self.inner.span()
+    }
+}
 
 impl<'a, T: fmt::Debug> fmt::Debug for AstNode<'a, T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -3889,7 +3894,7 @@ impl<'a> AstNode<'a, ObjectProperty<'a>> {
 
     #[inline]
     pub fn value(&self) -> &AstNode<'a, Expression<'a>> {
-        let following_node = self.following_node;
+        let following_node = None;
         self.allocator.alloc(AstNode {
             inner: &self.inner.value,
             allocator: self.allocator,

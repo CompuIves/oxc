@@ -110,9 +110,9 @@ impl<'a> FormatWrite<'a> for AstNode<'a, MethodDefinition<'a>> {
         if let Some(body) = &value.body() {
             // Handle block comments between method signature and body
             // Example: method() /* comment */ {}
-            let comments = f.context().comments().block_comments_before(body.span.start);
+            let comments = f.context().comments().comments_before(body.span.start);
             if !comments.is_empty() {
-                write!(f, [space(), FormatLeadingComments::Comments(comments)])?;
+                write!(f, [space(), FormatTrailingComments::Comments(comments)])?;
             }
             write!(f, [space(), body])?;
         }
@@ -259,10 +259,12 @@ impl<'a> Format<'a> for FormatClass<'a, '_> {
         // Decorators are handled differently depending on the parent context
         // When the class is exported, the export statement handles decorator formatting
         // to ensure proper placement relative to the export keyword
-        if !matches!(
-            self.parent,
-            AstNodes::ExportNamedDeclaration(_) | AstNodes::ExportDefaultDeclaration(_)
-        ) {
+        if self.is_expression()
+            || !matches!(
+                self.parent,
+                AstNodes::ExportNamedDeclaration(_) | AstNodes::ExportDefaultDeclaration(_)
+            )
+        {
             write!(f, decorators)?;
         }
 
@@ -274,18 +276,19 @@ impl<'a> Format<'a> for FormatClass<'a, '_> {
         }
 
         write!(f, "class")?;
-
         let indent_only_heritage = ((implements.is_empty() && super_class.is_some())
             || (!implements.is_empty() && super_class.is_none()))
             && type_parameters.as_ref().is_some_and(|type_parameters| {
-                !f.comments().has_trailing_line_comments(
-                    type_parameters.span.start,
-                    super_class
-                        .map(GetSpan::span)
-                        .or(implements.first().map(GetSpan::span))
-                        .unwrap()
-                        .start,
-                )
+                let current_node_end = type_parameters.span.end;
+                let next_node_start = super_class
+                    .map(GetSpan::span)
+                    .or(implements.first().map(GetSpan::span))
+                    .unwrap()
+                    .start;
+                !f.comments()
+                    .comments_in_range(current_node_end, next_node_start)
+                    .iter()
+                    .any(|c| c.is_line())
             });
 
         let type_parameters_id = if indent_only_heritage && !implements.is_empty() {
@@ -356,7 +359,9 @@ impl<'a> Format<'a> for FormatClass<'a, '_> {
                     let comments = if type_arguments.is_some() || !implements.is_empty() {
                         &[]
                     } else {
-                        f.context().comments().comments_between(extends.span().end, body.span.start)
+                        f.context()
+                            .comments()
+                            .comments_in_range(extends.span().end, body.span.start)
                     };
 
                     // Check if there are trailing line comments after the extends clause
@@ -500,7 +505,7 @@ fn should_group<'a>(class: &Class<'a>, f: &Formatter<'_, 'a>) -> bool {
     while let Some(span) = spans_iter.next() {
         if let Some(next_span) = spans_iter.peek() {
             // Check if there are comments between the current span and the next one
-            if comments.has_comments_between(span.end, next_span.start) {
+            if comments.has_comment_in_range(span.end, next_span.start) {
                 // If there are comments, we should group the heritage clauses
                 return true;
             }

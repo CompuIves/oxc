@@ -5,7 +5,14 @@ use tower_lsp_server::{
     lsp_types::{CodeDescription, NumberOrString, Uri},
 };
 
-use crate::{Options, worker::WorkspaceWorker};
+use crate::{
+    linter::{
+        options::{LintOptions, Run},
+        server_linter::ServerLinterRun,
+    },
+    options::Options,
+    worker::WorkspaceWorker,
+};
 
 use super::linter::error_with_position::DiagnosticReport;
 
@@ -92,11 +99,11 @@ fixed: {fixed:?}
 /// Testing struct for the [linter server][crate::linter::server_linter::ServerLinter].
 pub struct Tester<'t> {
     relative_root_dir: &'t str,
-    options: Option<Options>,
+    options: Option<LintOptions>,
 }
 
 impl Tester<'_> {
-    pub fn new(relative_root_dir: &'static str, options: Option<Options>) -> Self {
+    pub fn new(relative_root_dir: &'static str, options: Option<LintOptions>) -> Self {
         Self { relative_root_dir, options }
     }
 
@@ -106,19 +113,42 @@ impl Tester<'_> {
             .join(self.relative_root_dir);
         let uri = Uri::from_file_path(absolute_path).expect("could not convert current dir to uri");
         let worker = WorkspaceWorker::new(uri);
-        worker.init_linter(&self.options.clone().unwrap_or_default()).await;
+        let option =
+            &Options { lint: self.options.clone().unwrap_or_default(), ..Default::default() };
+        worker.start_worker(option).await;
 
         worker
     }
 
     /// Given a relative file path (relative to `oxc_language_server` crate root), run the linter
     /// and return the resulting diagnostics in a custom snapshot format.
-    #[expect(clippy::disallowed_methods)]
     pub fn test_and_snapshot_single_file(&self, relative_file_path: &str) {
+        self.test_and_snapshot_single_file_with_run_type(
+            relative_file_path,
+            self.options.as_ref().map_or(Run::default(), |o| o.run),
+        );
+    }
+
+    #[expect(clippy::disallowed_methods)]
+    pub fn test_and_snapshot_single_file_with_run_type(
+        &self,
+        relative_file_path: &str,
+        run_type: Run,
+    ) {
         let uri = get_file_uri(&format!("{}/{}", self.relative_root_dir, relative_file_path));
-        let reports = tokio::runtime::Runtime::new()
-            .unwrap()
-            .block_on(async { self.create_workspace_worker().await.lint_file(&uri, None).await });
+        let reports = tokio::runtime::Runtime::new().unwrap().block_on(async {
+            self.create_workspace_worker()
+                .await
+                .lint_file(
+                    &uri,
+                    None,
+                    match run_type {
+                        Run::OnSave => ServerLinterRun::OnSave,
+                        Run::OnType => ServerLinterRun::OnType,
+                    },
+                )
+                .await
+        });
         let snapshot = if let Some(reports) = reports {
             if reports.is_empty() {
                 "No diagnostic reports".to_string()

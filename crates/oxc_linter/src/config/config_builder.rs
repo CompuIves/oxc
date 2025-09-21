@@ -101,49 +101,6 @@ impl ConfigStoreBuilder {
         external_linter: Option<&ExternalLinter>,
         external_plugin_store: &mut ExternalPluginStore,
     ) -> Result<Self, ConfigBuilderError> {
-        let parent_path =
-            oxlintrc.path.parent().map_or_else(|| PathBuf::from("."), std::path::Path::to_path_buf);
-
-        Self::from_oxlintrc_with_ignore_root(
-            start_empty,
-            oxlintrc,
-            external_linter,
-            external_plugin_store,
-            parent_path.as_path(),
-        )
-    }
-
-    /// Similar to the [`ConfigStoreBuilder::from_oxlintrc`] method, but
-    /// applies the config on top of a default [`Oxlintrc`].
-    /// The ignore root of this file, should be the current working directory.
-    /// Even if the file is not located at the current working directory.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ConfigBuilderError::InvalidConfigFile`] if a referenced config file is not valid.
-    pub fn from_base_oxlintrc(
-        cwd: &Path,
-        start_empty: bool,
-        oxlintrc: Oxlintrc,
-        external_linter: Option<&ExternalLinter>,
-        external_plugin_store: &mut ExternalPluginStore,
-    ) -> Result<Self, ConfigBuilderError> {
-        Self::from_oxlintrc_with_ignore_root(
-            start_empty,
-            oxlintrc,
-            external_linter,
-            external_plugin_store,
-            cwd,
-        )
-    }
-
-    fn from_oxlintrc_with_ignore_root(
-        start_empty: bool,
-        oxlintrc: Oxlintrc,
-        external_linter: Option<&ExternalLinter>,
-        external_plugin_store: &mut ExternalPluginStore,
-        ignore_root: &Path,
-    ) -> Result<Self, ConfigBuilderError> {
         // TODO: this can be cached to avoid re-computing the same oxlintrc
         fn resolve_oxlintrc_config(
             config: Oxlintrc,
@@ -205,11 +162,15 @@ impl ConfigStoreBuilder {
         }
 
         if !external_plugins.is_empty() {
-            let external_linter =
-                external_linter.ok_or(ConfigBuilderError::NoExternalLinterConfigured)?;
+            let Some(external_linter) = external_linter else {
+                #[expect(clippy::missing_panics_doc, reason = "infallible")]
+                let plugin_specifier = external_plugins.iter().next().unwrap().clone();
+                return Err(ConfigBuilderError::NoExternalLinterConfigured { plugin_specifier });
+            };
 
             let resolver = Resolver::default();
 
+            #[expect(clippy::missing_panics_doc, reason = "oxlintrc.path is always a file path")]
             let oxlintrc_dir = oxlintrc.path.parent().unwrap();
 
             for plugin_specifier in &external_plugins {
@@ -241,10 +202,6 @@ impl ConfigStoreBuilder {
             settings: oxlintrc.settings,
             env: oxlintrc.env,
             globals: oxlintrc.globals,
-            ignore_patterns: LintConfig::resolve_oxlintrc_ignore_patterns(
-                &oxlintrc.ignore_patterns,
-                ignore_root,
-            ),
             path: Some(oxlintrc.path),
         };
 
@@ -525,7 +482,7 @@ impl ConfigStoreBuilder {
         let new_rules = self
             .rules
             .iter()
-            .sorted_by_key(|(r, _)| (r.plugin_name(), r.name()))
+            .sorted_unstable_by_key(|(r, _)| (r.plugin_name(), r.name()))
             .map(|(r, severity)| ESLintRule {
                 plugin_name: r.plugin_name().to_string(),
                 rule_name: r.name().to_string(),
@@ -540,19 +497,6 @@ impl ConfigStoreBuilder {
         serde_json::to_string_pretty(&oxlintrc).unwrap()
     }
 
-    #[cfg(not(all(feature = "oxlint2", not(feature = "disable_oxlint2"))))]
-    #[expect(unused_variables, clippy::needless_pass_by_ref_mut)]
-    fn load_external_plugin(
-        oxlintrc_dir_path: &Path,
-        plugin_specifier: &str,
-        external_linter: &ExternalLinter,
-        resolver: &Resolver,
-        external_plugin_store: &mut ExternalPluginStore,
-    ) -> Result<(), ConfigBuilderError> {
-        unreachable!()
-    }
-
-    #[cfg(all(feature = "oxlint2", not(feature = "disable_oxlint2")))]
     fn load_external_plugin(
         oxlintrc_dir_path: &Path,
         plugin_specifier: &str,
@@ -577,13 +521,11 @@ impl ConfigStoreBuilder {
 
         let result = {
             let plugin_path = plugin_path.clone();
-            tokio::task::block_in_place(move || {
-                tokio::runtime::Handle::current()
-                    .block_on((external_linter.load_plugin)(plugin_path))
-            })
-            .map_err(|e| ConfigBuilderError::PluginLoadFailed {
-                plugin_specifier: plugin_specifier.to_string(),
-                error: e.to_string(),
+            (external_linter.load_plugin)(plugin_path).map_err(|e| {
+                ConfigBuilderError::PluginLoadFailed {
+                    plugin_specifier: plugin_specifier.to_string(),
+                    error: e.to_string(),
+                }
             })
         }?;
 
@@ -634,7 +576,9 @@ pub enum ConfigBuilderError {
         error: String,
     },
     ExternalRuleLookupError(ExternalRuleLookupError),
-    NoExternalLinterConfigured,
+    NoExternalLinterConfigured {
+        plugin_specifier: String,
+    },
 }
 
 impl Display for ConfigBuilderError {
@@ -655,11 +599,14 @@ impl Display for ConfigBuilderError {
                 write!(f, "invalid config file {file}: {reason}")
             }
             ConfigBuilderError::PluginLoadFailed { plugin_specifier, error } => {
-                write!(f, "Failed to load external plugin: {plugin_specifier}\n  {error}")?;
+                write!(f, "Failed to load JS plugin: {plugin_specifier}\n  {error}")?;
                 Ok(())
             }
-            ConfigBuilderError::NoExternalLinterConfigured => {
-                f.write_str("Failed to load external plugin because no external linter was configured. This means the Oxlint binary was executed directly rather than via napi bindings.")?;
+            ConfigBuilderError::NoExternalLinterConfigured { plugin_specifier } => {
+                write!(
+                    f,
+                    "`plugins` config contains '{plugin_specifier}'. JS plugins are not supported without `--js-plugins` CLI option. Note: JS plugin support is experimental.",
+                )?;
                 Ok(())
             }
             ConfigBuilderError::ExternalRuleLookupError(e) => std::fmt::Display::fmt(&e, f),

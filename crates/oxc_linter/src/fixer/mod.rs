@@ -6,15 +6,6 @@ use oxc_span::{GetSpan, Span};
 
 use crate::LintContext;
 
-#[cfg(feature = "language_server")]
-use crate::service::offset_to_position::SpanPositionMessage;
-#[cfg(feature = "language_server")]
-pub use fix::{FixWithPosition, PossibleFixesWithPosition};
-#[cfg(feature = "language_server")]
-use oxc_data_structures::rope::Rope;
-#[cfg(feature = "language_server")]
-use oxc_diagnostics::{OxcCode, Severity};
-
 mod fix;
 pub use fix::{CompositeFix, Fix, FixKind, PossibleFixes, RuleFix};
 use oxc_allocator::{Allocator, CloneIn};
@@ -227,101 +218,12 @@ pub struct FixResult<'a> {
     pub messages: Vec<Message<'a>>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct Message<'a> {
     pub error: OxcDiagnostic,
     pub fixes: PossibleFixes<'a>,
     span: Span,
     fixed: bool,
-}
-
-#[cfg(feature = "language_server")]
-#[derive(Debug)]
-pub struct MessageWithPosition<'a> {
-    pub message: Cow<'a, str>,
-    pub labels: Option<Vec<SpanPositionMessage<'a>>>,
-    pub help: Option<Cow<'a, str>>,
-    pub severity: Severity,
-    pub code: OxcCode,
-    pub url: Option<Cow<'a, str>>,
-    pub fixes: PossibleFixesWithPosition<'a>,
-}
-
-#[cfg(feature = "language_server")]
-impl From<OxcDiagnostic> for MessageWithPosition<'_> {
-    fn from(from: OxcDiagnostic) -> Self {
-        Self {
-            message: from.message.clone(),
-            labels: None,
-            help: from.help.clone(),
-            severity: from.severity,
-            code: from.code.clone(),
-            url: from.url.clone(),
-            fixes: PossibleFixesWithPosition::None,
-        }
-    }
-}
-
-// clippy: the source field is checked and assumed to be less than 4GB, and
-// we assume that the fix offset will not exceed 2GB in either direction
-#[cfg(feature = "language_server")]
-#[expect(clippy::cast_possible_truncation)]
-pub fn message_to_message_with_position<'a>(
-    message: &Message<'a>,
-    source_text: &str,
-    rope: &Rope,
-) -> MessageWithPosition<'a> {
-    use crate::service::offset_to_position::offset_to_position;
-
-    let labels = message.error.labels.as_ref().map(|labels| {
-        labels
-            .iter()
-            .map(|labeled_span| {
-                let offset = labeled_span.offset() as u32;
-                let start_position = offset_to_position(rope, offset, source_text);
-                let end_position =
-                    offset_to_position(rope, offset + labeled_span.len() as u32, source_text);
-                let message = labeled_span.label().map(|label| Cow::Owned(label.to_string()));
-
-                SpanPositionMessage::new(start_position, end_position).with_message(message)
-            })
-            .collect::<Vec<_>>()
-    });
-
-    MessageWithPosition {
-        message: message.error.message.clone(),
-        severity: message.error.severity,
-        help: message.error.help.clone(),
-        url: message.error.url.clone(),
-        code: message.error.code.clone(),
-        labels,
-        fixes: match &message.fixes {
-            PossibleFixes::None => PossibleFixesWithPosition::None,
-            PossibleFixes::Single(fix) => {
-                PossibleFixesWithPosition::Single(fix_to_fix_with_position(fix, rope, source_text))
-            }
-            PossibleFixes::Multiple(fixes) => PossibleFixesWithPosition::Multiple(
-                fixes.iter().map(|fix| fix_to_fix_with_position(fix, rope, source_text)).collect(),
-            ),
-        },
-    }
-}
-
-#[cfg(feature = "language_server")]
-fn fix_to_fix_with_position<'a>(
-    fix: &Fix<'a>,
-    rope: &Rope,
-    source_text: &str,
-) -> FixWithPosition<'a> {
-    use crate::service::offset_to_position::offset_to_position;
-
-    let start_position = offset_to_position(rope, fix.span.start, source_text);
-    let end_position = offset_to_position(rope, fix.span.end, source_text);
-    FixWithPosition {
-        content: fix.content.clone(),
-        span: SpanPositionMessage::new(start_position, end_position)
-            .with_message(fix.message.as_ref().map(|label| Cow::Owned(label.to_string()))),
-    }
 }
 
 impl<'new> CloneIn<'new> for Message<'_> {
@@ -340,24 +242,17 @@ impl<'new> CloneIn<'new> for Message<'_> {
 impl<'a> Message<'a> {
     #[expect(clippy::cast_possible_truncation)] // for `as u32`
     pub fn new(error: OxcDiagnostic, fixes: PossibleFixes<'a>) -> Self {
-        let (start, end) = if let Some(labels) = &error.labels {
-            let start = labels
-                .iter()
-                .min_by_key(|span| span.offset())
-                .map_or(0, |span| span.offset() as u32);
-            let end = labels
-                .iter()
-                .max_by_key(|span| span.offset() + span.len())
-                .map_or(0, |span| (span.offset() + span.len()) as u32);
-            (start, end)
-        } else {
-            (0, 0)
-        };
-        Self { error, span: Span::new(start, end), fixes, fixed: false }
+        let span = error
+            .labels
+            .as_ref()
+            .and_then(|labels| labels.iter().find(|span| span.primary()).or_else(|| labels.first()))
+            .map(|span| Span::new(span.offset() as u32, (span.offset() + span.len()) as u32))
+            .unwrap_or_default();
+
+        Self { error, span, fixes, fixed: false }
     }
 
-    /// move the offset of all spans (except fixes) to the right
-    /// for moving fixes use [`Message::move_fix_offset`].
+    /// move the offset of all spans to the right
     pub fn move_offset(&mut self, offset: u32) -> &mut Self {
         debug_assert!(offset != 0);
 
@@ -368,12 +263,6 @@ impl<'a> Message<'a> {
                 label.set_span_offset(label.offset().saturating_add(offset as usize));
             }
         }
-
-        self
-    }
-
-    pub fn move_fix_offset(&mut self, offset: u32) -> &mut Self {
-        debug_assert!(offset != 0);
 
         match &mut self.fixes {
             PossibleFixes::None => {}

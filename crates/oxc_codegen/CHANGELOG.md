@@ -4,6 +4,65 @@ All notable changes to this package will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0).
 
+
+
+
+## [0.88.0] - 2025-09-15
+
+### 🐛 Bug Fixes
+
+- bf50a02 codegen: Avoid backticks for object property keys in destructuring assignments (#13631) (copilot-swe-agent)
+
+### ⚡ Performance
+
+- d4608f1 codegen: Reduce memory usage in `SourcemapBuilder` (#13679) (overlookmotel)
+- 4ded22b codegen: Reduce allocations in `SourcemapBuilder` (#13677) (overlookmotel)
+- b35bf30 codegen: Optimize sourcemap builder to reduce allocations (#13670) (Boshen)
+- 641b252 codegen: Reduce branches when printing `ObjectProperty` and `BindingProperty` (#13659) (overlookmotel)
+
+
+## [0.87.0] - 2025-09-08
+
+### 🐛 Bug Fixes
+
+- e11a946 rust: Fix missing docs (#13541) (Boshen)
+- 34d3cde rust: Fix clippy issues (#13540) (Boshen)
+
+
+## [0.86.0] - 2025-08-31
+
+### 💥 BREAKING CHANGES
+
+- edeebc6 data_structures: [**BREAKING**] Rename `SliceIterExt` to `SliceIter` (#13439) (overlookmotel)
+
+### 🚀 Features
+
+- 5b139aa data_structures: Add `ptr` and `end_ptr` methods to `SliceIterExt` (#13435) (overlookmotel)
+- d8b027f data_structures: Add `SliceIterExt::peek` method (#13434) (overlookmotel)
+
+### 🚜 Refactor
+
+- 9c3b060 codegen: Clarify choice of quote when printing strings (#13440) (overlookmotel)
+
+### ⚡ Performance
+
+- 39fc0d6 codegen: Use `isize` for quote counters (#13441) (overlookmotel)
+
+
+
+
+## [0.83.0] - 2025-08-29
+
+### 🐛 Bug Fixes
+
+- b53a294 codegen: Add end sourcemaps for arguments (#13355) (sapphi-red)
+- 1044566 codegen: Add end sourcemaps for array literals and object literals (#13354) (sapphi-red)
+
+### 🧪 Testing
+
+- f547c94 codegen: Add test that verifies stack traces are correct (#13351) (sapphi-red)
+
+
 ## [0.82.3] - 2025-08-20
 
 ### 🐛 Bug Fixes

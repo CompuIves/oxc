@@ -1,12 +1,12 @@
 use oxc_allocator::TakeIn;
 use oxc_ast::ast::*;
+use oxc_compat::ESFeature;
 use oxc_ecmascript::{
     constant_evaluation::{ConstantEvaluation, ConstantValue, DetermineValueType},
     side_effects::MayHaveSideEffects,
 };
 use oxc_semantic::ReferenceFlags;
 use oxc_span::GetSpan;
-use oxc_syntax::es_target::ESTarget;
 
 use crate::ctx::Ctx;
 
@@ -175,10 +175,9 @@ impl<'a> PeepholeOptimizations {
         expr: &mut AssignmentExpression<'a>,
         ctx: &mut Ctx<'a, '_>,
     ) {
-        if ctx.options().target < ESTarget::ES2020 {
-            return;
-        }
-        if !matches!(expr.operator, AssignmentOperator::Assign) {
+        if !ctx.supports_feature(ESFeature::ES2021LogicalAssignmentOperators)
+            || !matches!(expr.operator, AssignmentOperator::Assign)
+        {
             return;
         }
 
@@ -263,11 +262,7 @@ impl<'a> PeepholeOptimizations {
 /// <https://github.com/google/closure-compiler/blob/v20240609/test/com/google/javascript/jscomp/PeepholeMinimizeConditionsTest.java>
 #[cfg(test)]
 mod test {
-    use crate::{
-        CompressOptions,
-        tester::{test, test_options, test_same, test_same_options},
-    };
-    use oxc_syntax::es_target::ESTarget;
+    use crate::tester::{test, test_same, test_target, test_target_same};
 
     /** Check that removing blocks with 1 child works */
     #[test]
@@ -414,7 +409,7 @@ mod test {
 
     /** Try to minimize assignments */
     #[test]
-    #[ignore]
+    #[ignore = "TODO: Assignment folding optimization not yet implemented"]
     fn test_fold_assignments() {
         test("function f(){if(x)y=3;else y=4;}", "function f(){y=x?3:4}");
         test("function f(){if(x)y=1+a;else y=2+a;}", "function f(){y=x?1+a:2+a}");
@@ -436,7 +431,7 @@ mod test {
     }
 
     #[test]
-    #[ignore]
+    #[ignore = "TODO: Duplicate statement removal not yet implemented"]
     fn test_remove_duplicate_statements() {
         test("if (a) { x = 1; x++ } else { x = 2; x++ }", "x=(a) ? 1 : 2; x++");
         test(
@@ -505,7 +500,7 @@ mod test {
     }
 
     #[test]
-    #[ignore]
+    #[ignore = "TODO: Parentheses counting optimization not yet implemented"]
     fn test_and_parentheses_count() {
         test("function f(){if(x||y)a.foo()}", "function f(){(x||y)&&a.foo()}");
         test("function f(){if(x.a)x.a=0}", "function f(){x.a&&(x.a=0)}");
@@ -567,7 +562,7 @@ mod test {
     }
 
     #[test]
-    #[ignore]
+    #[ignore = "TODO: De Morgan's law optimization not yet implemented"]
     fn test_minimize_demorgan_remove_leading_not() {
         test("if(!(!a||!b)&&c) foo()", "((a&&b)&&c)&&foo()");
         test("if(!(x&&y)) foo()", "x&&y||foo()");
@@ -575,39 +570,39 @@ mod test {
     }
 
     #[test]
-    #[ignore]
+    #[ignore = "TODO: De Morgan's law optimization not yet implemented"]
     fn test_minimize_demorgan1() {
         test("if(!a&&!b)foo()", "(a||b)||foo()");
     }
 
     #[test]
-    #[ignore]
+    #[ignore = "TODO: De Morgan's law optimization not yet implemented"]
     fn test_minimize_demorgan2() {
         // Make sure trees with cloned functions are marked as changed
         test("(!(a&&!((function(){})())))||foo()", "!a||(function(){})()||foo()");
     }
 
     #[test]
-    #[ignore]
+    #[ignore = "TODO: De Morgan's law optimization not yet implemented"]
     fn test_minimize_demorgan2b() {
         // Make sure unchanged trees with functions are not marked as changed
         test_same("!a||(function(){})()||foo()");
     }
 
     #[test]
-    #[ignore]
+    #[ignore = "TODO: De Morgan's law optimization not yet implemented"]
     fn test_minimize_demorgan3() {
         test("if((!a||!b)&&(c||d)) foo()", "(a&&b||!c&&!d)||foo()");
     }
 
     #[test]
-    #[ignore]
+    #[ignore = "TODO: De Morgan's law optimization not yet implemented"]
     fn test_minimize_demorgan5() {
         test("if((!a||!b)&&c) foo()", "(a&&b||!c)||foo()");
     }
 
     #[test]
-    #[ignore]
+    #[ignore = "TODO: De Morgan's law optimization not yet implemented"]
     fn test_minimize_demorgan11() {
         test(
             "if (x && (y===2 || !f()) && (y===3 || !h())) foo()",
@@ -616,7 +611,7 @@ mod test {
     }
 
     #[test]
-    #[ignore]
+    #[ignore = "TODO: De Morgan's law optimization not yet implemented"]
     fn test_minimize_demorgan20a() {
         test(
             "if (0===c && (2===a || 1===a)) f(); else g()",
@@ -625,7 +620,7 @@ mod test {
     }
 
     #[test]
-    #[ignore]
+    #[ignore = "TODO: De Morgan's law optimization not yet implemented"]
     fn test_minimize_demorgan20b() {
         test("if (0!==c || 2!==a && 1!==a) g(); else f()", "(0!==c || 2!==a && 1!==a) ? g() : f()");
     }
@@ -676,7 +671,7 @@ mod test {
     }
 
     #[test]
-    #[ignore]
+    #[ignore = "TODO: Expression result minimization not yet implemented"]
     fn test_minimize_expr_result() {
         test("!x||!y", "x&&y");
         test("if(!(x&&!y)) foo()", "(!x||y)&&foo()");
@@ -685,13 +680,13 @@ mod test {
     }
 
     #[test]
-    #[ignore]
+    #[ignore = "TODO: De Morgan's law optimization not yet implemented"]
     fn test_minimize_demorgan21() {
         test("if (0===c && (2===a || 1===a)) f()", "(0!==c || 2!==a && 1!==a) || f()");
     }
 
     #[test]
-    #[ignore]
+    #[ignore = "TODO: AND/OR minimization not yet implemented"]
     fn test_minimize_and_or1() {
         test("if ((!a || !b) && (d || e)) f()", "(a&&b || !d&&!e) || f()");
     }
@@ -741,7 +736,7 @@ mod test {
     }
 
     #[test]
-    #[ignore]
+    #[ignore = "TODO: Conditional variable declaration folding not yet implemented"]
     fn test_fold_conditional_var_declaration() {
         test("if(x) var y=1;else y=2", "var y=x?1:2");
         test("if(x) y=1;else var y=2", "var y=x?1:2");
@@ -764,7 +759,7 @@ mod test {
     }
 
     #[test]
-    #[ignore]
+    #[ignore = "TODO: Return statement substitution not yet implemented"]
     fn test_substitute_return() {
         test("function f() { while(x) { return }}", "function f() { while(x) { break }}");
 
@@ -861,7 +856,7 @@ mod test {
     }
 
     #[test]
-    #[ignore]
+    #[ignore = "TODO: Break/throw substitution not yet implemented"]
     fn test_substitute_break_for_throw() {
         test_same("function f() { while(x) { throw Error }}");
 
@@ -1119,64 +1114,64 @@ mod test {
 
     #[test]
     fn test_coercion_substitution_disabled() {
-        test_same("var x = {}; if (x != null) throw 'a';");
-        test("var x = {}; var y = x != null;", "var x = {}, y = x != null;");
+        test("var x = {}; if (x != null) throw 'a';", "throw 'a';");
+        test("var x = {}; var y = x != null;", "var y = !0;");
 
-        test_same("var x = 1; if (x != 0) throw 'a';");
-        test("var x = 1; var y = x != 0;", "var x = 1, y = x != 0;");
+        test("var x = 1; if (x != 0) throw 'a';", "throw 'a';");
+        test("var x = 1; var y = x != 0;", "var y = !0;");
     }
 
     #[test]
     fn test_coercion_substitution_boolean_result0() {
-        test("var x = {}; var y = x != null;", "var x = {}, y = x != null");
+        test_same("var x = {}, y = x != null;");
     }
 
     #[test]
     fn test_coercion_substitution_boolean_result1() {
-        test("var x = {}; var y = x == null;", "var x = {}, y = x == null;");
-        test("var x = {}; var y = x !== null;", "var x = {}, y = x !== null;");
-        test("var x = undefined; var y = x !== null;", "var x = void 0, y = x !== null;");
-        test("var x = {}; var y = x === null;", "var x = {}, y = x === null;");
-        test("var x = undefined; var y = x === null;", "var x = void 0, y = x === null;");
+        test_same("export var x = {}, y = x == null;");
+        test_same("export var x = {}, y = x !== null;");
+        test("export var x = undefined, y = x !== null;", "export var x = void 0, y = x !== null;");
+        test_same("export var x = {}, y = x === null;");
+        test("export var x = undefined, y = x === null;", "export var x = void 0, y = x === null;");
 
-        test("var x = 1; var y = x != 0;", "var x = 1, y = x != 0;");
-        test("var x = 1; var y = x == 0;", "var x = 1, y = x == 0;");
-        test("var x = 1; var y = x !== 0;", "var x = 1, y = x !== 0;");
-        test("var x = 1; var y = x === 0;", "var x = 1, y = x === 0;");
+        test_same("export var x = 1, y = x != 0;");
+        test_same("export var x = 1, y = x == 0;");
+        test_same("export var x = 1, y = x !== 0;");
+        test_same("export var x = 1, y = x === 0;");
     }
 
     #[test]
     fn test_coercion_substitution_if() {
-        test("var x = {};\nif (x != null) throw 'a';\n", "var x={}; if (x!=null) throw 'a'");
-        test_same("var x = {};\nif (x == null) throw 'a';\n");
-        test_same("var x = {};\nif (x != null) throw 'a';\n");
-        test_same("var x = {};\nif (x !== null) throw 'a';\n");
-        test_same("var x = {};\nif (x === null) throw 'a';\n");
+        test("var x = {};\nif (x != null) throw 'a';\n", "throw 'a'");
+        test("var x = {};\nif (x == null) throw 'a';\n", "");
+        test("var x = {};\nif (x != null) throw 'a';\n", "throw 'a'");
+        test("var x = {};\nif (x !== null) throw 'a';\n", "throw 'a'");
+        test("var x = {};\nif (x === null) throw 'a';\n", "");
 
-        test_same("var x = 1;\nif (x != 0) throw 'a';\n");
-        test_same("var x = 1;\nif (x != 0) throw 'a';\n");
-        test_same("var x = 1;\nif (x == 0) throw 'a';\n");
-        test_same("var x = 1;\nif (x !== 0) throw 'a';\n");
-        test_same("var x = 1;\nif (x === 0) throw 'a';\n");
-        test_same("var x = NaN;\nif (x === 0) throw 'a';\n");
+        test("var x = 1;\nif (x != 0) throw 'a';\n", "throw 'a'");
+        test("var x = 1;\nif (x != 0) throw 'a';\n", "throw 'a'");
+        test("var x = 1;\nif (x == 0) throw 'a';\n", "");
+        test("var x = 1;\nif (x !== 0) throw 'a';\n", "throw 'a'");
+        test("var x = 1;\nif (x === 0) throw 'a';\n", "");
+        test("var x = NaN;\nif (x === 0) throw 'a';\n", "");
     }
 
     #[test]
     fn test_coercion_substitution_expression() {
-        test_same("var x = {}; x != null && alert('b');");
-        test_same("var x = 1; x != 0 && alert('b');");
+        test("var x = {}; x != null && alert('b');", "alert('b');");
+        test("var x = 1; x != 0 && alert('b');", "alert('b');");
     }
 
     #[test]
     fn test_coercion_substitution_hook() {
-        test("var x = {}; var y = x != null ? 1 : 2;", "var x = {}, y = x == null ? 2 : 1;");
-        test("var x = 1; var y = x != 0 ? 1 : 2;", "var x = 1, y = x == 0 ? 2 : 1;");
+        test("var x = {}; var y = x != null ? 1 : 2;", "var y = 1;");
+        test("var x = 1; var y = x != 0 ? 1 : 2;", "var y = 1;");
     }
 
     #[test]
     fn test_coercion_substitution_not() {
-        test("var x = {}; var y = !(x != null) ? 1 : 2;", "var x = {}, y = x == null ? 1 : 2;");
-        test("var x = 1; var y = !(x != 0) ? 1 : 2; ", "var x = 1, y = x == 0 ? 1 : 2; ");
+        test("var x = {}; var y = !(x != null) ? 1 : 2;", "var y = 2;");
+        test("var x = 1; var y = !(x != 0) ? 1 : 2; ", "var y = 2; ");
     }
 
     #[test]
@@ -1187,40 +1182,52 @@ mod test {
 
     #[test]
     fn test_coercion_substitution_unknown_type() {
-        test_same("var x = /** @type {?} */ ({});\nif (x != null) throw 'a';\n");
-        test_same("var x = /** @type {?} */ (1);\nif (x != 0) throw 'a';\n");
+        test("var x = /** @type {?} */ ({});\nif (x != null) throw 'a';\n", "throw 'a';\n");
+        test("var x = /** @type {?} */ (1);\nif (x != 0) throw 'a';\n", "throw 'a';\n");
     }
 
     #[test]
     fn test_coercion_substitution_all_type() {
-        test_same("var x = /** @type {*} */ ({});\nif (x != null) throw 'a';\n");
-        test_same("var x = /** @type {*} */ (1);\nif (x != 0) throw 'a';\n");
+        test_same("export var x = /** @type {*} */ ({});\nif (x != null) throw 'a';\n");
+        test_same("export var x = /** @type {*} */ (1);\nif (x != 0) throw 'a';\n");
     }
 
     #[test]
     fn test_coercion_substitution_primitives_vs_null() {
-        test_same("var x = 0;\nif (x != null) throw 'a';\n");
-        test_same("var x = '';\nif (x != null) throw 'a';\n");
-        test_same("var x = !1;\nif (x != null) throw 'a';\n");
+        test("var x = 0;\nif (x != null) throw 'a';\n", "throw 'a';\n");
+        test("var x = '';\nif (x != null) throw 'a';\n", "throw 'a';\n");
+        test("var x = !1;\nif (x != null) throw 'a';\n", "throw 'a';\n");
     }
 
     #[test]
     fn test_coercion_substitution_non_number_vs_zero() {
-        test_same("var x = {};\nif (x != 0) throw 'a';\n");
-        test_same("var x = '';\nif (x != 0) throw 'a';\n");
-        test_same("var x = !1;\nif (x != 0) throw 'a';\n");
+        test("var x = {};\nif (x != 0) throw 'a';\n", "if ({} != 0) throw 'a';");
+        test("var x = '';\nif (x != 0) throw 'a';\n", "");
+        test("var x = !1;\nif (x != 0) throw 'a';\n", "");
     }
 
     #[test]
     fn test_coercion_substitution_boxed_number_vs_zero() {
-        test_same("var x = /* @__PURE__ */ new Number(0);\nif (x != 0) throw 'a';\n");
+        test(
+            "var x = /* @__PURE__ */ new Number(0);\nif (x != 0) throw 'a';\n",
+            "if (/* @__PURE__ */ new Number(0) != 0) throw 'a';\n",
+        );
     }
 
     #[test]
     fn test_coercion_substitution_boxed_primitives() {
-        test_same("var x = /* @__PURE__ */ new Number(); if (x != null) throw 'a';");
-        test_same("var x = /* @__PURE__ */ new String(); if (x != null) throw 'a';");
-        test_same("var x = /* @__PURE__ */ new Boolean();\nif (x != null) throw 'a';");
+        test(
+            "var x = /* @__PURE__ */ new Number(); if (x != null) throw 'a';",
+            "if (/* @__PURE__ */ new Number() != null) throw 'a';",
+        );
+        test(
+            "var x = /* @__PURE__ */ new String(); if (x != null) throw 'a';",
+            "if (/* @__PURE__ */ new String() != null) throw 'a';",
+        );
+        test(
+            "var x = /* @__PURE__ */ new Boolean(); if (x != null) throw 'a';",
+            "if (/* @__PURE__ */ new Boolean() != null) throw 'a';",
+        );
     }
 
     #[test]
@@ -1327,7 +1334,10 @@ mod test {
         test("v = foo === null || foo === void 0 || foo === 1", "v = foo == null || foo === 1");
         test("v = foo === 1 || foo === null || foo === void 0", "v = foo === 1 || foo == null");
         test_same("v = foo === void 0 || bar === null");
-        test_same("var undefined = 1; v = foo === null || foo === undefined");
+        test(
+            "var undefined = 1; v = foo === null || foo === undefined",
+            "v = foo === null || foo === 1",
+        );
         test_same("v = foo !== 1 && foo === void 0 || foo === null");
         test_same("v = foo.a === void 0 || foo.a === null"); // cannot be folded because accessing foo.a might have a side effect
 
@@ -1391,9 +1401,7 @@ mod test {
         // foo() might have a side effect
         test_same("foo().a || (foo().a = 3)");
 
-        let target = ESTarget::ES2019;
-        let options = CompressOptions { target, ..CompressOptions::default() };
-        test_same_options("x || (x = 3)", &options);
+        test_target_same("x || (x = 3)", "chrome84");
 
         test("x || (a, x = 3)", "x ||= (a, 3)");
         test("x && (a, x = 3)", "x &&= (a, 3)");
@@ -1430,9 +1438,7 @@ mod test {
         // Example case: `let f = false; f = f || (() => {}); console.log(f.name)`
         test("var x; x = x || (() => 'a')", "var x; x ||= (() => 'a')");
 
-        let target = ESTarget::ES2019;
-        let options = CompressOptions { target, ..CompressOptions::default() };
-        test_options("var x; x = x || 1", "var x = x || 1", &options);
+        test_target("var x; x = x || 1", "var x = x || 1", "chrome84");
     }
 
     #[test]

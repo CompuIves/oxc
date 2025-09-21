@@ -1,5 +1,3 @@
-use std::iter;
-
 use javascript_globals::GLOBALS;
 
 use rustc_hash::FxHashSet;
@@ -27,7 +25,7 @@ impl Default for Ctx {
             global_variable_names: GLOBALS["builtin"]
                 .keys()
                 .copied()
-                .chain(iter::once("arguments"))
+                .chain(["arguments", "URL"])
                 .collect::<FxHashSet<_>>(),
             annotation: true,
             pure_function_names: vec![],
@@ -389,14 +387,14 @@ fn closure_compiler_tests() {
 
     // CLASS_STATIC_BLOCK
     test("(class C { static {} })", false);
-    // test("(class C { static { [1]; } })", false);
-    test("(class C { static { let x; } })", true);
-    test("(class C { static { const x =1 ; } })", true);
-    test("(class C { static { var x; } })", true);
+    test("(class C { static { [1]; } })", false);
+    test("(class C { static { let x; } })", false);
+    test("(class C { static { const x =1 ; } })", false);
+    test("(class C { static { var x; } })", false);
     test("(class C { static { this.x = 1; } })", true);
-    test("(class C { static { function f() { } } })", true);
-    // test("(class C { static { (function () {} )} })", false);
-    // test("(class C { static { ()=>{} } })", false);
+    test("(class C { static { function f() { } } })", false);
+    test("(class C { static { (function () {} )} })", false);
+    test("(class C { static { ()=>{} } })", false);
 
     // SUPER calls
     test("super()", true);
@@ -717,6 +715,7 @@ fn test_class_expression() {
     test("(class extends foo() {})", true);
     test("(class extends (() => {}) {})", true);
     test("(class { static {} })", false);
+    test("(class { static { 1; } })", false);
     test("(class { static { foo(); } })", true);
     test("(class { a() {} })", false);
     test("(class { [1]() {} })", false);
@@ -927,6 +926,10 @@ fn test_call_expressions() {
     test("Uint32Array.of()", false);
     test("Uint8Array.of()", false);
     test("Uint8ClampedArray.of()", false);
+
+    // may have side effects if shadowed
+    test_with_global_variables("Date()", &[], true);
+    test_with_global_variables("Object.create()", &[], true);
 }
 
 #[test]
@@ -990,24 +993,17 @@ fn test_is_pure_call_support() {
 fn test_property_read_side_effects_support() {
     let all_ctx =
         Ctx { property_read_side_effects: PropertyReadSideEffects::All, ..Default::default() };
-    let only_member_ctx = Ctx {
-        property_read_side_effects: PropertyReadSideEffects::OnlyMemberPropertyAccess,
-        ..Default::default()
-    };
     let none_ctx =
         Ctx { property_read_side_effects: PropertyReadSideEffects::None, ..Default::default() };
 
     test_with_ctx("foo.bar", &all_ctx, true);
-    test_with_ctx("foo.bar", &only_member_ctx, true);
     test_with_ctx("foo.bar", &none_ctx, false);
     test_with_ctx("foo[0]", &none_ctx, false);
     test_with_ctx("foo[0n]", &none_ctx, false);
     test_with_ctx("foo[bar()]", &none_ctx, true);
     test_with_ctx("foo.#bar", &all_ctx, true);
-    test_with_ctx("foo.#bar", &only_member_ctx, true);
     test_with_ctx("foo.#bar", &none_ctx, false);
     test_with_ctx("({ bar } = foo)", &all_ctx, true);
-    // test_with_ctx("({ bar } = foo)", &only_member_ctx, false);
     // test_with_ctx("({ bar } = foo)", &none_ctx, false);
 }
 

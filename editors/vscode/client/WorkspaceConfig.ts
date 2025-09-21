@@ -44,6 +44,16 @@ export interface WorkspaceConfigInterface {
    * @default 'allow'
    */
   unusedDisableDirectives: UnusedDisableDirectives;
+
+  /**
+   * Whether to enable type-aware linting
+   *
+   * `oxc.typeAware`
+   *
+   * @default false
+   */
+  typeAware: boolean;
+
   /**
    * Additional flags to pass to the LSP binary
    * `oxc.flags`
@@ -51,6 +61,14 @@ export interface WorkspaceConfigInterface {
    * @default {}
    */
   flags: Record<string, string>;
+
+  /**
+   * Enable formatting experiment
+   * `oxc.fmt.experimental`
+   *
+   * @default false
+   */
+  ['fmt.experimental']: boolean;
 }
 
 export class WorkspaceConfig {
@@ -58,7 +76,9 @@ export class WorkspaceConfig {
   private _tsConfigPath: string | null = null;
   private _runTrigger: Trigger = 'onType';
   private _unusedDisableDirectives: UnusedDisableDirectives = 'allow';
+  private _typeAware: boolean = false;
   private _flags: Record<string, string> = {};
+  private _formattingExperimental: boolean = false;
 
   constructor(private readonly workspace: WorkspaceFolder) {
     this.refresh();
@@ -78,7 +98,9 @@ export class WorkspaceConfig {
     this._tsConfigPath = this.configuration.get<string | null>('tsConfigPath') ?? null;
     this._unusedDisableDirectives = this.configuration.get<UnusedDisableDirectives>('unusedDisableDirectives') ??
       'allow';
+    this._typeAware = this.configuration.get<boolean>('typeAware') ?? false;
     this._flags = flags;
+    this._formattingExperimental = this.configuration.get<boolean>('fmt.experimental') ?? false;
   }
 
   public effectsConfigChange(event: ConfigurationChangeEvent): boolean {
@@ -94,7 +116,13 @@ export class WorkspaceConfig {
     if (event.affectsConfiguration(`${ConfigService.namespace}.unusedDisableDirectives`, this.workspace)) {
       return true;
     }
+    if (event.affectsConfiguration(`${ConfigService.namespace}.typeAware`, this.workspace)) {
+      return true;
+    }
     if (event.affectsConfiguration(`${ConfigService.namespace}.flags`, this.workspace)) {
+      return true;
+    }
+    if (event.affectsConfiguration(`${ConfigService.namespace}.fmt.experimental`, this.workspace)) {
       return true;
     }
     return false;
@@ -140,6 +168,15 @@ export class WorkspaceConfig {
     return this.configuration.update('unusedDisableDirectives', value, ConfigurationTarget.WorkspaceFolder);
   }
 
+  get typeAware(): boolean {
+    return this._typeAware;
+  }
+
+  updateTypeAware(value: boolean): PromiseLike<void> {
+    this._typeAware = value;
+    return this.configuration.update('typeAware', value, ConfigurationTarget.WorkspaceFolder);
+  }
+
   get flags(): Record<string, string> {
     return this._flags;
   }
@@ -149,13 +186,24 @@ export class WorkspaceConfig {
     return this.configuration.update('flags', value, ConfigurationTarget.WorkspaceFolder);
   }
 
+  get formattingExperimental(): boolean {
+    return this._formattingExperimental;
+  }
+
+  updateFormattingExperimental(value: boolean): PromiseLike<void> {
+    this._formattingExperimental = value;
+    return this.configuration.update('fmt.experimental', value, ConfigurationTarget.WorkspaceFolder);
+  }
+
   public toLanguageServerConfig(): WorkspaceConfigInterface {
     return {
       run: this.runTrigger,
       configPath: this.configPath ?? null,
       tsConfigPath: this.tsConfigPath ?? null,
       unusedDisableDirectives: this.unusedDisableDirectives,
+      typeAware: this.typeAware,
       flags: this.flags,
+      ['fmt.experimental']: this.formattingExperimental,
     };
   }
 }

@@ -2,12 +2,12 @@ use std::iter;
 
 use oxc_allocator::{TakeIn, Vec};
 use oxc_ast::ast::*;
+use oxc_compat::ESFeature;
 use oxc_ecmascript::{
     ToPrimitive,
     side_effects::{MayHaveSideEffects, MayHaveSideEffectsContext},
 };
 use oxc_span::GetSpan;
-use oxc_syntax::es_target::ESTarget;
 
 use crate::{CompressOptionsUnused, ctx::Ctx};
 
@@ -65,6 +65,9 @@ impl<'a> PeepholeOptimizations {
     }
 
     fn remove_unused_logical_expr(e: &mut Expression<'a>, ctx: &mut Ctx<'a, '_>) -> bool {
+        if !e.may_have_side_effects(ctx) {
+            return true;
+        }
         let Expression::LogicalExpression(logical_expr) = e else { return false };
         if !logical_expr.operator.is_coalesce() {
             Self::minimize_expression_in_boolean_context(&mut logical_expr.left, ctx);
@@ -77,7 +80,9 @@ impl<'a> PeepholeOptimizations {
         }
 
         // try optional chaining and nullish coalescing
-        if ctx.options().target >= ESTarget::ES2020 {
+        if ctx.supports_feature(ESFeature::ES2020OptionalChaining)
+            || ctx.supports_feature(ESFeature::ES2020NullishCoalescingOperator)
+        {
             let LogicalExpression {
                 span: logical_span,
                 left: logical_left,
@@ -90,22 +95,25 @@ impl<'a> PeepholeOptimizations {
                     // "a == null || a.b()" => "a?.b()"
                     (LogicalOperator::And, BinaryOperator::Inequality)
                     | (LogicalOperator::Or, BinaryOperator::Equality) => {
-                        let name_and_id = if let Expression::Identifier(id) = &binary_expr.left {
-                            (!ctx.is_global_reference(id) && binary_expr.right.is_null())
-                                .then_some((id.name, &mut binary_expr.left))
-                        } else if let Expression::Identifier(id) = &binary_expr.right {
-                            (!ctx.is_global_reference(id) && binary_expr.left.is_null())
-                                .then_some((id.name, &mut binary_expr.right))
-                        } else {
-                            None
-                        };
-                        if let Some((name, id)) = name_and_id {
-                            if Self::inject_optional_chaining_if_matched(
-                                &name,
-                                id,
-                                logical_right,
-                                ctx,
-                            ) {
+                        if ctx.supports_feature(ESFeature::ES2020OptionalChaining) {
+                            let name_and_id = if let Expression::Identifier(id) = &binary_expr.left
+                            {
+                                (!ctx.is_global_reference(id) && binary_expr.right.is_null())
+                                    .then_some((id.name, &mut binary_expr.left))
+                            } else if let Expression::Identifier(id) = &binary_expr.right {
+                                (!ctx.is_global_reference(id) && binary_expr.left.is_null())
+                                    .then_some((id.name, &mut binary_expr.right))
+                            } else {
+                                None
+                            };
+                            if let Some((name, id)) = name_and_id
+                                && Self::inject_optional_chaining_if_matched(
+                                    &name,
+                                    id,
+                                    logical_right,
+                                    ctx,
+                                )
+                            {
                                 *e = logical_right.take_in(ctx.ast);
                                 ctx.state.changed = true;
                                 return false;
@@ -118,17 +126,19 @@ impl<'a> PeepholeOptimizations {
                     // "a != null || (a = b)" => "a ??= b"
                     (LogicalOperator::And, BinaryOperator::Equality)
                     | (LogicalOperator::Or, BinaryOperator::Inequality) => {
-                        let new_left_hand_expr = if binary_expr.right.is_null() {
-                            Some(&mut binary_expr.left)
-                        } else if binary_expr.left.is_null() {
-                            Some(&mut binary_expr.right)
-                        } else {
-                            None
-                        };
-                        if let Some(new_left_hand_expr) = new_left_hand_expr {
-                            if let Expression::AssignmentExpression(assignment_expr) = logical_right
-                            {
-                                if assignment_expr.operator == AssignmentOperator::Assign
+                        if ctx.supports_feature(ESFeature::ES2020NullishCoalescingOperator) {
+                            let new_left_hand_expr = if binary_expr.right.is_null() {
+                                Some(&mut binary_expr.left)
+                            } else if binary_expr.left.is_null() {
+                                Some(&mut binary_expr.right)
+                            } else {
+                                None
+                            };
+                            if let Some(new_left_hand_expr) = new_left_hand_expr {
+                                if ctx.supports_feature(ESFeature::ES2021LogicalAssignmentOperators)
+                                    && let Expression::AssignmentExpression(assignment_expr) =
+                                        logical_right
+                                    && assignment_expr.operator == AssignmentOperator::Assign
                                     && Self::has_no_side_effect_for_evaluation_same_target(
                                         &assignment_expr.left,
                                         new_left_hand_expr,
@@ -141,16 +151,16 @@ impl<'a> PeepholeOptimizations {
                                     ctx.state.changed = true;
                                     return false;
                                 }
-                            }
 
-                            *e = ctx.ast.expression_logical(
-                                *logical_span,
-                                new_left_hand_expr.take_in(ctx.ast),
-                                LogicalOperator::Coalesce,
-                                logical_right.take_in(ctx.ast),
-                            );
-                            ctx.state.changed = true;
-                            return false;
+                                *e = ctx.ast.expression_logical(
+                                    *logical_span,
+                                    new_left_hand_expr.take_in(ctx.ast),
+                                    LogicalOperator::Coalesce,
+                                    logical_right.take_in(ctx.ast),
+                                );
+                                ctx.state.changed = true;
+                                return false;
+                            }
                         }
                     }
                     _ => {}
@@ -378,6 +388,9 @@ impl<'a> PeepholeOptimizations {
     }
 
     fn remove_unused_conditional_expr(e: &mut Expression<'a>, ctx: &mut Ctx<'a, '_>) -> bool {
+        if !e.may_have_side_effects(ctx) {
+            return true;
+        }
         let Expression::ConditionalExpression(conditional_expr) = e else {
             return false;
         };
@@ -521,7 +534,19 @@ impl<'a> PeepholeOptimizations {
     fn remove_unused_call_expr(e: &mut Expression<'a>, ctx: &mut Ctx<'a, '_>) -> bool {
         let Expression::CallExpression(call_expr) = e else { return false };
 
-        if call_expr.pure && ctx.annotations() {
+        let is_pure = {
+            (call_expr.pure && ctx.annotations())
+                || (if let Expression::Identifier(id) = &call_expr.callee
+                    && let Some(symbol_id) =
+                        ctx.scoping().get_reference(id.reference_id()).symbol_id()
+                {
+                    ctx.state.pure_functions.contains_key(&symbol_id)
+                } else {
+                    false
+                })
+        };
+
+        if is_pure {
             let mut exprs =
                 Self::fold_arguments_into_needed_expressions(&mut call_expr.arguments, ctx);
             if exprs.is_empty() {
@@ -580,9 +605,8 @@ impl<'a> PeepholeOptimizations {
         !call_expr.may_have_side_effects(ctx)
     }
 
-    fn fold_arguments_into_needed_expressions(
+    pub fn fold_arguments_into_needed_expressions(
         args: &mut Vec<'a, Argument<'a>>,
-
         ctx: &mut Ctx<'a, '_>,
     ) -> Vec<'a, Expression<'a>> {
         ctx.ast.vec_from_iter(args.drain(..).filter_map(|arg| {
@@ -613,7 +637,7 @@ impl<'a> PeepholeOptimizations {
         if Self::keep_top_level_var_in_script_mode(ctx) {
             return false;
         }
-        let Some(reference_id) = ident.reference_id.get() else { return false };
+        let reference_id = ident.reference_id();
         let Some(symbol_id) = ctx.scoping().get_reference(reference_id).symbol_id() else {
             return false;
         };
@@ -629,9 +653,6 @@ impl<'a> PeepholeOptimizations {
             return false;
         }
         if symbol_value.read_references_count > 0 {
-            return false;
-        }
-        if symbol_value.for_statement_init {
             return false;
         }
         *e = assign_expr.right.take_in(ctx.ast);
@@ -876,6 +897,11 @@ mod test {
         test_same("v = a == null && (a = b)");
         test_same("v = a != null || (a = b)");
         test("void (x == null && y)", "x ?? y");
+
+        test("typeof x != 'undefined' && x", "");
+        test("typeof x == 'undefined' || x", "");
+        test("typeof x < 'u' && x", "");
+        test("typeof x > 'u' || x", "");
     }
 
     #[expect(clippy::literal_string_with_formatting_args)]
@@ -917,6 +943,11 @@ mod test {
         test("foo() ? 1 : bar()", "foo() || bar()");
         test("foo() ? bar() : 2", "foo() && bar()");
         test_same("foo() ? bar() : baz()");
+
+        test("typeof x == 'undefined' ? 0 : x", "");
+        test("typeof x != 'undefined' ? x : 0", "");
+        test("typeof x > 'u' ? 0 : x", "");
+        test("typeof x < 'u' ? x : 0", "");
     }
 
     #[test]
@@ -955,6 +986,9 @@ mod test {
         test("/* @__PURE__ */ new Foo(a)", "a");
         test("true && /* @__PURE__ */ noEffect()", "");
         test("false || /* @__PURE__ */ noEffect()", "");
+
+        test("var foo = () => 1; foo(), foo()", "var foo = () => 1");
+        test_same("var foo = () => { bar() }; foo(), foo()");
     }
 
     #[test]
@@ -1065,7 +1099,9 @@ mod test {
         test_same_options("function foo(t) { return t = x(); } foo();", &options);
 
         // For loops
-        test_same_options("for (let i;;) foo(i)", &options);
+        test_options("for (let i;;) i = 0", "for (;;);", &options);
+        test_options("for (let i;;) foo(i)", "for (;;) foo(void 0)", &options);
+        test_same_options("for (let i;;) i = 0, foo(i)", &options);
         test_same_options("for (let i in []) foo(i)", &options);
         test_same_options("for (let element of list) element && (element.foo = bar)", &options);
         test_same_options("for (let key in obj) key && (obj[key] = bar)", &options);

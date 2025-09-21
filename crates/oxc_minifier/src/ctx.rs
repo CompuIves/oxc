@@ -16,6 +16,7 @@ use oxc_syntax::{
 use oxc_traverse::Ancestor;
 
 use crate::{options::CompressOptions, state::MinifierState, symbol_value::SymbolValue};
+use oxc_compat::ESFeature;
 
 pub type TraverseCtx<'a> = oxc_traverse::TraverseCtx<'a, MinifierState<'a>>;
 
@@ -54,7 +55,7 @@ impl<'a> oxc_ecmascript::GlobalContext<'a> for Ctx<'a, '_> {
             .get_reference(reference_id)
             .symbol_id()
             .and_then(|symbol_id| self.state.symbol_values.get_symbol_value(symbol_id))
-            .filter(|sv| sv.write_references_count == 0 && !sv.for_statement_init)
+            .filter(|sv| sv.write_references_count == 0)
             .and_then(|sv| sv.initialized_constant.as_ref())
             .cloned()
     }
@@ -104,6 +105,13 @@ impl<'a> Ctx<'a, '_> {
 
     pub fn options(&self) -> &CompressOptions {
         &self.0.state.options
+    }
+
+    /// Check if the target engines supports a feature.
+    ///
+    /// Returns `true` if the feature is supported.
+    pub fn supports_feature(&self, feature: ESFeature) -> bool {
+        !self.options().target.has_feature(feature)
     }
 
     pub fn source_type(&self) -> SourceType {
@@ -182,10 +190,6 @@ impl<'a> Ctx<'a, '_> {
             }
         }
 
-        let for_statement_init = self.ancestors().nth(1).is_some_and(|ancestor| {
-            ancestor.is_parent_of_for_statement_init() || ancestor.is_parent_of_for_statement_left()
-        });
-
         let mut read_references_count = 0;
         let mut write_references_count = 0;
         for r in self.scoping().get_resolved_references(symbol_id) {
@@ -201,7 +205,6 @@ impl<'a> Ctx<'a, '_> {
         let symbol_value = SymbolValue {
             initialized_constant: constant,
             exported,
-            for_statement_init,
             read_references_count,
             write_references_count,
             scope_id,
@@ -264,5 +267,18 @@ impl<'a> Ctx<'a, '_> {
                 _ => None,
             })
             .unwrap_or_default()
+    }
+
+    /// Whether the assignment expression needs to be kept to preserve the name
+    pub fn is_expression_whose_name_needs_to_be_kept(&self, expr: &Expression) -> bool {
+        let options = &self.options().keep_names;
+        if !options.class && !options.function {
+            return false;
+        }
+        if !expr.is_anonymous_function_definition() {
+            return false;
+        }
+        let is_class = matches!(expr.without_parentheses(), Expression::ClassExpression(_));
+        (options.class && is_class) || (options.function && !is_class)
     }
 }

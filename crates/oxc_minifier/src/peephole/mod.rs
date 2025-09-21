@@ -32,6 +32,7 @@ use crate::{
 pub use self::normalize::{Normalize, NormalizeOptions};
 
 pub struct PeepholeOptimizations {
+    max_iterations: Option<u8>,
     /// Walk the ast in a fixed point loop until no changes are made.
     /// `prev_function_changed`, `functions_changed` and `current_function` track changes
     /// in top level and each function. No minification code are run if the function is not changed
@@ -41,8 +42,8 @@ pub struct PeepholeOptimizations {
 }
 
 impl<'a> PeepholeOptimizations {
-    pub fn new() -> Self {
-        Self { iteration: 0, changed: false }
+    pub fn new(max_iterations: Option<u8>) -> Self {
+        Self { max_iterations, iteration: 0, changed: false }
     }
 
     fn run_once(
@@ -64,7 +65,11 @@ impl<'a> PeepholeOptimizations {
             if !self.changed {
                 break;
             }
-            if self.iteration > 10 {
+            if let Some(max_iterations) = self.max_iterations {
+                if self.iteration >= max_iterations {
+                    break;
+                }
+            } else if self.iteration > 10 {
                 debug_assert!(false, "Ran loop more than 10 times.");
                 break;
             }
@@ -127,7 +132,7 @@ impl<'a> Traverse<'a, MinifierState<'a>> for PeepholeOptimizations {
 
     fn enter_statement(&mut self, stmt: &mut Statement<'a>, ctx: &mut TraverseCtx<'a>) {
         let ctx = &mut Ctx::new(ctx);
-        Self::keep_track_of_empty_functions(stmt, ctx);
+        Self::keep_track_of_pure_functions(stmt, ctx);
     }
 
     fn exit_statement(&mut self, stmt: &mut Statement<'a>, ctx: &mut TraverseCtx<'a>) {
@@ -369,13 +374,14 @@ impl<'a> Traverse<'a, MinifierState<'a>> for PeepholeOptimizations {
 }
 
 pub struct DeadCodeElimination {
+    max_iterations: Option<u8>,
     iteration: u8,
     changed: bool,
 }
 
 impl<'a> DeadCodeElimination {
-    pub fn new() -> Self {
-        Self { iteration: 0, changed: false }
+    pub fn new(max_iterations: Option<u8>) -> Self {
+        Self { max_iterations, iteration: 0, changed: false }
     }
 
     fn run_once(
@@ -397,7 +403,11 @@ impl<'a> DeadCodeElimination {
             if !self.changed {
                 break;
             }
-            if self.iteration > 10 {
+            if let Some(max_iterations) = self.max_iterations {
+                if self.iteration >= max_iterations {
+                    break;
+                }
+            } else if self.iteration > 10 {
                 debug_assert!(false, "Ran loop more than 10 times.");
                 break;
             }
@@ -507,8 +517,7 @@ struct ReferencesCounter {
 
 impl<'a> Visit<'a> for ReferencesCounter {
     fn visit_identifier_reference(&mut self, it: &IdentifierReference<'a>) {
-        if let Some(reference_id) = it.reference_id.get() {
-            self.refs.insert(reference_id);
-        }
+        let reference_id = it.reference_id();
+        self.refs.insert(reference_id);
     }
 }

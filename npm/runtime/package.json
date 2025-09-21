@@ -1,6 +1,6 @@
 {
   "name": "@oxc-project/runtime",
-  "version": "0.82.3",
+  "version": "0.91.0",
   "description": "Oxc's modular runtime helpers",
   "license": "MIT",
   "repository": {
@@ -1060,7 +1060,7 @@
     "./regenerator/": "./regenerator/"
   },
   "engines": {
-    "node": ">=6.9.0"
+    "node": "^20.19.0 || >=22.12.0"
   },
   "type": "commonjs"
 }

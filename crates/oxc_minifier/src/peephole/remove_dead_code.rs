@@ -1,7 +1,10 @@
 use oxc_allocator::{TakeIn, Vec};
 use oxc_ast::ast::*;
 use oxc_ast_visit::Visit;
-use oxc_ecmascript::{constant_evaluation::ConstantEvaluation, side_effects::MayHaveSideEffects};
+use oxc_ecmascript::{
+    constant_evaluation::{ConstantEvaluation, ConstantValue},
+    side_effects::MayHaveSideEffects,
+};
 use oxc_span::GetSpan;
 use oxc_traverse::Ancestor;
 
@@ -87,7 +90,9 @@ impl<'a> PeepholeOptimizations {
             } else {
                 keep_var.visit_statement(&if_stmt.consequent);
             }
-            let var_stmt = keep_var.get_variable_declaration_statement();
+            let var_stmt = keep_var
+                .get_variable_declaration_statement()
+                .and_then(|stmt| Self::remove_unused_variable_declaration(stmt, ctx));
             let has_var_stmt = var_stmt.is_some();
             if let Some(var_stmt) = var_stmt {
                 if boolean {
@@ -340,11 +345,11 @@ impl<'a> PeepholeOptimizations {
         }
     }
 
-    pub fn keep_track_of_empty_functions(stmt: &mut Statement<'a>, ctx: &mut Ctx<'a, '_>) {
+    pub fn keep_track_of_pure_functions(stmt: &mut Statement<'a>, ctx: &mut Ctx<'a, '_>) {
         match stmt {
             Statement::FunctionDeclaration(f) => {
                 if let Some(body) = &f.body {
-                    Self::try_save_empty_function(
+                    Self::try_save_pure_function(
                         f.id.as_ref(),
                         &f.params,
                         body,
@@ -359,7 +364,7 @@ impl<'a> PeepholeOptimizations {
                     if let BindingPatternKind::BindingIdentifier(id) = &d.id.kind {
                         match &d.init {
                             Some(Expression::ArrowFunctionExpression(a)) => {
-                                Self::try_save_empty_function(
+                                Self::try_save_pure_function(
                                     Some(id),
                                     &a.params,
                                     &a.body,
@@ -370,7 +375,7 @@ impl<'a> PeepholeOptimizations {
                             }
                             Some(Expression::FunctionExpression(f)) => {
                                 if let Some(body) = &f.body {
-                                    Self::try_save_empty_function(
+                                    Self::try_save_pure_function(
                                         Some(id),
                                         &f.params,
                                         body,
@@ -389,7 +394,7 @@ impl<'a> PeepholeOptimizations {
         }
     }
 
-    fn try_save_empty_function(
+    fn try_save_pure_function(
         id: Option<&BindingIdentifier<'a>>,
         params: &FormalParameters<'a>,
         body: &FunctionBody<'a>,
@@ -397,45 +402,44 @@ impl<'a> PeepholeOptimizations {
         generator: bool,
         ctx: &mut Ctx<'a, '_>,
     ) {
-        if !body.is_empty() || r#async || generator {
+        if r#async || generator {
             return;
         }
         // `function foo({}) {} foo(null)` is runtime type error.
         if !params.items.iter().all(|pat| pat.pattern.kind.is_binding_identifier()) {
             return;
         }
+        if body.statements.iter().any(|stmt| stmt.may_have_side_effects(ctx)) {
+            return;
+        }
         let Some(symbol_id) = id.and_then(|id| id.symbol_id.get()) else { return };
         if ctx.scoping().get_resolved_references(symbol_id).all(|r| r.flags().is_read_only()) {
-            ctx.state.empty_functions.insert(symbol_id);
+            ctx.state.pure_functions.insert(
+                symbol_id,
+                if body.is_empty() { Some(ConstantValue::Undefined) } else { None },
+            );
         }
     }
 
     pub fn remove_dead_code_call_expression(expr: &mut Expression<'a>, ctx: &mut Ctx<'a, '_>) {
         let Expression::CallExpression(e) = expr else { return };
         if let Expression::Identifier(ident) = &e.callee {
-            if let Some(reference_id) = ident.reference_id.get() {
-                if let Some(symbol_id) = ctx.scoping().get_reference(reference_id).symbol_id() {
-                    if ctx.state.empty_functions.contains(&symbol_id) {
-                        if e.arguments.is_empty() {
-                            *expr = ctx.ast.void_0(e.span);
-                            ctx.state.changed = true;
-                            return;
-                        }
-                        let mut exprs = ctx.ast.vec();
-                        for arg in e.arguments.drain(..) {
-                            match arg {
-                                Argument::SpreadElement(e) => {
-                                    exprs.push(e.unbox().argument);
-                                }
-                                match_expression!(Argument) => {
-                                    exprs.push(arg.into_expression());
-                                }
-                            }
-                        }
-                        exprs.push(ctx.ast.void_0(e.span));
-                        *expr = ctx.ast.expression_sequence(e.span, exprs);
+            let reference_id = ident.reference_id();
+            if let Some(symbol_id) = ctx.scoping().get_reference(reference_id).symbol_id() {
+                if matches!(
+                    ctx.state.pure_functions.get(&symbol_id),
+                    Some(Some(ConstantValue::Undefined))
+                ) {
+                    let mut exprs =
+                        Self::fold_arguments_into_needed_expressions(&mut e.arguments, ctx);
+                    if exprs.is_empty() {
+                        *expr = ctx.ast.void_0(e.span);
                         ctx.state.changed = true;
+                        return;
                     }
+                    exprs.push(ctx.ast.void_0(e.span));
+                    *expr = ctx.ast.expression_sequence(e.span, exprs);
+                    ctx.state.changed = true;
                 }
             }
         }
@@ -506,9 +510,16 @@ impl<'a> PeepholeOptimizations {
 #[cfg(test)]
 mod test {
     use crate::{
-        CompressOptions,
-        tester::{test, test_options, test_same, test_same_options},
+        CompressOptions, CompressOptionsUnused,
+        tester::{default_options, test, test_options, test_same, test_same_options},
     };
+
+    #[track_caller]
+    fn test_unused(source_text: &str, expected: &str) {
+        let options =
+            CompressOptions { unused: CompressOptionsUnused::Remove, ..default_options() };
+        test_options(source_text, expected, &options);
+    }
 
     #[test]
     fn test_fold_block() {
@@ -627,6 +638,8 @@ mod test {
         test("if (foo) {} else {}", "foo");
         test("if (false) {}", "");
         test("if (true) {}", "");
+        test("if (false) { var a; console.log(a) }", "if (0) var a");
+        test_unused("if (false) { var a; console.log(a) }", "");
     }
 
     #[test]
@@ -666,6 +679,9 @@ mod test {
         test("while(true) { continue a; unreachable;}", "for(;;) continue a");
         test("while(true) { throw a; unreachable;}", "for(;;) throw a");
         test("while(true) { return a; unreachable;}", "for(;;) return a");
+
+        test("(function () { return; var a })()", "(function () { return; var a })()");
+        test_unused("(function () { return; var a })()", "");
     }
 
     #[test]
@@ -724,21 +740,25 @@ mod test {
         test_options("var foo = () => {}; foo()", "", &options);
         test_options("var foo = () => {}; foo(a)", "a", &options);
         test_options("var foo = () => {}; foo(a, b)", "a, b", &options);
-        test_options("var foo = () => {}; foo(...a, b)", "a, b", &options);
-        test_options("var foo = () => {}; foo(...a, ...b)", "a, b", &options);
+        test_options("var foo = () => {}; foo(...a, b)", "[...a], b", &options);
+        test_options("var foo = () => {}; foo(...a, ...b)", "[...a], [...b]", &options);
         test_options("var foo = () => {}; x = foo()", "x = void 0", &options);
         test_options("var foo = () => {}; x = foo(a(), b())", "x = (a(), b(), void 0)", &options);
         test_options("var foo = function () {}; foo()", "", &options);
 
         test_same_options("function foo({}) {} foo()", &options);
-        test_same_options("var foo = ({}) => {}; foo()", &options);
-        test_same_options("var foo = function ({}) {}; foo()", &options);
+        test_options("var foo = ({}) => {}; foo()", "(({}) => {})()", &options);
+        test_options("var foo = function ({}) {}; foo()", "(function ({}) {})()", &options);
 
         test_same_options("async function foo({}) {} foo()", &options);
-        test_same_options("var foo = async ({}) => {}; foo()", &options);
-        test_same_options("var foo = async function ({}) {}; foo()", &options);
+        test_options("var foo = async ({}) => {}; foo()", "(async ({}) => {})()", &options);
+        test_options(
+            "var foo = async function ({}) {}; foo()",
+            "(async function ({}) {})()",
+            &options,
+        );
 
         test_same_options("function* foo({}) {} foo()", &options);
-        test_same_options("var foo = function*({}) {}; foo()", &options);
+        test_options("var foo = function*({}) {}; foo()", "(function*({}) {})()", &options);
     }
 }

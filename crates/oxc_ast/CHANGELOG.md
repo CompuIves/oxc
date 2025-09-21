@@ -4,6 +4,63 @@ All notable changes to this package will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0).
 
+## [0.91.0] - 2025-09-21
+
+### 🚀 Features
+
+- a14aa79 npm/oxlint: Convert to ES modules (#13876) (Boshen)
+
+
+## [0.90.0] - 2025-09-18
+
+### 🚀 Features
+
+- 24a21b3 napi/parser: `preserveParens` option for raw transfer (#13855) (overlookmotel)
+
+
+
+## [0.88.0] - 2025-09-15
+
+### 🐛 Bug Fixes
+
+- ab51394 raw_transfer: Disable layout assertions on some 32-bit platforms (#13716) (overlookmotel)
+
+### 🚜 Refactor
+
+- babbaca all: Remove `pub` from modules with no exports (#13618) (overlookmotel)
+
+
+## [0.87.0] - 2025-09-08
+
+### 🚀 Features
+
+- f00adbe semantic: Add ability to lookup if AST contains any node kinds (#13137) (camchenry)
+
+### 🐛 Bug Fixes
+
+- e11a946 rust: Fix missing docs (#13541) (Boshen)
+
+### 🚜 Refactor
+
+- 14c40fd ast: Implement `RegExpLiteral::parse_pattern` (#13467) (sapphi-red)
+
+
+## [0.86.0] - 2025-08-31
+
+### 🐛 Bug Fixes
+
+- e3f953d mangler: Keep names for parenthesized functions and classes (#13421) (sapphi-red)
+
+
+
+
+## [0.83.0] - 2025-08-29
+
+### 🚀 Features
+
+- 53f55a4 minifier: Remove unnecessary parenthesis from nested optional chaining (#13268) (sapphi-red)
+
+
 
 ## [0.82.2] - 2025-08-17
 

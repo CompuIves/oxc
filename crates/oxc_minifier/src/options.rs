@@ -1,18 +1,16 @@
-use oxc_syntax::es_target::ESTarget;
+use oxc_compat::EngineTargets;
 
 pub use oxc_ecmascript::side_effects::PropertyReadSideEffects;
 
 #[derive(Debug, Clone)]
 pub struct CompressOptions {
-    /// Set desired EcmaScript standard version for output.
+    /// Engine targets for feature detection.
     ///
-    /// e.g.
+    /// Used to determine which ES features are supported by the target engines
+    /// and whether transformations can be applied.
     ///
-    /// * catch optional binding when >= es2019
-    /// * `??` operator >=  es2020
-    ///
-    /// Default `ESTarget::ESNext`
-    pub target: ESTarget,
+    /// Default: empty (supports all features)
+    pub target: EngineTargets,
 
     /// Remove `debugger;` statements.
     ///
@@ -45,6 +43,9 @@ pub struct CompressOptions {
     /// Treeshake Options .
     /// <https://rollupjs.org/configuration-options/#treeshake>
     pub treeshake: TreeShakeOptions,
+
+    /// Limit the maximum number of iterations for debugging purpose.
+    pub max_iterations: Option<u8>,
 }
 
 impl Default for CompressOptions {
@@ -56,7 +57,7 @@ impl Default for CompressOptions {
 impl CompressOptions {
     pub fn smallest() -> Self {
         Self {
-            target: ESTarget::ESNext,
+            target: EngineTargets::default(),
             keep_names: CompressOptionsKeepNames::all_false(),
             drop_debugger: true,
             drop_console: false,
@@ -64,12 +65,13 @@ impl CompressOptions {
             sequences: true,
             unused: CompressOptionsUnused::Remove,
             treeshake: TreeShakeOptions::default(),
+            max_iterations: None,
         }
     }
 
     pub fn safest() -> Self {
         Self {
-            target: ESTarget::ESNext,
+            target: EngineTargets::default(),
             keep_names: CompressOptionsKeepNames::all_true(),
             drop_debugger: false,
             drop_console: false,
@@ -77,12 +79,13 @@ impl CompressOptions {
             sequences: true,
             unused: CompressOptionsUnused::Keep,
             treeshake: TreeShakeOptions::default(),
+            max_iterations: None,
         }
     }
 
     pub fn dce() -> Self {
         Self {
-            target: ESTarget::ESNext,
+            target: EngineTargets::default(),
             keep_names: CompressOptionsKeepNames::all_true(),
             drop_debugger: false,
             drop_console: false,
@@ -90,6 +93,7 @@ impl CompressOptions {
             sequences: false,
             unused: CompressOptionsUnused::Remove,
             treeshake: TreeShakeOptions::default(),
+            max_iterations: None,
         }
     }
 }

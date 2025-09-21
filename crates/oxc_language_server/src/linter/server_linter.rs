@@ -1,8 +1,10 @@
 use std::path::{Component, Path, PathBuf};
+use std::str::FromStr;
 use std::sync::Arc;
 
 use ignore::gitignore::Gitignore;
 use log::{debug, warn};
+use oxc_linter::LintIgnoreMatcher;
 use rustc_hash::{FxBuildHasher, FxHashMap};
 use tokio::sync::Mutex;
 use tower_lsp_server::lsp_types::Uri;
@@ -16,22 +18,73 @@ use tower_lsp_server::UriExt;
 use crate::linter::{
     error_with_position::DiagnosticReport,
     isolated_lint_handler::{IsolatedLintHandler, IsolatedLintHandlerOptions},
+    options::{LintOptions as LSPLintOptions, Run, UnusedDisableDirectives},
+    tsgo_linter::TsgoLinter,
 };
-use crate::options::UnusedDisableDirectives;
-use crate::{ConcurrentHashMap, OXC_CONFIG_FILE, Options};
+use crate::{ConcurrentHashMap, OXC_CONFIG_FILE};
 
 use super::config_walker::ConfigWalker;
 
+#[derive(Debug, PartialEq, Eq)]
+pub enum ServerLinterRun {
+    OnType,
+    OnSave,
+    Always,
+}
+
 pub struct ServerLinter {
     isolated_linter: Arc<Mutex<IsolatedLintHandler>>,
+    tsgo_linter: Arc<Option<TsgoLinter>>,
+    ignore_matcher: LintIgnoreMatcher,
     gitignore_glob: Vec<Gitignore>,
+    lint_on_run: Run,
+    diagnostics: ServerLinterDiagnostics,
     pub extended_paths: Vec<PathBuf>,
 }
 
+#[derive(Debug, Default)]
+struct ServerLinterDiagnostics {
+    isolated_linter: Arc<ConcurrentHashMap<String, Option<Vec<DiagnosticReport>>>>,
+    tsgo_linter: Arc<ConcurrentHashMap<String, Option<Vec<DiagnosticReport>>>>,
+}
+
+impl ServerLinterDiagnostics {
+    pub fn get_diagnostics(&self, path: &str) -> Option<Vec<DiagnosticReport>> {
+        let mut reports = Vec::new();
+        let mut found = false;
+        if let Some(Some(diagnostics)) = self.isolated_linter.pin().get(path) {
+            reports.extend(diagnostics.clone());
+            found = true;
+        }
+        if let Some(Some(diagnostics)) = self.tsgo_linter.pin().get(path) {
+            reports.extend(diagnostics.clone());
+            found = true;
+        }
+        if found { Some(reports) } else { None }
+    }
+
+    pub fn remove_diagnostics(&self, path: &str) {
+        self.isolated_linter.pin().remove(path);
+        self.tsgo_linter.pin().remove(path);
+    }
+
+    pub fn get_cached_files_of_diagnostics(&self) -> Vec<String> {
+        let mut files = Vec::new();
+        let isolated_files = self.isolated_linter.pin().keys().cloned().collect::<Vec<_>>();
+        let tsgo_files = self.tsgo_linter.pin().keys().cloned().collect::<Vec<_>>();
+        files.extend(isolated_files);
+        files.extend(tsgo_files);
+        files.dedup();
+        files
+    }
+}
+
 impl ServerLinter {
-    pub fn new(root_uri: &Uri, options: &Options) -> Self {
+    pub fn new(root_uri: &Uri, options: &LSPLintOptions) -> Self {
         let root_path = root_uri.to_file_path().unwrap();
-        let (nested_configs, mut extended_paths) = Self::create_nested_configs(&root_path, options);
+        let mut nested_ignore_patterns = Vec::new();
+        let (nested_configs, mut extended_paths) =
+            Self::create_nested_configs(&root_path, options, &mut nested_ignore_patterns);
         let config_path = options.config_path.as_ref().map_or(OXC_CONFIG_FILE, |v| v);
         let config = normalize_path(root_path.join(config_path));
         let oxlintrc = if config.try_exists().is_ok_and(|exists| exists) {
@@ -49,8 +102,9 @@ impl ServerLinter {
             Oxlintrc::default()
         };
 
-        let config_builder = ConfigStoreBuilder::from_base_oxlintrc(
-            &root_path,
+        let base_patterns = oxlintrc.ignore_patterns.clone();
+
+        let config_builder = ConfigStoreBuilder::from_oxlintrc(
             false,
             oxlintrc,
             None,
@@ -98,7 +152,7 @@ impl ServerLinter {
 
         let isolated_linter = IsolatedLintHandler::new(
             lint_options,
-            config_store,
+            config_store.clone(), // clone because tsgo linter needs it
             &IsolatedLintHandlerOptions {
                 use_cross_module,
                 root_path: root_path.to_path_buf(),
@@ -111,8 +165,20 @@ impl ServerLinter {
 
         Self {
             isolated_linter: Arc::new(Mutex::new(isolated_linter)),
+            ignore_matcher: LintIgnoreMatcher::new(
+                &base_patterns,
+                &root_path,
+                nested_ignore_patterns,
+            ),
             gitignore_glob: Self::create_ignore_glob(&root_path),
             extended_paths,
+            lint_on_run: options.run,
+            diagnostics: ServerLinterDiagnostics::default(),
+            tsgo_linter: if options.type_aware {
+                Arc::new(Some(TsgoLinter::new(&root_path, config_store)))
+            } else {
+                Arc::new(None)
+            },
         }
     }
 
@@ -120,7 +186,8 @@ impl ServerLinter {
     /// and insert them inside the nested configuration
     fn create_nested_configs(
         root_path: &Path,
-        options: &Options,
+        options: &LSPLintOptions,
+        nested_ignore_patterns: &mut Vec<(Vec<String>, PathBuf)>,
     ) -> (ConcurrentHashMap<PathBuf, Config>, Vec<PathBuf>) {
         let mut extended_paths = Vec::new();
         // nested config is disabled, no need to search for configs
@@ -142,6 +209,8 @@ impl ServerLinter {
                 warn!("Skipping invalid config file: {}", file_path.display());
                 continue;
             };
+            // Collect ignore patterns and their root
+            nested_ignore_patterns.push((oxlintrc.ignore_patterns.clone(), dir_path.to_path_buf()));
             let Ok(config_store_builder) = ConfigStoreBuilder::from_oxlintrc(
                 false,
                 oxlintrc,
@@ -197,16 +266,52 @@ impl ServerLinter {
         gitignore_globs
     }
 
+    pub fn remove_diagnostics(&self, uri: &Uri) {
+        self.diagnostics.remove_diagnostics(&uri.to_string());
+    }
+
+    pub fn get_cached_diagnostics(&self, uri: &Uri) -> Option<Vec<DiagnosticReport>> {
+        self.diagnostics.get_diagnostics(&uri.to_string())
+    }
+
+    pub fn get_cached_files_of_diagnostics(&self) -> Vec<Uri> {
+        self.diagnostics
+            .get_cached_files_of_diagnostics()
+            .into_iter()
+            .filter_map(|s| Uri::from_str(&s).ok())
+            .collect()
+    }
+
+    pub async fn revalidate_diagnostics(
+        &self,
+        uris: Vec<Uri>,
+    ) -> ConcurrentHashMap<String, Vec<DiagnosticReport>> {
+        let map = ConcurrentHashMap::default();
+        for uri in uris {
+            if let Some(diagnostics) = self.run_single(&uri, None, ServerLinterRun::Always).await {
+                map.pin().insert(uri.to_string(), diagnostics);
+            }
+        }
+        map
+    }
+
     fn is_ignored(&self, uri: &Uri) -> bool {
+        let Some(uri_path) = uri.to_file_path() else {
+            return true;
+        };
+
+        if self.ignore_matcher.should_ignore(&uri_path) {
+            debug!("ignored: {uri:?}");
+            return true;
+        }
+
         for gitignore in &self.gitignore_glob {
-            if let Some(uri_path) = uri.to_file_path() {
-                if !uri_path.starts_with(gitignore.path()) {
-                    continue;
-                }
-                if gitignore.matched_path_or_any_parents(&uri_path, uri_path.is_dir()).is_ignore() {
-                    debug!("ignored: {uri:?}");
-                    return true;
-                }
+            if !uri_path.starts_with(gitignore.path()) {
+                continue;
+            }
+            if gitignore.matched_path_or_any_parents(&uri_path, uri_path.is_dir()).is_ignore() {
+                debug!("ignored: {uri:?}");
+                return true;
             }
         }
         false
@@ -216,12 +321,59 @@ impl ServerLinter {
         &self,
         uri: &Uri,
         content: Option<String>,
+        run_type: ServerLinterRun,
     ) -> Option<Vec<DiagnosticReport>> {
+        let (oxlint, tsgolint) = match (run_type, self.lint_on_run) {
+            // run everything on save, or when it is forced
+            (ServerLinterRun::Always, _) | (ServerLinterRun::OnSave, Run::OnSave) => (true, true),
+            // run only oxlint on type
+            // tsgolint does not support memory source_text
+            (ServerLinterRun::OnType, Run::OnType) => (true, false),
+            // it does not match, run nothing
+            (ServerLinterRun::OnType, Run::OnSave) => (false, false),
+            // In onType mode, only TypeScript type checking runs on save
+            // If type_aware is disabled (tsgo_linter is None), skip everything to preserve diagnostics
+            (ServerLinterRun::OnSave, Run::OnType) => {
+                let should_run_tsgo = self.tsgo_linter.as_ref().is_some();
+                (false, should_run_tsgo)
+            }
+        };
+
+        // return `None` when both tools do not want to be used
+        if !oxlint && !tsgolint {
+            return None;
+        }
+
         if self.is_ignored(uri) {
             return None;
         }
 
-        self.isolated_linter.lock().await.run_single(uri, content)
+        if oxlint {
+            let diagnostics = {
+                let mut isolated_linter = self.isolated_linter.lock().await;
+                isolated_linter.run_single(uri, content.clone())
+            };
+            self.diagnostics.isolated_linter.pin().insert(uri.to_string(), diagnostics);
+        }
+
+        if tsgolint && let Some(tsgo_linter) = self.tsgo_linter.as_ref() {
+            self.diagnostics
+                .tsgo_linter
+                .pin()
+                .insert(uri.to_string(), tsgo_linter.lint_file(uri, content.clone()));
+        }
+
+        self.diagnostics.get_diagnostics(&uri.to_string())
+    }
+
+    pub fn needs_restart(old_options: &LSPLintOptions, new_options: &LSPLintOptions) -> bool {
+        old_options.config_path != new_options.config_path
+            || old_options.ts_config_path != new_options.ts_config_path
+            || old_options.use_nested_configs() != new_options.use_nested_configs()
+            || old_options.fix_kind() != new_options.fix_kind()
+            || old_options.unused_disable_directives != new_options.unused_disable_directives
+            // TODO: only the TsgoLinter needs to be dropped or created
+            || old_options.type_aware != new_options.type_aware
     }
 }
 
@@ -255,8 +407,10 @@ mod test {
     use std::path::{Path, PathBuf};
 
     use crate::{
-        Options,
-        linter::server_linter::{ServerLinter, normalize_path},
+        linter::{
+            options::{LintOptions, Run, UnusedDisableDirectives},
+            server_linter::{ServerLinter, normalize_path},
+        },
         tester::{Tester, get_file_path},
     };
     use rustc_hash::FxHashMap;
@@ -274,9 +428,11 @@ mod test {
         let mut flags = FxHashMap::default();
         flags.insert("disable_nested_configs".to_string(), "true".to_string());
 
+        let mut nested_ignore_patterns = Vec::new();
         let (configs, _) = ServerLinter::create_nested_configs(
             Path::new("/root/"),
-            &Options { flags, ..Options::default() },
+            &LintOptions { flags, ..LintOptions::default() },
+            &mut nested_ignore_patterns,
         );
 
         assert!(configs.is_empty());
@@ -284,9 +440,11 @@ mod test {
 
     #[test]
     fn test_create_nested_configs() {
+        let mut nested_ignore_patterns = Vec::new();
         let (configs, _) = ServerLinter::create_nested_configs(
             &get_file_path("fixtures/linter/init_nested_configs"),
-            &Options::default(),
+            &LintOptions::default(),
+            &mut nested_ignore_patterns,
         );
         let configs = configs.pin();
         let mut configs_dirs = configs.keys().collect::<Vec<&PathBuf>>();
@@ -297,6 +455,56 @@ mod test {
         assert!(configs_dirs[2].ends_with("deep2"));
         assert!(configs_dirs[1].ends_with("deep1"));
         assert!(configs_dirs[0].ends_with("init_nested_configs"));
+    }
+
+    #[test]
+    #[cfg(not(target_endian = "big"))]
+    fn test_lint_on_run_on_type_on_type() {
+        Tester::new(
+            "fixtures/linter/lint_on_run/on_type",
+            Some(LintOptions { type_aware: true, run: Run::OnType, ..Default::default() }),
+        )
+        .test_and_snapshot_single_file_with_run_type("on-type.ts", Run::OnType);
+    }
+
+    #[test]
+    #[cfg(not(target_endian = "big"))]
+    fn test_lint_on_run_on_type_on_save() {
+        Tester::new(
+            "fixtures/linter/lint_on_run/on_save",
+            Some(LintOptions { type_aware: true, run: Run::OnType, ..Default::default() }),
+        )
+        .test_and_snapshot_single_file_with_run_type("on-save.ts", Run::OnSave);
+    }
+
+    #[test]
+    #[cfg(not(target_endian = "big"))]
+    fn test_lint_on_run_on_save_on_type() {
+        Tester::new(
+            "fixtures/linter/lint_on_run/on_save",
+            Some(LintOptions { type_aware: true, run: Run::OnSave, ..Default::default() }),
+        )
+        .test_and_snapshot_single_file_with_run_type("on-type.ts", Run::OnType);
+    }
+
+    #[test]
+    #[cfg(not(target_endian = "big"))]
+    fn test_lint_on_run_on_save_on_save() {
+        Tester::new(
+            "fixtures/linter/lint_on_run/on_type",
+            Some(LintOptions { type_aware: true, run: Run::OnSave, ..Default::default() }),
+        )
+        .test_and_snapshot_single_file_with_run_type("on-save.ts", Run::OnSave);
+    }
+
+    #[test]
+    #[cfg(not(target_endian = "big"))]
+    fn test_lint_on_run_on_type_on_save_without_type_aware() {
+        Tester::new(
+            "fixtures/linter/lint_on_run/on_type",
+            Some(LintOptions { type_aware: false, run: Run::OnType, ..Default::default() }),
+        )
+        .test_and_snapshot_single_file_with_run_type("on-save-no-type-aware.ts", Run::OnSave);
     }
 
     #[test]
@@ -369,12 +577,12 @@ mod test {
     fn test_multiple_suggestions() {
         Tester::new(
             "fixtures/linter/multiple_suggestions",
-            Some(Options {
+            Some(LintOptions {
                 flags: FxHashMap::from_iter([(
                     "fix_kind".to_string(),
                     "safe_fix_or_suggestion".to_string(),
                 )]),
-                ..Options::default()
+                ..Default::default()
             }),
         )
         .test_and_snapshot_single_file("forward_ref.ts");
@@ -382,10 +590,9 @@ mod test {
 
     #[test]
     fn test_report_unused_directives() {
-        use crate::options::UnusedDisableDirectives;
         Tester::new(
             "fixtures/linter/unused_disabled_directives",
-            Some(Options {
+            Some(LintOptions {
                 unused_disable_directives: UnusedDisableDirectives::Deny,
                 ..Default::default()
             }),
@@ -404,11 +611,21 @@ mod test {
     fn test_ts_alias() {
         Tester::new(
             "fixtures/linter/ts_path_alias",
-            Some(Options {
+            Some(LintOptions {
                 ts_config_path: Some("./deep/tsconfig.json".to_string()),
                 ..Default::default()
             }),
         )
         .test_and_snapshot_single_file("deep/src/dep-a.ts");
+    }
+
+    #[test]
+    #[cfg(not(target_endian = "big"))] // TODO: tsgolint doesn't support big endian?
+    fn test_tsgo_lint() {
+        let tester = Tester::new(
+            "fixtures/linter/tsgolint",
+            Some(LintOptions { type_aware: true, run: Run::OnSave, ..Default::default() }),
+        );
+        tester.test_and_snapshot_single_file("no-floating-promises/index.ts");
     }
 }

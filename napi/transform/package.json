@@ -1,18 +1,18 @@
 {
   "name": "oxc-transform",
-  "version": "0.82.3",
-  "type": "commonjs",
+  "version": "0.91.0",
+  "type": "module",
   "main": "index.js",
   "browser": "browser.js",
   "scripts": {
-    "build-dev": "napi build --platform",
+    "build-dev": "napi build --esm --platform",
     "build-test": "pnpm run build-dev",
     "build": "pnpm run build-dev --features allocator --release",
     "postbuild-dev": "node patch.mjs",
     "test": "tsc && vitest run --dir ./test"
   },
   "engines": {
-    "node": ">=14.0.0"
+    "node": "^20.19.0 || >=22.12.0"
   },
   "description": "Oxc Transformer Node API",
   "keywords": [

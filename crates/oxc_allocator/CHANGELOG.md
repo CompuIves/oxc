@@ -4,6 +4,79 @@ All notable changes to this package will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0).
 
+## [0.91.0] - 2025-09-21
+
+### 🚀 Features
+
+- a14aa79 npm/oxlint: Convert to ES modules (#13876) (Boshen)
+
+### 🐛 Bug Fixes
+
+- 91c88e2 allocator: Fix lint warning building WASM (#13897) (overlookmotel)
+
+
+
+
+## [0.88.0] - 2025-09-15
+
+### 💥 BREAKING CHANGES
+
+- edc70ea allocator/pool: [**BREAKING**] Remove `disable_fixed_size` Cargo feature (#13625) (overlookmotel)
+
+### 🐛 Bug Fixes
+
+- ab51394 raw_transfer: Disable layout assertions on some 32-bit platforms (#13716) (overlookmotel)
+
+### 🚜 Refactor
+
+- b9bef25 allocator/pool: `AllocatorPool::new` always create standard pool (#13624) (overlookmotel)
+- a306c6f allocator/pool: Single `AllocatorPool` implementation (#13622) (overlookmotel)
+- 99dd1a7 allocator/pool: Share `AllocatorGuard` between pool impls (#13621) (overlookmotel)
+- 0dde7f0 allocator/pool: Move resetting into `AllocatorPool::add` (#13620) (overlookmotel)
+- a0d7389 allocator/pool: Move `AllocatorPool` into own directory (#13619) (overlookmotel)
+- babbaca all: Remove `pub` from modules with no exports (#13618) (overlookmotel)
+
+
+## [0.87.0] - 2025-09-08
+
+### 🚀 Features
+
+- bb1faf9 allocator: Implement `CloneIn` for `HashMap` (#13562) (overlookmotel)
+- a54a4de allocator: Implement `CloneIn` for `Box<[T]>` (#13505) (overlookmotel)
+- c1fdcf6 allocator: Add `Vec::into_boxed_slice` method (#13503) (overlookmotel)
+
+### ⚡ Performance
+
+- 6fce49d allocator: Remove bounds checks in `CloneIn` for `Vec` (#13506) (overlookmotel)
+
+
+## [0.86.0] - 2025-08-31
+
+### 🚀 Features
+
+- e3b6dc0 allocator: Add `Box::from_non_null` method (#13454) (overlookmotel)
+- afa0877 allocator: Introduce `BitSet` type (#13449) (overlookmotel)
+
+### 🚜 Refactor
+
+- e6cdaa6 allocator: Add `#[repr(transparent)]` to `Vec` and `Box` (#13457) (overlookmotel)
+
+### ⚡ Performance
+
+- b92fa4f allocator/bitset: Store bits in `Box<[usize]>` (#13455) (overlookmotel)
+- f5a742f allocator/bitset: Initialize `BitSet` with `memset` (#13451) (overlookmotel)
+- cdfa48d allocator/bitset: Store bits as `usize`s (#13450) (overlookmotel)
+
+
+
+## [0.84.0] - 2025-08-30
+
+### 💥 BREAKING CHANGES
+
+- df8e639 allocator: [**BREAKING**] Put `AllocatorPool` behind `pool` feature (#13373) (overlookmotel)
+
+
+
 ## [0.82.3] - 2025-08-20
 
 ### 🐛 Bug Fixes

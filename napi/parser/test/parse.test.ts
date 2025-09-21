@@ -1,8 +1,13 @@
 import { Worker } from 'node:worker_threads';
 import { describe, expect, it, test } from 'vitest';
 
-import { parseAsync, parseSync } from '../index.js';
-import type { ExpressionStatement, ParserOptions, TSTypeAliasDeclaration, VariableDeclaration } from '../index.js';
+import { parseAsync, parseSync } from '../src-js/index.mjs';
+import type {
+  ExpressionStatement,
+  ParserOptions,
+  TSTypeAliasDeclaration,
+  VariableDeclaration,
+} from '../src-js/index.mjs';
 
 describe('parse', () => {
   const code = '/* comment */ foo';

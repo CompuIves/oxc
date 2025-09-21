@@ -1,24 +1,24 @@
 {
   "name": "oxc-parser",
-  "version": "0.82.3",
+  "version": "0.91.0",
   "type": "commonjs",
-  "main": "index.js",
-  "browser": "wasm.mjs",
+  "main": "src-js/index.mjs",
+  "browser": "src-js/wasm.mjs",
   "scripts": {
-    "build-dev": "napi build --platform --js bindings.js",
+    "build-dev": "napi build --esm --platform --js bindings.mjs --output-dir src-js",
     "build-test": "pnpm run build-dev --profile coverage",
     "build": "pnpm run build-dev --features allocator --release",
-    "postbuild-dev": "node patch.mjs",
+    "postbuild-dev": "node scripts/patch.mjs",
     "build-wasi": "pnpm run build-dev --release --target wasm32-wasip1-threads",
-    "build-npm-dir": "rm -rf npm-dir && napi create-npm-dirs --npm-dir npm-dir && pnpm napi artifacts --npm-dir npm-dir --output-dir .",
-    "build-browser-bundle": "node build-browser-bundle.mjs",
+    "build-npm-dir": "rm -rf npm-dir && napi create-npm-dirs --npm-dir npm-dir && pnpm napi artifacts --npm-dir npm-dir --output-dir src-js",
+    "build-browser-bundle": "node scripts/build-browser-bundle.mjs",
     "test": "tsc && pnpm run test-node run",
     "test-node": "vitest --dir ./test",
     "test-browser": "vitest -c vitest.config.browser.mts",
     "bench": "vitest bench --run ./bench.bench.mjs"
   },
   "engines": {
-    "node": ">=20.0.0"
+    "node": "^20.19.0 || >=22.12.0"
   },
   "description": "Oxc Parser Node API",
   "keywords": [
@@ -38,26 +38,8 @@
     "url": "https://github.com/sponsors/Boshen"
   },
   "files": [
-    "index.d.ts",
-    "index.js",
-    "wrap.cjs",
-    "wrap.mjs",
-    "wasm.mjs",
-    "bindings.js",
-    "webcontainer-fallback.js",
-    "generated/constants.js",
-    "generated/deserialize/js.js",
-    "generated/deserialize/ts.js",
-    "generated/lazy/constructors.js",
-    "generated/lazy/types.js",
-    "generated/lazy/walk.js",
-    "raw-transfer/common.js",
-    "raw-transfer/eager.js",
-    "raw-transfer/lazy.js",
-    "raw-transfer/lazy-common.js",
-    "raw-transfer/node-array.js",
-    "raw-transfer/supported.js",
-    "raw-transfer/visitor.js"
+    "generated",
+    "src-js"
   ],
   "publishConfig": {
     "registry": "https://registry.npmjs.org/",
@@ -72,7 +54,7 @@
     "@vitest/browser": "3.2.4",
     "esbuild": "^0.25.0",
     "playwright": "^1.51.0",
-    "tinypool": "^1.1.0",
+    "tinypool": "^2.0.0",
     "typescript": "catalog:",
     "vitest": "catalog:"
   },
@@ -101,6 +83,6 @@
         "fs": false
       }
     },
-    "dtsHeaderFile": "header.js"
+    "dtsHeaderFile": "src-js/header.js"
   }
 }

@@ -1,59 +1,50 @@
 use std::{ffi::OsStr, path::PathBuf, sync::Arc, sync::mpsc};
 
-use ignore::{DirEntry, overrides::Override};
-use oxc_span::VALID_EXTENSIONS;
+use ignore::overrides::Override;
 
-// use crate::cli::IgnoreOptions;
-
-#[derive(Debug, Clone)]
-pub struct Extensions(pub Vec<&'static str>);
-
-impl Default for Extensions {
-    fn default() -> Self {
-        Self(VALID_EXTENSIONS.to_vec())
-    }
-}
+use oxc_formatter::get_supported_source_type;
+use oxc_span::SourceType;
 
 pub struct Walk {
     inner: ignore::WalkParallel,
-    /// The file extensions to include during the traversal.
-    extensions: Extensions,
+}
+
+pub struct WalkEntry {
+    pub path: Arc<OsStr>,
+    pub source_type: SourceType,
 }
 
 struct WalkBuilder {
-    sender: mpsc::Sender<Vec<Arc<OsStr>>>,
-    extensions: Extensions,
+    sender: mpsc::Sender<WalkEntry>,
 }
 
 impl<'s> ignore::ParallelVisitorBuilder<'s> for WalkBuilder {
     fn build(&mut self) -> Box<dyn ignore::ParallelVisitor + 's> {
-        Box::new(WalkCollector {
-            paths: vec![],
-            sender: self.sender.clone(),
-            extensions: self.extensions.clone(),
-        })
+        Box::new(WalkVisitor { sender: self.sender.clone() })
     }
 }
 
-struct WalkCollector {
-    paths: Vec<Arc<OsStr>>,
-    sender: mpsc::Sender<Vec<Arc<OsStr>>>,
-    extensions: Extensions,
+struct WalkVisitor {
+    sender: mpsc::Sender<WalkEntry>,
 }
 
-impl Drop for WalkCollector {
-    fn drop(&mut self) {
-        let paths = std::mem::take(&mut self.paths);
-        self.sender.send(paths).unwrap();
-    }
-}
-
-impl ignore::ParallelVisitor for WalkCollector {
+impl ignore::ParallelVisitor for WalkVisitor {
     fn visit(&mut self, entry: Result<ignore::DirEntry, ignore::Error>) -> ignore::WalkState {
         match entry {
             Ok(entry) => {
-                if Walk::is_wanted_entry(&entry, &self.extensions) {
-                    self.paths.push(entry.path().as_os_str().into());
+                // Skip if we can't get file type or if it's a directory
+                if let Some(file_type) = entry.file_type() {
+                    if !file_type.is_dir() {
+                        if let Some(source_type) = get_supported_source_type(entry.path()) {
+                            let walk_entry =
+                                WalkEntry { path: entry.path().as_os_str().into(), source_type };
+                            // Send each entry immediately through the channel
+                            // If send fails, the receiver has been dropped, so stop walking
+                            if self.sender.send(walk_entry).is_err() {
+                                return ignore::WalkState::Quit;
+                            }
+                        }
+                    }
                 }
                 ignore::WalkState::Continue
             }
@@ -61,6 +52,7 @@ impl ignore::ParallelVisitor for WalkCollector {
         }
     }
 }
+
 impl Walk {
     /// Will not canonicalize paths.
     /// # Panics
@@ -84,26 +76,23 @@ impl Walk {
             inner.overrides(override_builder);
         }
 
-        let inner =
-            inner.ignore(false).git_global(false).follow_links(true).hidden(false).build_parallel();
-        Self { inner, extensions: Extensions::default() }
+        // Do not follow symlinks like Prettier does.
+        // See https://github.com/prettier/prettier/pull/14627
+        let inner = inner.hidden(false).ignore(false).git_global(false).build_parallel();
+        Self { inner }
     }
 
-    pub fn paths(self) -> Vec<Arc<OsStr>> {
-        let (sender, receiver) = mpsc::channel::<Vec<Arc<OsStr>>>();
-        let mut builder = WalkBuilder { sender, extensions: self.extensions };
-        self.inner.visit(&mut builder);
-        drop(builder);
-        receiver.into_iter().flatten().collect()
-    }
+    /// Stream entries through a channel as they are discovered
+    pub fn stream_entries(self) -> mpsc::Receiver<WalkEntry> {
+        let (sender, receiver) = mpsc::channel::<WalkEntry>();
 
-    fn is_wanted_entry(dir_entry: &DirEntry, extensions: &Extensions) -> bool {
-        let Some(file_type) = dir_entry.file_type() else { return false };
-        if file_type.is_dir() {
-            return false;
-        }
-        let Some(extension) = dir_entry.path().extension() else { return false };
-        let extension = extension.to_string_lossy();
-        extensions.0.contains(&extension.as_ref())
+        // Spawn the walk operation in a separate thread
+        rayon::spawn(move || {
+            let mut builder = WalkBuilder { sender };
+            self.inner.visit(&mut builder);
+            // Channel will be closed when builder is dropped
+        });
+
+        receiver
     }
 }

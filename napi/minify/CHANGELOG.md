@@ -4,6 +4,86 @@ All notable changes to this package will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0).
 
+## [0.91.0] - 2025-09-21
+
+### 💥 BREAKING CHANGES
+
+- 6fcb0d0 minifier: [**BREAKING**] Receive supported engines instead of ecmascript versions (#13933) (sapphi-red)
+
+### 🐛 Bug Fixes
+
+- 21bbf95 napi: Rebuild bindings file for NAPI packages (#13889) (overlookmotel)
+
+
+## [0.91.0] - 2025-09-21
+
+### 💥 BREAKING CHANGES
+
+- 6fcb0d0 minifier: [**BREAKING**] Receive supported engines instead of ecmascript versions (#13933) (sapphi-red)
+
+### 🐛 Bug Fixes
+
+- 21bbf95 napi: Rebuild bindings file for NAPI packages (#13889) (overlookmotel)
+
+
+## [0.90.0] - 2025-09-18
+
+### 🚀 Features
+
+- b52389a node: Bump `engines` field to require Node.js 20.19.0+ for ESM support (#13879) (Copilot)
+
+### 🐛 Bug Fixes
+
+- 9796ec1 napi: Fix binding files (Boshen)
+
+
+## [0.90.0] - 2025-09-18
+
+### 🚀 Features
+
+- b52389a node: Bump `engines` field to require Node.js 20.19.0+ for ESM support (#13879) (Copilot)
+
+### 🐛 Bug Fixes
+
+- 9796ec1 napi: Fix binding files (Boshen)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+## [0.83.0] - 2025-08-29
+
+### 💥 BREAKING CHANGES
+
+- 34d0a01 napi/minify,transform: [**BREAKING**] Change module type to ESM (#13349) (Boshen)
+
+### 🚀 Features
+
+- 593f54c minifier: Add `--max-iterations` for debugging (#13291) (sapphi-red)
+- a0e0a91 oxc_minify_napi: Expose `CodeGenOptions` (#13288) (sapphi-red)
+
+
+## [0.83.0] - 2025-08-29
+
+### 💥 BREAKING CHANGES
+
+- 34d0a01 napi/minify,transform: [**BREAKING**] Change module type to ESM (#13349) (Boshen)
+
+### 🚀 Features
+
+- 593f54c minifier: Add `--max-iterations` for debugging (#13291) (sapphi-red)
+- a0e0a91 oxc_minify_napi: Expose `CodeGenOptions` (#13288) (sapphi-red)
+
+
 ## [0.82.3] - 2025-08-20
 
 ### 🐛 Bug Fixes

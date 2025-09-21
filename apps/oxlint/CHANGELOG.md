@@ -4,6 +4,88 @@ All notable changes to this package will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0).
 
+## [1.16.0] - 2025-09-16
+
+### 🐛 Bug Fixes
+
+- 3af1e5d linter/no-unsafe-declaration-merging: Always mark first span as primary (#13830) (camc314)
+- 12baf5e linter/exhaustive-deps: Respect primary span when identifying disable directive location (#13781) (camc314)
+- 09428f6 linter/plugins: Remove outdated comment (#13691) (overlookmotel)
+- a294721 linter/plugins: Exit early if JS plugins enabled on unsupported platforms (#13689) (overlookmotel)
+- 68a2280 linter/plugins: More graceful exit for `--experimental-js-plugins` CLI option (#13688) (overlookmotel)
+
+### 🚜 Refactor
+
+- 7346099 linter: Move `oxlint` application code into separate module (#13745) (overlookmotel)
+- 6dd4107 linter: Remove `#[cfg(test)]` attributes from `tester` module (#13714) (overlookmotel)
+- c40c6ef linter/plugins: Directory for JS plugins-related code (#13701) (overlookmotel)
+- 1fd993f napi/oxlint: Rename `napi/oxlint2` to `napi/oxlint` (#13682) (overlookmotel)
+
+### 🎨 Styling
+
+- 99a7638 linter: Add comments + re-organise imports (#13715) (overlookmotel)
+
+### 🧪 Testing
+
+- fb2d087 linter: Set CWD for tests (#13722) (overlookmotel)
+
+
+## [1.15.0] - 2025-09-11
+
+### 💥 BREAKING CHANGES
+
+- edc70ea allocator/pool: [**BREAKING**] Remove `disable_fixed_size` Cargo feature (#13625) (overlookmotel)
+
+### 🐛 Bug Fixes
+
+- 0d867b1 linter: Skip running tsgolint when no files need type aware linting (#13502) (Copilot)
+
+### 🚜 Refactor
+
+- 7775c21 linter/plugins: Remove `oxlint2` Cargo feature (#13648) (overlookmotel)
+- 6cd6be2 linter: Add `--experimental-js-plugins` CLI arg (#13658) (overlookmotel)
+- 2f02ac6 linter/plugins: Remove `disable_oxlint2` Cargo feature (#13626) (overlookmotel)
+- ff9e4fb linter/plugins: Use fixed-size allocators when `ExternalLinter` exists (#13623) (overlookmotel)
+- 91759c6 linter/plugins: Only use `RawTransferFileSystem` if JS plugins registered (#13599) (overlookmotel)
+- 118020c linter/plugins: Discard `ExternalLinter` if no JS plugins registered (#13598) (overlookmotel)
+- 8d30bce linter/tsgolint: Report an error if the tsgolint exe could not be found (#13590) (camc314)
+- d245376 oxlint: Remove unused `runner` module (#13561) (camc314)
+
+### 🧪 Testing
+
+- 58e6c94 oxlint: Add test for ignorePatterns whitelist (#13372) (Sysix)
+
+
+## [1.14.0] - 2025-08-30
+
+### 🚜 Refactor
+
+- 6431033 linter: Move ignore logic to `LintIgnoreMatcher` (#13222) (Sysix)
+
+### 📚 Documentation
+
+- 51d3840 linter: Update oxlint CLI help message on `.oxlintrc.json` config file (#13334) (0xCLARITY)
+
+### 🧪 Testing
+
+- 6eeeb67 oxlint: Add test for ignore patterns referenced by symlink file (#13356) (Sysix)
+
+
+## [1.13.0] - 2025-08-26
+
+### 💥 BREAKING CHANGES
+
+- 63abd7c oxlint: [**BREAKING**] Do not ignore hidden dot directories by default (#13194) (Sysix)
+
+### 🐛 Bug Fixes
+
+- 648e939 linter: Parse `ignorePatterns` with gitignore syntax (#13221) (Sysix)
+
+### 🚜 Refactor
+
+- c138fad linter: Avoid fs reads in `TsGoLintState` when `--silent` is used (#13199) (Sysix)
+
+
 ## [1.12.0] - 2025-08-17
 
 ### 🚀 Features

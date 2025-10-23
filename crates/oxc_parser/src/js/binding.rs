@@ -10,7 +10,7 @@ impl<'a> ParserImpl<'a> {
     pub(super) fn parse_binding_pattern_with_initializer(&mut self) -> BindingPattern<'a> {
         let span = self.start_span();
         let pattern = self.parse_binding_pattern(true);
-        self.context(Context::In, Context::empty(), |p| p.parse_initializer(span, pattern))
+        self.context_add(Context::In, |p| p.parse_initializer(span, pattern))
     }
 
     pub(super) fn parse_binding_pattern(&mut self, allow_question: bool) -> BindingPattern<'a> {
@@ -73,10 +73,10 @@ impl<'a> ParserImpl<'a> {
             Self::parse_array_binding_element,
             diagnostics::binding_rest_element_last,
         );
-        if let Some(rest) = &rest {
-            if let Some(ty) = &rest.argument.type_annotation {
-                self.error(diagnostics::rest_element_property_name(ty.span));
-            }
+        if let Some(rest) = &rest
+            && let Some(ty) = &rest.argument.type_annotation
+        {
+            self.error(diagnostics::rest_element_property_name(ty.span));
         }
         self.expect(Kind::RBrack);
         self.ast.binding_pattern_kind_array_pattern(
@@ -114,8 +114,7 @@ impl<'a> ParserImpl<'a> {
         // Rest element does not allow `= initializer`
         // function foo([...x = []]) { }
         //                    ^^^^ A rest element cannot have an initializer
-        let argument = self
-            .context(Context::In, Context::empty(), |p| p.parse_initializer(init_span, pattern));
+        let argument = self.context_add(Context::In, |p| p.parse_initializer(init_span, pattern));
         if let BindingPatternKind::AssignmentPattern(pat) = &argument.kind {
             self.error(diagnostics::a_rest_element_cannot_have_an_initializer(pat.span));
         }
@@ -142,7 +141,7 @@ impl<'a> ParserImpl<'a> {
                 let identifier =
                     self.ast.binding_pattern_kind_binding_identifier(ident.span, ident.name);
                 let left = self.ast.binding_pattern(identifier, NONE, false);
-                self.context(Context::In, Context::empty(), |p| p.parse_initializer(span, left))
+                self.context_add(Context::In, |p| p.parse_initializer(span, left))
             } else {
                 return self.unexpected();
             }

@@ -5,22 +5,25 @@ use oxc_span::GetSpan;
 use unicode_width::UnicodeWidthStr;
 
 use crate::{
-    FormatOptions, format_args,
+    FormatOptions,
+    ast_nodes::{AstNode, AstNodes},
+    format_args,
     formatter::{
         Buffer, BufferExtensions, Format, FormatResult, Formatter, VecBuffer,
         prelude::{FormatElements, format_once, line_suffix_boundary, *},
-        trivia::format_dangling_comments,
+        trivia::{FormatLeadingComments, FormatTrailingComments},
     },
-    generated::ast_nodes::{AstNode, AstNodes},
     options::Expand,
+    parentheses::NeedsParentheses,
     utils::{
+        format_node_without_trailing_comments::FormatNodeWithoutTrailingComments,
         member_chain::is_member_call_chain,
         object::{format_property_key, write_member_name},
     },
     write,
     write::{
         BinaryLikeExpression, FormatJsArrowFunctionExpression,
-        FormatJsArrowFunctionExpressionOptions,
+        FormatJsArrowFunctionExpressionOptions, FormatWrite,
     },
 };
 
@@ -32,7 +35,7 @@ pub enum AssignmentLike<'a, 'b> {
     AssignmentExpression(&'b AstNode<'a, AssignmentExpression<'a>>),
     ObjectProperty(&'b AstNode<'a, ObjectProperty<'a>>),
     PropertyDefinition(&'b AstNode<'a, PropertyDefinition<'a>>),
-    // TODO: Add TSTypeAliasDeclaration when needed
+    TSTypeAliasDeclaration(&'b AstNode<'a, TSTypeAliasDeclaration<'a>>),
 }
 
 /// Determines how a assignment like be formatted
@@ -148,20 +151,66 @@ pub enum AssignmentLikeLayout {
     SuppressedInitializer,
 }
 
-const MIN_OVERLAP_FOR_BREAK: u8 = 3;
+/// Based on Prettier's behavior:
+/// <https://github.com/prettier/prettier/blob/7584432401a47a26943dd7a9ca9a8e032ead7285/src/language-js/comments/handle-comments.js#L853-L883>
+fn format_left_trailing_comments(
+    start: u32,
+    should_print_as_leading: bool,
+    f: &mut Formatter<'_, '_>,
+) -> FormatResult<()> {
+    let end_of_line_comments = f.context().comments().end_of_line_comments_after(start);
+
+    let comments = if end_of_line_comments.is_empty() {
+        let comments = f.context().comments().comments_before_character(start, b'=');
+        if comments.iter().any(|c| f.comments().is_own_line_comment(c)) { &[] } else { comments }
+    } else if should_print_as_leading || end_of_line_comments.last().is_some_and(|c| c.is_block()) {
+        // No trailing comments for these expressions or if the trailing comment is a block comment
+        &[]
+    } else {
+        end_of_line_comments
+    };
+
+    FormatTrailingComments::Comments(comments).fmt(f)
+}
+
+fn should_print_as_leading(expr: &Expression) -> bool {
+    matches!(
+        expr,
+        Expression::ObjectExpression(_)
+            | Expression::ArrayExpression(_)
+            | Expression::TemplateLiteral(_)
+            | Expression::TaggedTemplateExpression(_)
+    )
+}
 
 impl<'a> AssignmentLike<'a, '_> {
     fn write_left(&self, f: &mut Formatter<'_, 'a>) -> FormatResult<bool> {
         match self {
-            AssignmentLike::VariableDeclarator(variable_declarator) => {
-                write!(f, variable_declarator.id())?;
+            AssignmentLike::VariableDeclarator(declarator) => {
+                if let Some(init) = &declarator.init {
+                    write!(f, [FormatNodeWithoutTrailingComments(&declarator.id())])?;
+                    format_left_trailing_comments(
+                        declarator.id.span().end,
+                        should_print_as_leading(init),
+                        f,
+                    )?;
+                } else {
+                    write!(f, declarator.id())?;
+                }
                 Ok(false)
             }
             AssignmentLike::AssignmentExpression(assignment) => {
-                write!(f, [assignment.left()]);
+                write!(f, [FormatNodeWithoutTrailingComments(&assignment.left()),])?;
+                format_left_trailing_comments(
+                    assignment.left.span().end,
+                    should_print_as_leading(&assignment.right),
+                    f,
+                )?;
                 Ok(false)
             }
             AssignmentLike::ObjectProperty(property) => {
+                const MIN_OVERLAP_FOR_BREAK: u8 = 3;
+
                 let text_width_for_break =
                     (f.options().indent_width.value() + MIN_OVERLAP_FOR_BREAK) as usize;
 
@@ -184,19 +233,20 @@ impl<'a> AssignmentLike<'a, '_> {
                 }
             }
             AssignmentLike::PropertyDefinition(property) => {
-                // Write modifiers
-                write!(f, property.decorators())?;
                 if property.declare {
                     write!(f, ["declare", space()])?;
                 }
                 if let Some(accessibility) = property.accessibility {
                     write!(f, [accessibility.as_str(), space()])?;
                 }
+                if property.r#static {
+                    write!(f, ["static", space()])?;
+                }
                 if property.r#type == PropertyDefinitionType::TSAbstractPropertyDefinition {
                     write!(f, ["abstract", space()])?;
                 }
-                if property.r#static {
-                    write!(f, ["static", space()])?;
+                if property.r#override {
+                    write!(f, ["override", space()])?;
                 }
                 if property.readonly {
                     write!(f, ["readonly", space()])?;
@@ -209,15 +259,40 @@ impl<'a> AssignmentLike<'a, '_> {
                     format_property_key(property.key(), f)?;
                 }
 
-                // Write optional and type annotation
+                // Write optional, definite, and type annotation
                 if property.optional {
                     write!(f, "?")?;
+                }
+                if property.definite {
+                    write!(f, "!")?;
                 }
                 if let Some(type_annotation) = property.type_annotation() {
                     write!(f, type_annotation)?;
                 }
 
                 Ok(false) // Class properties don't use "short" key logic
+            }
+            AssignmentLike::TSTypeAliasDeclaration(declaration) => {
+                write!(f, [declaration.declare.then_some("declare "), "type "])?;
+
+                let start = if let Some(type_parameters) = &declaration.type_parameters() {
+                    write!(
+                        f,
+                        [declaration.id(), FormatNodeWithoutTrailingComments(type_parameters)]
+                    )?;
+                    type_parameters.span.end
+                } else {
+                    write!(f, [FormatNodeWithoutTrailingComments(declaration.id())])?;
+                    declaration.id.span.end
+                };
+
+                format_left_trailing_comments(
+                    start,
+                    matches!(&declaration.type_annotation, TSType::TSTypeLiteral(_)),
+                    f,
+                )?;
+
+                Ok(false)
             }
         }
     }
@@ -237,6 +312,9 @@ impl<'a> AssignmentLike<'a, '_> {
             Self::PropertyDefinition(property_class_member)
                 if property_class_member.value().is_some() =>
             {
+                write!(f, [space(), "="])
+            }
+            Self::TSTypeAliasDeclaration(_) => {
                 write!(f, [space(), "="])
             }
             _ => Ok(()),
@@ -269,6 +347,14 @@ impl<'a> AssignmentLike<'a, '_> {
                     [space(), with_assignment_layout(property.value().unwrap(), Some(layout))]
                 )
             }
+            Self::TSTypeAliasDeclaration(declaration) => {
+                if let AstNodes::TSUnionType(union) = declaration.type_annotation().as_ast_nodes() {
+                    union.write(f)?;
+                    union.format_trailing_comments(f)
+                } else {
+                    write!(f, [space(), declaration.type_annotation()])
+                }
+            }
         }
     }
 
@@ -285,29 +371,28 @@ impl<'a> AssignmentLike<'a, '_> {
         }
 
         let right_expression = self.get_right_expression();
+        if let Some(expr) = right_expression {
+            if let Some(layout) = self.chain_formatting_layout(expr) {
+                return layout;
+            }
 
-        if let Some(layout) = right_expression.and_then(|expr| self.chain_formatting_layout(expr)) {
-            return layout;
-        }
-
-        if let Some(Expression::CallExpression(call_expression)) =
-            &right_expression.map(AsRef::as_ref)
-        {
-            if call_expression
-                .callee
-                .get_identifier_reference()
-                .is_some_and(|ident| ident.name == "require")
+            if let Expression::CallExpression(call_expression) = expr.as_ref()
+                && call_expression
+                    .callee
+                    .get_identifier_reference()
+                    .is_some_and(|ident| ident.name == "require")
+                && !f.comments().has_leading_own_line_comment(call_expression.span.start)
             {
                 return AssignmentLikeLayout::NeverBreakAfterOperator;
             }
         }
 
-        if self.should_break_left_hand_side() {
-            return AssignmentLikeLayout::BreakLeftHandSide;
-        }
-
         if self.should_break_after_operator(right_expression, f) {
             return AssignmentLikeLayout::BreakAfterOperator;
+        }
+
+        if self.should_break_left_hand_side(left_may_break) {
+            return AssignmentLikeLayout::BreakLeftHandSide;
         }
 
         if is_left_short {
@@ -332,10 +417,8 @@ impl<'a> AssignmentLike<'a, '_> {
             return AssignmentLikeLayout::BreakAfterOperator;
         }
 
-        let is_poorly_breakable = match &right_expression {
-            Some(expression) => is_poorly_breakable_member_or_call_chain(expression, f),
-            None => false,
-        };
+        let is_poorly_breakable =
+            right_expression.is_some_and(|expr| is_poorly_breakable_member_or_call_chain(expr, f));
 
         if is_poorly_breakable {
             return AssignmentLikeLayout::BreakAfterOperator;
@@ -367,6 +450,7 @@ impl<'a> AssignmentLike<'a, '_> {
             AssignmentLike::PropertyDefinition(property_class_member) => {
                 property_class_member.value()
             }
+            AssignmentLike::TSTypeAliasDeclaration(declaration) => None,
         }
     }
 
@@ -374,7 +458,7 @@ impl<'a> AssignmentLike<'a, '_> {
     /// usually, when a [variable declarator](VariableDeclarator) doesn't have initializer
     fn has_only_left_hand_side(&self) -> bool {
         match self {
-            Self::AssignmentExpression(_) => false,
+            Self::AssignmentExpression(_) | Self::TSTypeAliasDeclaration(_) => false,
             Self::VariableDeclarator(declarator) => declarator.init.is_none(),
             Self::PropertyDefinition(property) => property.value().is_none(),
             Self::ObjectProperty(property) => property.shorthand,
@@ -433,22 +517,27 @@ impl<'a> AssignmentLike<'a, '_> {
 
     /// Particular function that checks if the left hand side of a [AssignmentLike] should
     /// be broken on multiple lines
-    fn should_break_left_hand_side(&self) -> bool {
+    fn should_break_left_hand_side(&self, left_may_break: bool) -> bool {
         if self.is_complex_destructuring() {
             return true;
         }
 
-        // TODO: Add is_complex_type_alias when TypeAliasDeclaration is supported
-        let is_complex_type_alias = false;
-
-        if !self
-            .get_right_expression()
-            .is_some_and(|expr| matches!(expr.as_ref(), Expression::ArrowFunctionExpression(_)))
-        {
-            return false;
+        if self.is_complex_type_alias() {
+            return true;
         }
 
-        matches!(self, Self::VariableDeclarator(decl) if decl.id.type_annotation.as_ref().is_some_and(|ann| is_complex_type_annotation(ann)))
+        let Self::VariableDeclarator(declarator) = self else {
+            return false;
+        };
+
+        let type_annotation = declarator.id.type_annotation.as_ref();
+
+        type_annotation.is_some_and(|ann| is_complex_type_annotation(ann))
+            || (left_may_break
+                && declarator
+                    .init
+                    .as_ref()
+                    .is_some_and(|expr| matches!(expr, Expression::ArrowFunctionExpression(_))))
     }
 
     /// Checks if the current assignment is eligible for [AssignmentLikeLayout::BreakAfterOperator]
@@ -463,31 +552,48 @@ impl<'a> AssignmentLike<'a, '_> {
         let comments = f.context().comments();
         if let Some(right_expression) = right_expression {
             should_break_after_operator(right_expression, f)
+        } else if let AssignmentLike::TSTypeAliasDeclaration(decl) = self {
+            // For TSTypeAliasDeclaration, check if the type annotation is a union type with comments
+            match &decl.type_annotation {
+                TSType::TSConditionalType(conditional_type) => {
+                    let is_generic = |ts_type: &TSType<'a>| -> bool {
+                        match ts_type {
+                            TSType::TSFunctionType(function) => function.type_parameters.is_some(),
+                            TSType::TSTypeReference(reference) => {
+                                reference.type_arguments.is_some()
+                            }
+                            _ => false,
+                        }
+                    };
+
+                    is_generic(&conditional_type.check_type)
+                        || is_generic(&conditional_type.extends_type)
+                        || comments.has_comment_before(decl.type_annotation.span().start)
+                }
+                _ => {
+                    // Check for leading comments on any other type
+                    comments.has_comment_before(decl.type_annotation.span().start)
+                }
+            }
         } else {
-            // RightAssignmentLike::AnyTsType(AnyTsType::TsUnionType(ty)) => {
-            //     // Recursively checks if the union type is nested and identifies the innermost union type.
-            //     // If a leading comment is found while navigating to the inner union type,
-            //     // it is considered as having leading comments.
-            //     let mut union_type = ty.clone();
-            //     let mut has_leading_comments = comments.has_leading_comments(union_type.syntax());
-            //     while is_nested_union_type(&union_type)? && !has_leading_comments {
-            //         if let Some(Ok(inner_union_type)) = union_type.types().last() {
-            //             let inner_union_type = TsUnionType::cast(inner_union_type.into_syntax());
-            //             if let Some(inner_union_type) = inner_union_type {
-            //                 has_leading_comments =
-            //                     comments.has_leading_comments(inner_union_type.syntax());
-            //                 union_type = inner_union_type;
-            //             } else {
-            //                 break;
-            //             }
-            //         } else {
-            //             break;
-            //         }
-            //     }
-            //     has_leading_comments
-            // }
             false
         }
+    }
+
+    fn is_complex_type_alias(&self) -> bool {
+        let AssignmentLike::TSTypeAliasDeclaration(type_alias) = self else {
+            return false;
+        };
+
+        let Some(type_parameters) = &type_alias.type_parameters else {
+            return false;
+        };
+
+        type_parameters.params.len() > 1
+            && type_parameters
+                .params
+                .iter()
+                .any(|param| param.constraint.is_some() || param.default.is_some())
     }
 
     fn is_complex_destructuring(&self) -> bool {
@@ -497,13 +603,12 @@ impl<'a> AssignmentLike<'a, '_> {
                     return false;
                 };
 
-                let properties = &object.properties;
-                if properties.len() <= 2 {
+                if object.len() <= 2 {
                     return false;
                 }
 
-                properties.iter().any(|property| {
-                    !property.shorthand || !property.value.kind.is_binding_identifier()
+                object.properties.iter().any(|property| {
+                    !property.shorthand || property.value.kind.is_assignment_pattern()
                 })
             }
             AssignmentLike::AssignmentExpression(assignment) => {
@@ -511,15 +616,20 @@ impl<'a> AssignmentLike<'a, '_> {
                     return false;
                 };
 
-                let properties = &object.properties;
-                properties.iter().any(|property| match property {
+                if object.len() <= 2 {
+                    return false;
+                }
+
+                object.properties.iter().any(|property| match property {
                     AssignmentTargetProperty::AssignmentTargetPropertyIdentifier(
                         property_identifier,
                     ) => property_identifier.init.is_some(),
                     AssignmentTargetProperty::AssignmentTargetPropertyProperty(_) => true,
                 })
             }
-            AssignmentLike::ObjectProperty(_) | AssignmentLike::PropertyDefinition(_) => false,
+            AssignmentLike::ObjectProperty(_)
+            | AssignmentLike::PropertyDefinition(_)
+            | AssignmentLike::TSTypeAliasDeclaration(_) => false,
         }
     }
 }
@@ -531,17 +641,21 @@ fn should_break_after_operator<'a>(
 ) -> bool {
     let is_jsx = matches!(right.as_ref(), Expression::JSXElement(_) | Expression::JSXFragment(_));
 
+    if is_jsx {
+        return false;
+    }
+
+    let comments = f.comments();
     let source_text = f.source_text();
-    for comment in f.comments().comments_before(right.span().start) {
-        if !is_jsx
-            && (source_text.lines_after(comment.span.end) > 0
-                || source_text.is_own_line_comment(comment))
+    for comment in comments.comments_before(right.span().start) {
+        if source_text.lines_after(comment.span.end) > 0
+            || f.source_text().has_newline_before(comment.span.start)
         {
             return true;
         }
 
         // Needs to wrap a parenthesis for the node, so it won't break.
-        if f.comments().is_type_cast_comment(comment) {
+        if comments.is_type_cast_comment(comment) {
             return false;
         }
     }
@@ -768,6 +882,10 @@ fn is_poorly_breakable_member_or_call_chain<'a>(
                 is_chain = true;
                 node.object().as_ast_nodes()
             }
+            AstNodes::PrivateFieldExpression(node) => {
+                is_chain = true;
+                node.object().as_ast_nodes()
+            }
             AstNodes::ChainExpression(chain) => {
                 is_chain = true;
                 chain.expression().as_ast_nodes()
@@ -880,10 +998,7 @@ fn is_complex_type_arguments(type_arguments: &TSTypeParameterInstantiation) -> b
     let is_first_argument_complex = ts_type_argument_list.first().is_some_and(|first_argument| {
         matches!(
             first_argument,
-            TSType::TSUnionType(_)
-                | TSType::TSIntersectionType(_)
-                | TSType::TSTupleType(_)
-                | TSType::TSTypeLiteral(_)
+            TSType::TSUnionType(_) | TSType::TSIntersectionType(_) | TSType::TSTypeLiteral(_)
         )
     });
 
@@ -895,29 +1010,6 @@ fn is_complex_type_arguments(type_arguments: &TSTypeParameterInstantiation) -> b
     // https://github.com/prettier/prettier/blob/a043ac0d733c4d53f980aa73807a63fc914f23bd/src/language-js/print/assignment.js#L454
 
     false
-}
-
-/// If a union type has only one type and it's a union type, then it's a nested union type
-/// ```js
-/// type A = | (A | B)
-///          ^^^^^^^^^^
-/// ```
-/// The final format will only keep the inner union type
-fn is_nested_union_type(union_type: &TSUnionType) -> bool {
-    if union_type.types.len() == 1 {
-        let ty = &union_type.types[0];
-        return matches!(ty, TSType::TSUnionType(_));
-    }
-    false
-}
-
-/// Checks if the annotation is breakable
-fn is_annotation_breakable(annotation: &TSTypeAnnotation) -> bool {
-    matches!(
-        &annotation.type_annotation,
-        TSType::TSTypeReference(reference_type)
-            if reference_type.type_arguments.as_ref().is_some_and(|type_args| !type_args.params.is_empty())
-    )
 }
 
 /// [Prettier applies]: <https://github.com/prettier/prettier/blob/fde0b49d7866e203ca748c306808a87b7c15548f/src/language-js/print/assignment.js#L278>

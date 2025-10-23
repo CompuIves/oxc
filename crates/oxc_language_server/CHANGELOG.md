@@ -4,6 +4,150 @@ All notable changes to this package will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0).
 
+## [1.24.0] - 2025-10-22
+
+### 🚀 Features
+
+- e3d65c3 language_server: Search both .json and .jsonc config file (#14868) (Sysix)
+- 2609c74 language_server: Watch for `fmt.configPath` file content change (#14509) (Sysix)
+- fec2ed9 oxfmt: Use Prettier style config key and value (#14612) (leaysgur)
+- 1b58521 oxfmt,language_server: Enable JSX for all JS source type (#14605) (leaysgur)
+
+### 🐛 Bug Fixes
+
+- 644dfd4 language_server: Make unused directives fixable again (#14872) (Sysix)
+- e560cc1 language_server: Fix panic when "disable rule for this line" position is after error span (#14597) (Sysix)
+
+### 🚜 Refactor
+
+- 699c91c language_server: Improve file watching for different tools (#14645) (Sysix)
+- 3bfb8e1 linter: Make `Message.span` public (#14601) (Sysix)
+- 9a589ca language_server: Use Message span for Diagnostic's Range (#14600) (Sysix)
+- b301795 linter: Remove unused allocator param in `Runtime` for LSP & tests (#14489) (Sysix)
+
+### ⚡ Performance
+
+- df48416 language_server: Return `Diagnostic` when relinting all files (#14737) (Sysix)
+- 22ee19f language_server: Avoid creating HashMap in `Backend::did_change_configuration` (#14736) (Sysix)
+- ed922ec language_server: Avoid creating HashMap in `Backend::did_change_watched_files` (#14735) (Sysix)
+
+
+## [1.23.0] - 2025-10-13
+
+### 🚀 Features
+
+- 4fbdef2 language_server: Support `fmt.configPath` configuration (#14502) (Sysix)
+- 4d3ce2e language_server: Autodetect root `.oxfmtrc.json` (#14466) (Sysix)
+
+### 🐛 Bug Fixes
+
+- fb4a20d language_server: Add whitespace for `// oxlint-disable-next-line` fix (#14356) (Sysix)
+
+### 🚜 Refactor
+
+- 6440cde linter: Remove lifetime of `Message` (#14481) (Sysix)
+- f599bef language_server: Move `Message` to `DiagnosticReport` transformation to one place (#14447) (Sysix)
+- a9cea7c language_server: Use `FxHashSet` for `ServerLinter::extended_paths` (#14517) (Sysix)
+- f977700 language_server: Pass `LintOptions` to `Worker::refresh_server_linter` (#14510) (Sysix)
+
+### ⚡ Performance
+
+- b44a30e language_server: Transform `Message` to `DiagnosticReport` with one call (#14448) (Sysix)
+
+### 🧪 Testing
+
+- 33b6cde language_server: Add basic tests for `WorkspaceWorker::did_change_configuration` (#14531) (Sysix)
+- bfe1ecd language_server: Add tests for `WorkspaceWorker::init_watchers` (#14516) (Sysix)
+
+
+
+## [1.21.0] - 2025-10-08
+
+### 🐛 Bug Fixes
+
+- 493082c language_server: Use the first Span of the message as the primary Diagnostic range (#14057) (Sysix)
+- 6e8d2f6 language_server: Ignore JS plugins (#14379) (overlookmotel)
+
+### 🚜 Refactor
+
+- 3374b8e linter/language_server: Move all lsp relevant code to `oxc_language_server` crate (#14430) (Sysix)
+- d24b74e linter/language_server: `oxc_linter::TsgoLinter::run_source` returns `Message` (#14429) (Sysix)
+- e5b7fb2 linter/language_server: `oxc_linter::Runtime::run_source` returns `Message` (#14428) (Sysix)
+
+
+## [1.20.0] - 2025-10-06
+
+### 🚀 Features
+
+- d16df93 linter: Support disable directives for type aware rules (#14052) (camc314)
+
+### 🐛 Bug Fixes
+
+- adff069 language_server: Don't apply "ignore this rule" fixes for fixAll code action + command (#14243) (Sysix)
+
+### 🚜 Refactor
+
+- 891fc47 language_server: Share code for command `oxc.fixAll` and code action `source.fixAll.oxc` (#14244) (Sysix)
+- 7fe930c language_server: Remove unused fixture files (#14246) (Sysix)
+- 2b2c345 language-server: Move `generate_inverted_diagnostics` to `error_with_position` (#14118) (camc314)
+
+### ⚡ Performance
+
+- fa3712d language_server: Create less `ExternalPluginStore`s (#14378) (overlookmotel)
+
+
+## [1.19.0] - 2025-09-29
+
+### 🚀 Features
+
+- 1472147 linter: Move `no-unused-expressions` to correctness (#14099) (camchenry)
+
+### 🐛 Bug Fixes
+
+- e37c435 language_server: Correct position for "ignore this rule for this file" in vue/astro/svelte files (#14187) (Sysix)
+- d36d227 language_server: Don't lint file on code action when it is already ignored (#13976) (Sysix)
+- 353bfe7 language_server: Check if tsconfig path is a file before starting the `LintService` (#14126) (Sysix)
+
+### 🚜 Refactor
+
+- 7a0eb57 language_server: Refactor ignore code action logic as a linter fix (#14183) (Sysix)
+
+### 📚 Documentation
+
+- b83b1bd language_server: Docs for `Backend` struct (#14172) (Sysix)
+- 3106ba0 language_server: Docs for `WorkspaceWorker` (#14161) (Sysix)
+
+### 🧪 Testing
+
+- be58d6d language_server: Fix test for ServerFormatter in windows (#14210) (Sysix)
+- d7041c1 language_server: Add linebreaks for formatter snapshot (#14173) (Sysix)
+
+
+
+## [1.17.0] - 2025-09-23
+
+### 🚀 Features
+
+- a21ff54 language_server: Introduce `ServerFormatter` (#13700) (Sysix)
+
+### 🐛 Bug Fixes
+
+- b8790c2 language_server: Output correct position for parser & semantic errors (#14010) (Sysix)
+
+### 🚜 Refactor
+
+- 0c93f33 language_server: Use minimal text edit for `ServerFormatter` (#13960) (Sysix)
+- 823cb57 langauge_server: Move `Backend` into own file (#13955) (Sysix)
+- dc700f5 language_server: Introduce `LSPFileSystem` (#13731) (Sysix)
+- 873e231 language_server: Move `needs_linter_restart` to `ServerLinter` (#13834) (Sysix)
+
+### 🧪 Testing
+
+- b807b6f language_server: Skip formatter test on windows (#13986) (Sysix)
+- 2600858 language_server: Add Tester for ServerFormatter (#13969) (Sysix)
+- 37aadf0 language_server: Add `test_and_snapshot_multiple_file` (#13966) (Sysix)
+
+
 ## [1.16.0] - 2025-09-16
 
 ### 🚜 Refactor

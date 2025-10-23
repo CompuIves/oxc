@@ -4,6 +4,83 @@ All notable changes to this package will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0).
 
+
+## [0.94.0] - 2025-10-06
+
+### 🚀 Features
+
+- 588acd5 transformer: Add ES2026 target for explicit resource management (#14330) (Boshen)
+
+### 🐛 Bug Fixes
+
+- 013e053 napi/transform: Fix define plugin not applying DCE correctly (#14264) (Boshen)
+
+
+## [0.94.0] - 2025-10-06
+
+### 🚀 Features
+
+- 588acd5 transformer: Add ES2026 target for explicit resource management (#14330) (Boshen)
+
+### 🐛 Bug Fixes
+
+- 013e053 napi/transform: Fix define plugin not applying DCE correctly (#14264) (Boshen)
+
+
+
+
+## [0.92.0] - 2025-09-24
+
+### 🐛 Bug Fixes
+
+- 2f9e16d napi/minifier, napi/transformer: Rename CommonJS file to `.cjs` (#14047) (overlookmotel)
+
+### 🚜 Refactor
+
+- cc0019f napi: Move scripts into `scripts` directory (#14048) (overlookmotel)
+
+
+## [0.92.0] - 2025-09-24
+
+### 🐛 Bug Fixes
+
+- 2f9e16d napi/minifier, napi/transformer: Rename CommonJS file to `.cjs` (#14047) (overlookmotel)
+
+### 🚜 Refactor
+
+- cc0019f napi: Move scripts into `scripts` directory (#14048) (overlookmotel)
+
+
+## [0.91.0] - 2025-09-22
+
+### 🐛 Bug Fixes
+
+- 21bbf95 napi: Rebuild bindings file for NAPI packages (#13889) (overlookmotel)
+
+### 📚 Documentation
+
+- 7a50ad9 napi/parser, napi/transform: Correct README examples (#13934) (overlookmotel)
+
+### 💼 Other
+
+- fb347da crates: V0.91.0 (#13961) (Boshen)
+
+
+## [0.91.0] - 2025-09-22
+
+### 🐛 Bug Fixes
+
+- 21bbf95 napi: Rebuild bindings file for NAPI packages (#13889) (overlookmotel)
+
+### 📚 Documentation
+
+- 7a50ad9 napi/parser, napi/transform: Correct README examples (#13934) (overlookmotel)
+
+### 💼 Other
+
+- fb347da crates: V0.91.0 (#13961) (Boshen)
+
+
 ## [0.91.0] - 2025-09-21
 
 ### 🐛 Bug Fixes

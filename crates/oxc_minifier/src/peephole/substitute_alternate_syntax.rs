@@ -25,12 +25,12 @@ use super::PeepholeOptimizations;
 impl<'a> PeepholeOptimizations {
     pub fn substitute_object_property(prop: &mut ObjectProperty<'a>, ctx: &mut Ctx<'a, '_>) {
         // <https://tc39.es/ecma262/2024/multipage/ecmascript-language-expressions.html#sec-runtime-semantics-propertydefinitionevaluation>
-        if !prop.method {
-            if let PropertyKey::StringLiteral(str) = &prop.key {
-                // "{ __proto__ }" sets prototype, while "{ ['__proto__'] }" does not
-                if str.value == "__proto__" {
-                    return;
-                }
+        if !prop.method
+            && let PropertyKey::StringLiteral(str) = &prop.key
+        {
+            // "{ __proto__ }" sets prototype, while "{ ['__proto__'] }" does not
+            if str.value == "__proto__" {
+                return;
             }
         }
 
@@ -162,17 +162,14 @@ impl<'a> PeepholeOptimizations {
         if !arrow_expr.expression
             && arrow_expr.body.directives.is_empty()
             && arrow_expr.body.statements.len() == 1
+            && let Some(body) = arrow_expr.body.statements.first_mut()
+            && let Statement::ReturnStatement(ret_stmt) = body
         {
-            if let Some(body) = arrow_expr.body.statements.first_mut() {
-                if let Statement::ReturnStatement(ret_stmt) = body {
-                    let return_stmt_arg =
-                        ret_stmt.argument.as_mut().map(|arg| arg.take_in(ctx.ast));
-                    if let Some(arg) = return_stmt_arg {
-                        *body = ctx.ast.statement_expression(arg.span(), arg);
-                        arrow_expr.expression = true;
-                        ctx.state.changed = true;
-                    }
-                }
+            let return_stmt_arg = ret_stmt.argument.as_mut().map(|arg| arg.take_in(ctx.ast));
+            if let Some(arg) = return_stmt_arg {
+                *body = ctx.ast.statement_expression(arg.span(), arg);
+                arrow_expr.expression = true;
+                ctx.state.changed = true;
             }
         }
     }
@@ -507,26 +504,48 @@ impl<'a> PeepholeOptimizations {
     ///     r[a - 1] = arguments[a];
     /// ```
     fn try_rewrite_arguments_copy_loop(for_stmt: &mut ForStatement<'a>, ctx: &mut Ctx<'a, '_>) {
+        #[derive(PartialEq, Eq)]
+        enum VerifyArrayArgResult {
+            WithOffset,
+            WithoutOffset,
+            Invalid,
+        }
+
         /// Verify whether `arg_expr` is `e > offset ? e - offset : 0` or `e`
-        fn verify_array_arg(arg_expr: &Expression, name_e: &str, offset: f64) -> bool {
+        fn verify_array_arg(
+            arg_expr: &Expression,
+            name_e: &str,
+            offset: f64,
+        ) -> VerifyArrayArgResult {
             match arg_expr {
-                Expression::Identifier(id) => offset == 0.0 && id.name == name_e,
+                Expression::Identifier(id) => {
+                    if offset == 0.0 && id.name == name_e {
+                        VerifyArrayArgResult::WithoutOffset
+                    } else {
+                        VerifyArrayArgResult::Invalid
+                    }
+                }
                 Expression::ConditionalExpression(cond_expr) => {
                     let Expression::BinaryExpression(test_expr) = &cond_expr.test else {
-                        return false;
+                        return VerifyArrayArgResult::Invalid;
                     };
                     let Expression::BinaryExpression(cons_expr) = &cond_expr.consequent else {
-                        return false;
+                        return VerifyArrayArgResult::Invalid;
                     };
-                    test_expr.operator == BinaryOperator::GreaterThan
+                    if test_expr.operator == BinaryOperator::GreaterThan
                         && test_expr.left.is_specific_id(name_e)
                         && matches!(&test_expr.right, Expression::NumericLiteral(n) if n.value == offset)
                         && cons_expr.operator == BinaryOperator::Subtraction
                         && matches!(&cons_expr.left, Expression::Identifier(id) if id.name == name_e)
                         && matches!(&cons_expr.right, Expression::NumericLiteral(n) if n.value == offset)
                         && matches!(&cond_expr.alternate, Expression::NumericLiteral(n) if n.value == 0.0)
+                    {
+                        VerifyArrayArgResult::WithOffset
+                    } else {
+                        VerifyArrayArgResult::Invalid
+                    }
                 }
-                _ => false,
+                _ => VerifyArrayArgResult::Invalid,
             }
         }
 
@@ -555,6 +574,10 @@ impl<'a> PeepholeOptimizations {
             }
             assign_expr
         };
+
+        // reference counts in the for-loop
+        let mut a_ref_count = 0;
+        let mut e_ref_count = 0;
 
         let (r_id_name, a_id_name, offset) = {
             let AssignmentTarget::ComputedMemberExpression(lhs_member_expr) =
@@ -605,6 +628,7 @@ impl<'a> PeepholeOptimizations {
             }
             rhs_member_expr_obj
         };
+        a_ref_count += 2;
 
         // Parse update: `a++`
         {
@@ -617,10 +641,11 @@ impl<'a> PeepholeOptimizations {
             if a_id_name != id.name {
                 return;
             }
+            a_ref_count += 1;
         };
 
         // Parse test: `a < e` or `a < arguments.length`
-        let e_id_name = {
+        let e_id_info = {
             let Some(Expression::BinaryExpression(b)) = &for_stmt.test else {
                 return;
             };
@@ -632,7 +657,10 @@ impl<'a> PeepholeOptimizations {
                 return;
             }
             match &b.right {
-                Expression::Identifier(right) => Some(&right.name),
+                Expression::Identifier(right) => Some((
+                    &right.name,
+                    ctx.scoping().get_reference(right.reference_id()).symbol_id(),
+                )),
                 Expression::StaticMemberExpression(sm) => {
                     let Expression::Identifier(id) = &sm.object else {
                         return;
@@ -648,8 +676,12 @@ impl<'a> PeepholeOptimizations {
                 _ => return,
             }
         };
+        if e_id_info.is_some() {
+            e_ref_count += 1;
+        }
+        a_ref_count += 1;
 
-        let init_decl_len = if e_id_name.is_some() { 3 } else { 2 };
+        let init_decl_len = if e_id_info.is_some() { 3 } else { 2 };
 
         let Some(init) = &mut for_stmt.init else { return };
         let ForStatementInit::VariableDeclaration(var_init) = init else { return };
@@ -667,7 +699,7 @@ impl<'a> PeepholeOptimizations {
         let mut idx = 0usize;
 
         // Check `e = arguments.length`
-        if let Some(e_id_name) = e_id_name {
+        if let Some((e_id_name, _)) = e_id_info {
             let de = var_init
                 .declarations
                 .get(idx)
@@ -689,7 +721,7 @@ impl<'a> PeepholeOptimizations {
         }
 
         // Check `a = 0` or `a = k`
-        {
+        let a_id_symbol_id = {
             let de_a = var_init
                 .declarations
                 .get(idx + 1)
@@ -701,10 +733,11 @@ impl<'a> PeepholeOptimizations {
             if !matches!(&de_a.init, Some(Expression::NumericLiteral(n)) if n.value == offset) {
                 return;
             }
-        }
+            de_id.symbol_id()
+        };
 
         // Check `r = Array(e > 1 ? e - 1 : 0)`, or `r = []`
-        let r_id_pat = {
+        let r_id_pat_with_info = {
             let de_r = var_init
                 .declarations
                 .get_mut(idx)
@@ -719,11 +752,13 @@ impl<'a> PeepholeOptimizations {
                     if call.arguments.len() != 1 {
                         return;
                     }
-                    let Some(e_id_name) = e_id_name else { return };
+                    let Some((e_id_name, _)) = e_id_info else { return };
                     let Some(arg_expr) = call.arguments[0].as_expression() else { return };
-                    if !verify_array_arg(arg_expr, e_id_name, offset) {
+                    let result = verify_array_arg(arg_expr, e_id_name, offset);
+                    if result == VerifyArrayArgResult::Invalid {
                         return;
                     }
+                    e_ref_count += if result == VerifyArrayArgResult::WithOffset { 2 } else { 1 };
                 }
                 Some(Expression::ArrayExpression(arr)) => {
                     if !arr.elements.is_empty() {
@@ -736,14 +771,34 @@ impl<'a> PeepholeOptimizations {
             if de_id.name != r_id_name {
                 return;
             }
+            let de_id_symbol_id = de_id.symbol_id();
+            (&mut de_r.id, de_id_symbol_id)
+        };
+
+        // bail out if `e` or `a` is used outside the for-loop
+        {
+            if let Some((_, e_id_symbol_id)) = e_id_info
+                && e_id_symbol_id.is_none_or(|id| {
+                    ctx.scoping().get_resolved_references(id).count() != e_ref_count
+                })
+            {
+                return;
+            }
+            if ctx.scoping().get_resolved_references(a_id_symbol_id).count() != a_ref_count {
+                return;
+            }
+        }
+
+        // Build `var r = [...arguments]` (with optional `.slice(offset)`) as the only declarator and drop test/update/body.
+
+        let r_id_pat = {
+            let (r_id, de_id_symbol_id) = r_id_pat_with_info;
             // `var r = [...arguments]` / `var r = [...arguments].slice(n)` is not needed
             // if r is not used by other places because `[...arguments]` does not have a sideeffect
             // `r` is used once in the for-loop (assignment for each index)
-            (ctx.scoping().get_resolved_references(de_id.symbol_id()).count() > 1)
-                .then(|| de_r.id.take_in(ctx.ast))
+            (ctx.scoping().get_resolved_references(de_id_symbol_id).count() > 1)
+                .then(|| r_id.take_in(ctx.ast))
         };
-
-        // Build `var r = [...arguments]` (with optional `.slice(offset)`) as the only declarator and drop test/update/body.
 
         let base_arr = ctx.ast.expression_array(
             SPAN,
@@ -765,7 +820,7 @@ impl<'a> PeepholeOptimizations {
             ctx.ast.expression_call(
                 SPAN,
                 callee,
-                Option::<TSTypeParameterInstantiation>::None,
+                NONE,
                 ctx.ast.vec1(Argument::from(ctx.ast.expression_numeric_literal(
                     SPAN,
                     offset,
@@ -1137,18 +1192,18 @@ impl<'a> PeepholeOptimizations {
                     ctx.state.changed = true;
                     return;
                 }
-                if let Some(value) = Ctx::string_to_equivalent_number_value(value) {
-                    if value >= 0.0 {
-                        *computed = false;
-                        *key = PropertyKey::NumericLiteral(ctx.ast.alloc_numeric_literal(
-                            s.span,
-                            value,
-                            None,
-                            NumberBase::Decimal,
-                        ));
-                        ctx.state.changed = true;
-                        return;
-                    }
+                if let Some(value) = Ctx::string_to_equivalent_number_value(value)
+                    && value >= 0.0
+                {
+                    *computed = false;
+                    *key = PropertyKey::NumericLiteral(ctx.ast.alloc_numeric_literal(
+                        s.span,
+                        value,
+                        None,
+                        NumberBase::Decimal,
+                    ));
+                    ctx.state.changed = true;
+                    return;
                 }
                 if *computed {
                     *computed = false;
@@ -1398,7 +1453,7 @@ impl<'a> PeepholeOptimizations {
                 ctx.ast.identifier_name(expr.span(), "split"),
                 false,
             )),
-            Option::<TSTypeParameterInstantiation>::None,
+            NONE,
             ctx.ast.vec1(Argument::from(ctx.ast.expression_string_literal(
                 expr.span(),
                 ctx.ast.atom(delimiter),
@@ -1426,16 +1481,12 @@ impl<'a> PeepholeOptimizations {
     }
 
     pub fn substitute_catch_clause(catch: &mut CatchClause<'a>, ctx: &Ctx<'a, '_>) {
-        if ctx.supports_feature(ESFeature::ES2019OptionalCatchBinding) {
-            if let Some(param) = &catch.param {
-                if let BindingPatternKind::BindingIdentifier(ident) = &param.pattern.kind {
-                    if catch.body.body.is_empty()
-                        || ctx.scoping().symbol_is_unused(ident.symbol_id())
-                    {
-                        catch.param = None;
-                    }
-                }
-            }
+        if ctx.supports_feature(ESFeature::ES2019OptionalCatchBinding)
+            && let Some(param) = &catch.param
+            && let BindingPatternKind::BindingIdentifier(ident) = &param.pattern.kind
+            && (catch.body.body.is_empty() || ctx.scoping().symbol_is_unused(ident.symbol_id()))
+        {
+            catch.param = None;
         }
     }
 
@@ -2373,6 +2424,12 @@ mod test {
         test(
             "function _() { { let _; for (var e = arguments.length, r = Array(e), a = 0; a < e; a++) r[a] = arguments[a]; console.log(r) } }",
             "function _() { { let _; var r = [...arguments]; console.log(r) } }",
+        );
+        test_same(
+            "function _() { for (var e = arguments.length, r = Array(e), a = 0; a < e; a++) r[a] = arguments[a]; console.log(r, e) }",
+        );
+        test_same(
+            "function _() { for (var e = arguments.length, r = Array(e), a = 0; a < e; a++) r[a] = arguments[a]; console.log(r, a) }",
         );
     }
 

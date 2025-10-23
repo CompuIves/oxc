@@ -1,5 +1,5 @@
 use oxc_ast::{
-    AstKind,
+    AstKind, AstType,
     ast::{Argument, Expression, MethodDefinitionKind},
 };
 use oxc_cfg::{
@@ -58,6 +58,11 @@ enum DefinitelyCallsThisBeforeSuper {
     Maybe(BlockNodeId),
 }
 
+/// Node types that should be in the file in order to run this analysis. Otherwise, the AST
+/// will be skipped for linting.
+const NEEDED_NODE_TYPES: &AstTypesBitset =
+    &AstTypesBitset::from_types(&[AstType::ThisExpression, AstType::Super]);
+
 impl Rule for NoThisBeforeSuper {
     fn run_once(&self, ctx: &LintContext) {
         let cfg = ctx.cfg();
@@ -75,7 +80,7 @@ impl Rule for NoThisBeforeSuper {
                     }
                 }
                 AstKind::Super(_) => {
-                    let basic_block_id = node.cfg_id();
+                    let basic_block_id = ctx.nodes().cfg_id(node.id());
                     if let AstKind::CallExpression(call_expr) = ctx.nodes().parent_kind(node.id()) {
                         let has_this_or_super_in_args =
                             Self::contains_this_or_super_in_args(&call_expr.arguments);
@@ -92,7 +97,7 @@ impl Rule for NoThisBeforeSuper {
                     }
                 }
                 AstKind::ThisExpression(_) => {
-                    let basic_block_id = node.cfg_id();
+                    let basic_block_id = ctx.nodes().cfg_id(node.id());
                     if !basic_blocks_with_super_called.contains(&basic_block_id) {
                         basic_blocks_with_local_violations
                             .entry(basic_block_id)
@@ -109,7 +114,7 @@ impl Rule for NoThisBeforeSuper {
         for node in wanted_nodes {
             let output = Self::analyze(
                 cfg,
-                node.cfg_id(),
+                ctx.nodes().cfg_id(node.id()),
                 &basic_blocks_with_super_called,
                 &basic_blocks_with_local_violations,
                 false,
@@ -131,6 +136,10 @@ impl Rule for NoThisBeforeSuper {
                 ctx.diagnostic(no_this_before_super_diagnostic(parent_span));
             }
         }
+    }
+
+    fn should_run(&self, ctx: &crate::context::ContextHost) -> bool {
+        ctx.semantic().nodes().contains_any(NEEDED_NODE_TYPES)
     }
 }
 

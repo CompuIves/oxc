@@ -7,11 +7,11 @@ use quote::{format_ident, quote};
 use crate::{
     Codegen, Generator,
     generators::{define_generator, formatter::ast_nodes::get_node_type},
-    output::{Output, output_path},
+    output::Output,
     schema::{Def, EnumDef, Schema, StructDef, TypeDef, TypeId},
 };
 
-const FORMATTER_CRATE_PATH: &str = "crates/oxc_formatter";
+use super::ast_nodes::formatter_output_path;
 
 /// Based on the prettier printing comments algorithm, these nodes don't need to print comments.
 const AST_NODE_WITHOUT_PRINTING_COMMENTS_LIST: &[&str] = &[
@@ -21,7 +21,6 @@ const AST_NODE_WITHOUT_PRINTING_COMMENTS_LIST: &[&str] = &[
     "ClassBody",
     "CatchParameter",
     "CatchClause",
-    "Decorator",
     // Manually prints it because class's decorators can be appears before `export class Cls {}`.
     "ExportNamedDeclaration",
     "ExportDefaultDeclaration",
@@ -31,14 +30,18 @@ const AST_NODE_WITHOUT_PRINTING_COMMENTS_LIST: &[&str] = &[
     "JSXFragment",
     //
     "TemplateElement",
-    "ImportSpecifier",
-    "ImportDefaultSpecifier",
-    "ImportNamespaceSpecifier",
-    "ExportSpecifier",
 ];
 
-const AST_NODE_NEEDS_PARENTHESES: &[&str] =
-    &["TSTypeAssertion", "TSInferType", "TSConditionalType"];
+const AST_NODE_NEEDS_PARENTHESES: &[&str] = &[
+    "TSTypeAssertion",
+    "TSInferType",
+    "TSConditionalType",
+    "TSUnionType",
+    "TSIntersectionType",
+    "TSConstructorType",
+    "TSTypeQuery",
+    "TSFunctionType",
+];
 
 const NEEDS_IMPLEMENTING_FMT_WITH_OPTIONS: phf::Map<&'static str, &'static str> = phf::phf_map! {
     "ArrowFunctionExpression" => "FormatJsArrowFunctionExpressionOptions",
@@ -86,15 +89,17 @@ impl Generator for FormatterFormatGenerator {
                     trivia::FormatTrailingComments,
                 },
                 parentheses::NeedsParentheses,
-                generated::ast_nodes::{AstNode, AstNodes, transmute_self},
+                ast_nodes::{AstNode, AstNodes},
                 utils::{suppressed::FormatSuppressedNode, typecast::format_type_cast_comment_node},
                 write::{FormatWrite #(#options)*},
             };
 
+            use super::ast_nodes::transmute_self;
+
             #impls
         };
 
-        Output::Rust { path: output_path(FORMATTER_CRATE_PATH, "format.rs"), tokens: output }
+        Output::Rust { path: formatter_output_path("format"), tokens: output }
     }
 }
 
@@ -163,15 +168,12 @@ fn generate_struct_implementation(
 
         // `Program` can't be suppressed.
         // `JSXElement` and `JSXFragment` implement suppression formatting in their formatting logic
-        let suppressed_check = (!matches!(
-            struct_name,
-            "Program" | "JSXElement" | "JSXFragment" | "ExpressionStatement"
-        ))
-        .then(|| {
-            quote! {
-                let is_suppressed = f.comments().is_suppressed(self.span().start);
-            }
-        });
+        let suppressed_check = (!matches!(struct_name, "Program" | "JSXElement" | "JSXFragment"))
+            .then(|| {
+                quote! {
+                    let is_suppressed = f.comments().is_suppressed(self.span().start);
+                }
+            });
 
         let write_implementation = if suppressed_check.is_none() {
             write_call
@@ -283,7 +285,7 @@ fn generate_enum_implementation(enum_def: &EnumDef, schema: &Schema) -> TokenStr
                     inner,
                     parent,
                     allocator,
-                    following_node: self.following_node,
+                    following_span: self.following_span,
                 }).fmt(f)
             },
         })
@@ -306,7 +308,7 @@ fn generate_enum_implementation(enum_def: &EnumDef, schema: &Schema) -> TokenStr
                     inner,
                     parent,
                     allocator,
-                    following_node: self.following_node,
+                    following_span: self.following_span,
                 }).fmt(f)
             },
         };

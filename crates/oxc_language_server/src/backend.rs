@@ -3,7 +3,6 @@ use std::{str::FromStr, sync::Arc};
 use futures::future::join_all;
 use log::{debug, info, warn};
 use rustc_hash::FxBuildHasher;
-use serde_json::json;
 use tokio::sync::{OnceCell, RwLock, SetError};
 use tower_lsp_server::{
     Client, LanguageServer,
@@ -11,10 +10,10 @@ use tower_lsp_server::{
     lsp_types::{
         CodeActionParams, CodeActionResponse, ConfigurationItem, Diagnostic,
         DidChangeConfigurationParams, DidChangeTextDocumentParams, DidChangeWatchedFilesParams,
-        DidChangeWatchedFilesRegistrationOptions, DidChangeWorkspaceFoldersParams,
-        DidCloseTextDocumentParams, DidOpenTextDocumentParams, DidSaveTextDocumentParams,
-        DocumentFormattingParams, ExecuteCommandParams, InitializeParams, InitializeResult,
-        InitializedParams, Registration, ServerInfo, TextEdit, Unregistration, Uri, WorkspaceEdit,
+        DidChangeWorkspaceFoldersParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
+        DidSaveTextDocumentParams, DocumentFormattingParams, ExecuteCommandParams,
+        InitializeParams, InitializeResult, InitializedParams, Registration, ServerInfo, TextEdit,
+        Unregistration, Uri, WorkspaceEdit,
     },
 };
 
@@ -29,7 +28,23 @@ use crate::{
     worker::WorkspaceWorker,
 };
 
+/// The Backend implements the LanguageServer trait to handle LSP requests and notifications.
+///
+/// It manages multiple WorkspaceWorkers, each corresponding to a workspace folder.
+/// Depending on the client's capabilities, it can dynamically register features and start up other services.
+/// The Client will send requests and notifications to the Backend, which will delegate them to the appropriate WorkspaceWorker.
+/// The Backend also manages the in-memory file system for open files.
+///
+/// A basic flow of an Editor and Server interaction is as follows:
+/// - Editor sends `initialize` request with workspace folders and client capabilities.
+/// - Server responds with its capabilities.
+/// - Editor sends `initialized` notification.
+/// - Server registers dynamic capabilities like file watchers.
+/// - Editor sends `textDocument/didOpen`, `textDocument/didChange`, `textDocument/didSave`, and `textDocument/didClose` notifications.
+/// - Editor sends `shutdown` request when the user closes the editor.
+/// - Editor sends `exit` notification and the server exits.
 pub struct Backend {
+    // The LSP client to communicate with the editor or IDE.
     client: Client,
     // Each Workspace has it own worker with Linter (and in the future the formatter).
     // We must respect each program inside with its own root folder
@@ -39,11 +54,21 @@ pub struct Backend {
     // 1. `initialize` request with workspace folders
     // 2. `workspace/didChangeWorkspaceFolders` request
     workspace_workers: Arc<RwLock<Vec<WorkspaceWorker>>>,
+    // Capabilities of the language server, set once during `initialize` request.
+    // Depending on the client capabilities, the server supports different capabilities.
     capabilities: OnceCell<Capabilities>,
+    // A simple in-memory file system to store the content of open files.
+    // The client will send the content of in-memory files on `textDocument/didOpen` and `textDocument/didChange`.
+    // This is only needed when the client supports `textDocument/formatting` request.
     file_system: Arc<RwLock<LSPFileSystem>>,
 }
 
 impl LanguageServer for Backend {
+    /// Initialize the language server with the given parameters.
+    /// This method sets up workspace workers, capabilities, and starts the
+    /// [WorkspaceWorker]s if the client sent the configuration with initialization options.
+    ///
+    /// See: <https://microsoft.github.io/language-server-protocol/specifications/specification-current/#initialize>
     #[expect(deprecated)] // `params.root_uri` is deprecated, we are only falling back to it if no workspace folder is provided
     async fn initialize(&self, params: InitializeParams) -> Result<InitializeResult> {
         let server_version = env!("CARGO_PKG_VERSION");
@@ -134,6 +159,12 @@ impl LanguageServer for Backend {
         })
     }
 
+    /// It registers dynamic capabilities like file watchers and formatting if the client supports it.
+    /// It also starts the [WorkspaceWorker]s if they did not start during initialization.
+    /// If the client supports `workspace/configuration` request, it will request the configuration for each workspace folder
+    /// and start the [WorkspaceWorker]s with the received configuration.
+    ///
+    /// See: <https://microsoft.github.io/language-server-protocol/specifications/specification-current/#initialized>
     async fn initialized(&self, _params: InitializedParams) {
         debug!("oxc initialized.");
         let Some(capabilities) = self.capabilities.get() else {
@@ -172,13 +203,7 @@ impl LanguageServer for Backend {
         // init all file watchers
         if capabilities.dynamic_watchers {
             for worker in workers {
-                registrations.push(Registration {
-                    id: format!("watcher-{}", worker.get_root_uri().as_str()),
-                    method: "workspace/didChangeWatchedFiles".to_string(),
-                    register_options: Some(json!(DidChangeWatchedFilesRegistrationOptions {
-                        watchers: worker.init_watchers().await
-                    })),
-                });
+                registrations.extend(worker.init_watchers().await);
             }
         }
 
@@ -209,6 +234,9 @@ impl LanguageServer for Backend {
         }
     }
 
+    /// This method clears all diagnostics and the in-memory file system if dynamic formatting is enabled.
+    ///
+    /// See: <https://microsoft.github.io/language-server-protocol/specifications/specification-current/#shutdown>
     async fn shutdown(&self) -> Result<()> {
         self.clear_all_diagnostics().await;
         if self.capabilities.get().is_some_and(|option| option.dynamic_formatting) {
@@ -217,10 +245,15 @@ impl LanguageServer for Backend {
         Ok(())
     }
 
+    /// This method updates the configuration of each [WorkspaceWorker] and restarts them if necessary.
+    /// It also manages dynamic registrations for file watchers and formatting based on the new configuration.
+    /// It will remove/add dynamic registrations if the client supports it.
+    /// As an example, if a workspace changes the configuration file path, the file watcher will be updated.
+    ///
+    /// See: <https://microsoft.github.io/language-server-protocol/specifications/specification-current/#workspace_didChangeConfiguration>
     async fn did_change_configuration(&self, params: DidChangeConfigurationParams) {
         let workers = self.workspace_workers.read().await;
-        let new_diagnostics: papaya::HashMap<String, Vec<Diagnostic>, FxBuildHasher> =
-            ConcurrentHashMap::default();
+        let mut new_diagnostics = Vec::new();
         let mut removing_registrations = vec![];
         let mut adding_registrations = vec![];
 
@@ -286,7 +319,7 @@ impl LanguageServer for Backend {
                 continue;
             };
 
-            let (diagnostics, watcher, formatter_activated) =
+            let (diagnostics, registrations, unregistrations, formatter_activated) =
                 worker.did_change_configuration(&option.options).await;
 
             if formatter_activated && self.capabilities.get().is_some_and(|c| c.dynamic_formatting)
@@ -295,41 +328,15 @@ impl LanguageServer for Backend {
             }
 
             if let Some(diagnostics) = diagnostics {
-                for (uri, reports) in &diagnostics.pin() {
-                    new_diagnostics.pin().insert(
-                        uri.clone(),
-                        reports.iter().map(|d| d.diagnostic.clone()).collect(),
-                    );
-                }
+                new_diagnostics.extend(diagnostics);
             }
 
-            if let Some(watcher) = watcher
-                && self.capabilities.get().is_some_and(|capabilities| capabilities.dynamic_watchers)
-            {
-                // remove the old watcher
-                removing_registrations.push(Unregistration {
-                    id: format!("watcher-{}", worker.get_root_uri().as_str()),
-                    method: "workspace/didChangeWatchedFiles".to_string(),
-                });
-                // add the new watcher
-                adding_registrations.push(Registration {
-                    id: format!("watcher-{}", worker.get_root_uri().as_str()),
-                    method: "workspace/didChangeWatchedFiles".to_string(),
-                    register_options: Some(json!(DidChangeWatchedFilesRegistrationOptions {
-                        watchers: vec![watcher]
-                    })),
-                });
-            }
+            removing_registrations.extend(unregistrations);
+            adding_registrations.extend(registrations);
         }
 
         if !new_diagnostics.is_empty() {
-            let x = &new_diagnostics
-                .pin()
-                .into_iter()
-                .map(|(key, value)| (key.clone(), value.clone()))
-                .collect::<Vec<_>>();
-
-            self.publish_all_diagnostics(x).await;
+            self.publish_all_diagnostics(&new_diagnostics).await;
         }
 
         // override the existing formatting registration
@@ -342,24 +349,29 @@ impl LanguageServer for Backend {
             });
         }
 
-        if !removing_registrations.is_empty() {
-            if let Err(err) = self.client.unregister_capability(removing_registrations).await {
-                warn!("sending unregisterCapability.didChangeWatchedFiles failed: {err}");
-            }
+        if !removing_registrations.is_empty()
+            && let Err(err) = self.client.unregister_capability(removing_registrations).await
+        {
+            warn!("sending unregisterCapability.didChangeWatchedFiles failed: {err}");
         }
-        if !adding_registrations.is_empty() {
-            if let Err(err) = self.client.register_capability(adding_registrations).await {
-                warn!("sending registerCapability.didChangeWatchedFiles failed: {err}");
-            }
+        if !adding_registrations.is_empty()
+            && let Err(err) = self.client.register_capability(adding_registrations).await
+        {
+            warn!("sending registerCapability.didChangeWatchedFiles failed: {err}");
         }
     }
 
+    /// This notification is sent when a configuration file of a tool changes (example: `.oxlintrc.json`).
+    /// The server will re-lint the affected files and send updated diagnostics.
+    ///
+    /// See: <https://microsoft.github.io/language-server-protocol/specifications/specification-current/#workspace_didChangeWatchedFiles>
     async fn did_change_watched_files(&self, params: DidChangeWatchedFilesParams) {
         let workers = self.workspace_workers.read().await;
         // ToDo: what if an empty changes flag is passed?
         debug!("watched file did change");
-        let all_diagnostics: papaya::HashMap<String, Vec<Diagnostic>, FxBuildHasher> =
-            ConcurrentHashMap::default();
+
+        let mut all_diagnostics = Vec::new();
+
         for file_event in &params.changes {
             // We do not expect multiple changes from the same workspace folder.
             // If we should consider it, we need to map the events to the workers first,
@@ -373,26 +385,20 @@ impl LanguageServer for Backend {
                 continue;
             };
 
-            for (key, value) in &diagnostics.pin() {
-                all_diagnostics
-                    .pin()
-                    .insert(key.clone(), value.iter().map(|d| d.diagnostic.clone()).collect());
-            }
+            all_diagnostics.extend(diagnostics);
         }
 
-        if all_diagnostics.is_empty() {
-            return;
+        if !all_diagnostics.is_empty() {
+            self.publish_all_diagnostics(&all_diagnostics).await;
         }
-
-        let x = &all_diagnostics
-            .pin()
-            .into_iter()
-            .map(|(key, value)| (key.clone(), value.clone()))
-            .collect::<Vec<_>>();
-
-        self.publish_all_diagnostics(x).await;
     }
 
+    /// The server will start new [WorkspaceWorker]s for added workspace folders
+    /// and stop and remove [WorkspaceWorker]s for removed workspace folders including:
+    /// - clearing diagnostics
+    /// - unregistering file watchers
+    ///
+    /// See: <https://microsoft.github.io/language-server-protocol/specifications/specification-current/#workspace_didChangeWorkspaceFolders>
     async fn did_change_workspace_folders(&self, params: DidChangeWorkspaceFoldersParams) {
         let mut workers = self.workspace_workers.write().await;
         let mut cleared_diagnostics = vec![];
@@ -436,13 +442,7 @@ impl LanguageServer for Backend {
 
                 worker.start_worker(options).await;
 
-                added_registrations.push(Registration {
-                    id: format!("watcher-{}", worker.get_root_uri().as_str()),
-                    method: "workspace/didChangeWatchedFiles".to_string(),
-                    register_options: Some(json!(DidChangeWatchedFilesRegistrationOptions {
-                        watchers: worker.init_watchers().await
-                    })),
-                });
+                added_registrations.extend(worker.init_watchers().await);
                 workers.push(worker);
             }
         // client does not support the request
@@ -457,20 +457,24 @@ impl LanguageServer for Backend {
 
         // tell client to stop / start watching for files
         if self.capabilities.get().is_some_and(|capabilities| capabilities.dynamic_watchers) {
-            if !added_registrations.is_empty() {
-                if let Err(err) = self.client.register_capability(added_registrations).await {
-                    warn!("sending registerCapability.didChangeWatchedFiles failed: {err}");
-                }
+            if !added_registrations.is_empty()
+                && let Err(err) = self.client.register_capability(added_registrations).await
+            {
+                warn!("sending registerCapability.didChangeWatchedFiles failed: {err}");
             }
 
-            if !removed_registrations.is_empty() {
-                if let Err(err) = self.client.unregister_capability(removed_registrations).await {
-                    warn!("sending unregisterCapability.didChangeWatchedFiles failed: {err}");
-                }
+            if !removed_registrations.is_empty()
+                && let Err(err) = self.client.unregister_capability(removed_registrations).await
+            {
+                warn!("sending unregisterCapability.didChangeWatchedFiles failed: {err}");
             }
         }
     }
 
+    /// It will remove the in-memory file content, because the file is saved to disk.
+    /// It will re-lint the file and send updated diagnostics, if necessary.
+    ///
+    /// See: <https://microsoft.github.io/language-server-protocol/specifications/specification-current/#textDocument_didSave>
     async fn did_save(&self, params: DidSaveTextDocumentParams) {
         debug!("oxc server did save");
         let uri = &params.text_document.uri;
@@ -494,9 +498,10 @@ impl LanguageServer for Backend {
                 .await;
         }
     }
-
-    /// When the document changed, it may not be written to disk, so we should
-    /// get the file context from the language client
+    /// It will update the in-memory file content if the client supports dynamic formatting.
+    /// It will re-lint the file and send updated diagnostics, if necessary.
+    ///
+    /// See: <https://microsoft.github.io/language-server-protocol/specifications/specification-current/#textDocument_didChange>
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
         let uri = &params.text_document.uri;
         let workers = self.workspace_workers.read().await;
@@ -522,6 +527,10 @@ impl LanguageServer for Backend {
         }
     }
 
+    /// It will add the in-memory file content if the client supports dynamic formatting.
+    /// It will lint the file and send diagnostics, if necessary.
+    ///
+    /// See: <https://microsoft.github.io/language-server-protocol/specifications/specification-current/#textDocument_didOpen>
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
         let uri = &params.text_document.uri;
         let workers = self.workspace_workers.read().await;
@@ -548,6 +557,10 @@ impl LanguageServer for Backend {
         }
     }
 
+    /// It will remove the in-memory file content if the client supports dynamic formatting.
+    /// It will clear the diagnostics (internally) for the closed file.
+    ///
+    /// See: <https://microsoft.github.io/language-server-protocol/specifications/specification-current/#textDocument_didClose>
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
         let uri = &params.text_document.uri;
         let workers = self.workspace_workers.read().await;
@@ -560,6 +573,10 @@ impl LanguageServer for Backend {
         worker.remove_diagnostics(&params.text_document.uri).await;
     }
 
+    /// It will return code actions or commands for the given range.
+    /// The client can send `context.only` to `source.fixAll.oxc` to fix all diagnostics of the file.
+    ///
+    /// See: <https://microsoft.github.io/language-server-protocol/specifications/specification-current/#textDocument_codeAction>
     async fn code_action(&self, params: CodeActionParams) -> Result<Option<CodeActionResponse>> {
         let uri = &params.text_document.uri;
         let workers = self.workspace_workers.read().await;
@@ -582,6 +599,10 @@ impl LanguageServer for Backend {
         Ok(Some(code_actions))
     }
 
+    /// It will execute the given command with the provided arguments.
+    /// Currently, only the `fixAll` command is supported.
+    ///
+    /// See: <https://microsoft.github.io/language-server-protocol/specifications/specification-current/#workspace_executeCommand>
     async fn execute_command(
         &self,
         params: ExecuteCommandParams,
@@ -618,6 +639,9 @@ impl LanguageServer for Backend {
         Err(Error::invalid_request())
     }
 
+    /// It will return text edits to format the document if formatting is enabled for the workspace.
+    ///
+    /// See: <https://microsoft.github.io/language-server-protocol/specifications/specification-current/#textDocument_formatting>
     async fn formatting(&self, params: DocumentFormattingParams) -> Result<Option<Vec<TextEdit>>> {
         let uri = &params.text_document.uri;
         let workers = self.workspace_workers.read().await;
@@ -629,6 +653,10 @@ impl LanguageServer for Backend {
 }
 
 impl Backend {
+    /// Create a new Backend with the given client.
+    /// The Backend will manage multiple [WorkspaceWorker]s and their configurations.
+    /// It also holds the capabilities of the language server and an in-memory file system.
+    /// The client is used to communicate with the LSP client.
     pub fn new(client: Client) -> Self {
         Self {
             client,
@@ -670,7 +698,7 @@ impl Backend {
         options
     }
 
-    // clears all diagnostics for workspace folders
+    /// Clears all diagnostics for workspace folders
     async fn clear_all_diagnostics(&self) {
         let mut cleared_diagnostics = vec![];
         let workers = &*self.workspace_workers.read().await;
@@ -680,6 +708,7 @@ impl Backend {
         self.publish_all_diagnostics(&cleared_diagnostics).await;
     }
 
+    /// Publish diagnostics for all files.
     async fn publish_all_diagnostics(&self, result: &[(String, Vec<Diagnostic>)]) {
         join_all(result.iter().map(|(path, diagnostics)| {
             self.client.publish_diagnostics(Uri::from_str(path).unwrap(), diagnostics.clone(), None)

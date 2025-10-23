@@ -63,6 +63,7 @@ pub struct BabelPlugins {
     // ES2019
     pub optional_catch_binding: bool,
     // ES2020
+    pub export_namespace_from: bool,
     pub optional_chaining: bool,
     pub nullish_coalescing_operator: bool,
     // ES2021
@@ -70,10 +71,10 @@ pub struct BabelPlugins {
     // ES2022
     pub class_static_block: bool,
     pub class_properties: Option<ClassPropertiesOptions>,
+    // ES2026
+    pub explicit_resource_management: bool,
     // Decorator
     pub legacy_decorator: Option<DecoratorOptions>,
-    // Proposals
-    pub explicit_resource_management: bool,
     // Built-in plugins
     pub styled_components: Option<StyledComponentsOptions>,
 }
@@ -148,6 +149,7 @@ impl TryFrom<PluginPresetEntries> for BabelPlugins {
                 }
                 "transform-async-generator-functions" => p.async_generator_functions = true,
                 "transform-optional-catch-binding" => p.optional_catch_binding = true,
+                "transform-export-namespace-from" => p.export_namespace_from = true,
                 "transform-optional-chaining" => p.optional_chaining = true,
                 "transform-nullish-coalescing-operator" => p.nullish_coalescing_operator = true,
                 "transform-logical-assignment-operators" => p.logical_assignment_operators = true,

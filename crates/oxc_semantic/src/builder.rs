@@ -24,13 +24,14 @@ use oxc_syntax::{
     symbol::{SymbolFlags, SymbolId},
 };
 
+#[cfg(feature = "linter")]
+use crate::jsdoc::JSDocBuilder;
 use crate::{
-    JSDocFinder, Semantic,
+    Semantic,
     binder::{Binder, ModuleInstanceState},
     checker,
     class::ClassTableBuilder,
     diagnostics::redeclaration,
-    jsdoc::JSDocBuilder,
     label::UnusedLabels,
     node::AstNodes,
     scoping::{Bindings, Scoping},
@@ -89,7 +90,7 @@ pub struct SemanticBuilder<'a> {
     pub(crate) unresolved_references: UnresolvedReferencesStack<'a>,
 
     unused_labels: UnusedLabels<'a>,
-    build_jsdoc: bool,
+    #[cfg(feature = "linter")]
     jsdoc: JSDocBuilder<'a>,
     stats: Option<Stats>,
     excess_capacity: f64,
@@ -143,7 +144,7 @@ impl<'a> SemanticBuilder<'a> {
             scoping,
             unresolved_references: UnresolvedReferencesStack::new(),
             unused_labels: UnusedLabels::default(),
-            build_jsdoc: false,
+            #[cfg(feature = "linter")]
             jsdoc: JSDocBuilder::default(),
             stats: None,
             excess_capacity: 0.0,
@@ -168,13 +169,6 @@ impl<'a> SemanticBuilder<'a> {
     #[must_use]
     pub fn with_check_syntax_error(mut self, yes: bool) -> Self {
         self.check_syntax_error = yes;
-        self
-    }
-
-    /// Enable/disable JSDoc parsing.
-    #[must_use]
-    pub fn with_build_jsdoc(mut self, yes: bool) -> Self {
-        self.build_jsdoc = yes;
         self
     }
 
@@ -236,7 +230,8 @@ impl<'a> SemanticBuilder<'a> {
     pub fn build(mut self, program: &'a Program<'a>) -> SemanticBuilderReturn<'a> {
         self.source_text = program.source_text;
         self.source_type = program.source_type;
-        if self.build_jsdoc {
+        #[cfg(feature = "linter")]
+        {
             self.jsdoc = JSDocBuilder::new(self.source_text, &program.comments);
         }
 
@@ -283,14 +278,12 @@ impl<'a> SemanticBuilder<'a> {
         }
 
         debug_assert_eq!(self.unresolved_references.scope_depth(), 1);
-        if self.check_syntax_error && !self.source_type.is_typescript() {
-            checker::check_unresolved_exports(&self);
-        }
         self.scoping.set_root_unresolved_references(
             self.unresolved_references.into_root().into_iter().map(|(k, v)| (k.as_str(), v)),
         );
 
-        let jsdoc = if self.build_jsdoc { self.jsdoc.build() } else { JSDocFinder::default() };
+        #[cfg(feature = "linter")]
+        let jsdoc = self.jsdoc.build();
 
         #[cfg(debug_assertions)]
         self.unused_labels.assert_empty();
@@ -303,6 +296,7 @@ impl<'a> SemanticBuilder<'a> {
             nodes: self.nodes,
             scoping: self.scoping,
             classes: self.class_table_builder.build(),
+            #[cfg(feature = "linter")]
             jsdoc,
             unused_labels: self.unused_labels.labels,
             #[cfg(feature = "cfg")]
@@ -327,8 +321,12 @@ impl<'a> SemanticBuilder<'a> {
     }
 
     fn create_ast_node(&mut self, kind: AstKind<'a>) {
+        #[cfg(not(feature = "linter"))]
+        let flags = self.current_node_flags;
+        #[cfg(feature = "linter")]
         let mut flags = self.current_node_flags;
-        if self.build_jsdoc && self.jsdoc.retrieve_attached_jsdoc(&kind) {
+        #[cfg(feature = "linter")]
+        if self.jsdoc.retrieve_attached_jsdoc(&kind) {
             flags |= NodeFlags::JSDoc;
         }
 
@@ -336,6 +334,7 @@ impl<'a> SemanticBuilder<'a> {
             kind,
             self.current_scope_id,
             self.current_node_id,
+            #[cfg(feature = "cfg")]
             control_flow!(self, |cfg| cfg.current_node_ix),
             flags,
         );
@@ -371,12 +370,11 @@ impl<'a> SemanticBuilder<'a> {
         // The `self.cfg.is_some()` check here could be removed, since `ast_node_records` is empty
         // if CFG is disabled. But benchmarks showed removing the extra check is a perf regression.
         // <https://github.com/oxc-project/oxc/pull/4273>
-        if self.cfg.is_some() {
-            if let Some(record) = self.ast_node_records.last_mut() {
-                if *record == NodeId::DUMMY {
-                    *record = self.current_node_id;
-                }
-            }
+        if self.cfg.is_some()
+            && let Some(record) = self.ast_node_records.last_mut()
+            && *record == NodeId::DUMMY
+        {
+            *record = self.current_node_id;
         }
     }
 
@@ -650,6 +648,7 @@ impl<'a> Visit<'a> for SemanticBuilder<'a> {
         self.current_node_id = self.nodes.add_program_node(
             kind,
             self.current_scope_id,
+            #[cfg(feature = "cfg")]
             control_flow!(self, |cfg| cfg.current_node_ix),
             self.current_node_flags,
         );
@@ -871,11 +870,25 @@ impl<'a> Visit<'a> for SemanticBuilder<'a> {
         let kind = AstKind::LogicalExpression(self.alloc(expr));
         self.enter_node(kind);
 
+        /* cfg - condition basic block */
+        #[cfg(feature = "cfg")]
+        let (before_logical_graph_ix, start_of_condition_graph_ix) = control_flow!(self, |cfg| {
+            let before_logical_graph_ix = cfg.current_node_ix;
+            let start_of_condition_graph_ix = cfg.new_basic_block_normal();
+            (before_logical_graph_ix, start_of_condition_graph_ix)
+        });
+        /* cfg */
+
+        #[cfg(feature = "cfg")]
+        self.record_ast_nodes();
         self.visit_expression(&expr.left);
+        #[cfg(feature = "cfg")]
+        let left_node_id = self.retrieve_recorded_ast_node();
 
         /* cfg  */
         #[cfg(feature = "cfg")]
         let (left_expr_end_ix, right_expr_start_ix) = control_flow!(self, |cfg| {
+            cfg.append_condition_to(start_of_condition_graph_ix, left_node_id);
             let left_expr_end_ix = cfg.current_node_ix;
             let right_expr_start_ix = cfg.new_basic_block_normal();
             (left_expr_end_ix, right_expr_start_ix)
@@ -889,6 +902,7 @@ impl<'a> Visit<'a> for SemanticBuilder<'a> {
             let right_expr_end_ix = cfg.current_node_ix;
             let after_logical_expr_ix = cfg.new_basic_block_normal();
 
+            cfg.add_edge(before_logical_graph_ix, start_of_condition_graph_ix, EdgeType::Normal);
             cfg.add_edge(left_expr_end_ix, right_expr_start_ix, EdgeType::Normal);
             cfg.add_edge(left_expr_end_ix, after_logical_expr_ix, EdgeType::Normal);
             cfg.add_edge(right_expr_end_ix, after_logical_expr_ix, EdgeType::Normal);
@@ -914,12 +928,36 @@ impl<'a> Visit<'a> for SemanticBuilder<'a> {
             self.current_reference_flags = ReferenceFlags::read_write();
         }
 
+        /* cfg - condition basic block */
+        #[cfg(feature = "cfg")]
+        let (before_assignment_graph_ix, start_of_condition_graph_ix) =
+            control_flow!(self, |cfg| {
+                if expr.operator.is_logical() {
+                    let before_assignment_graph_ix = cfg.current_node_ix;
+                    let start_of_condition_graph_ix = cfg.new_basic_block_normal();
+                    (Some(before_assignment_graph_ix), Some(start_of_condition_graph_ix))
+                } else {
+                    (None, None)
+                }
+            });
+        /* cfg */
+
+        #[cfg(feature = "cfg")]
+        if expr.operator.is_logical() {
+            self.record_ast_nodes();
+        }
         self.visit_assignment_target(&expr.left);
+        #[cfg(feature = "cfg")]
+        let target_node_id =
+            if expr.operator.is_logical() { self.retrieve_recorded_ast_node() } else { None };
 
         /* cfg  */
         #[cfg(feature = "cfg")]
         let cfg_ixs = control_flow!(self, |cfg| {
             if expr.operator.is_logical() {
+                if let Some(condition_ix) = start_of_condition_graph_ix {
+                    cfg.append_condition_to(condition_ix, target_node_id);
+                }
                 let target_end_ix = cfg.current_node_ix;
                 let expr_start_ix = cfg.new_basic_block_normal();
                 Some((target_end_ix, expr_start_ix))
@@ -937,6 +975,11 @@ impl<'a> Visit<'a> for SemanticBuilder<'a> {
                 let expr_end_ix = cfg.current_node_ix;
                 let after_assignment_ix = cfg.new_basic_block_normal();
 
+                if let Some((before_ix, condition_ix)) =
+                    before_assignment_graph_ix.zip(start_of_condition_graph_ix)
+                {
+                    cfg.add_edge(before_ix, condition_ix, EdgeType::Normal);
+                }
                 cfg.add_edge(target_end_ix, expr_start_ix, EdgeType::Normal);
                 cfg.add_edge(target_end_ix, after_assignment_ix, EdgeType::Normal);
                 cfg.add_edge(expr_end_ix, after_assignment_ix, EdgeType::Normal);
@@ -1439,11 +1482,13 @@ impl<'a> Visit<'a> for SemanticBuilder<'a> {
 
         if let Some(expr) = &case.test {
             #[cfg(feature = "cfg")]
+            let condition_block_ix = control_flow!(self, |cfg| cfg.current_node_ix);
+            #[cfg(feature = "cfg")]
             self.record_ast_nodes();
             self.visit_expression(expr);
             #[cfg(feature = "cfg")]
             let test_node_id = self.retrieve_recorded_ast_node();
-            control_flow!(self, |cfg| cfg.append_condition_to(cfg.current_node_ix, test_node_id));
+            control_flow!(self, |cfg| cfg.append_condition_to(condition_block_ix, test_node_id));
         }
 
         /* cfg */
@@ -1528,12 +1573,7 @@ impl<'a> Visit<'a> for SemanticBuilder<'a> {
             self.visit_catch_clause(handler);
 
             /* cfg */
-            control_flow!(self, |cfg| {
-                let catch_block_end_ix = cfg.current_node_ix;
-                // TODO: we shouldn't directly change the current node index.
-                cfg.current_node_ix = after_try_block_graph_ix;
-                Some(catch_block_end_ix)
-            })
+            control_flow!(self, |cfg| Some(cfg.current_node_ix))
             /* cfg */
         } else {
             None
@@ -1560,12 +1600,7 @@ impl<'a> Visit<'a> for SemanticBuilder<'a> {
             self.visit_block_statement(finalizer);
 
             /* cfg */
-            control_flow!(self, |cfg| {
-                let finally_block_end_ix = cfg.current_node_ix;
-                // TODO: we shouldn't directly change the current node index.
-                cfg.current_node_ix = after_try_block_graph_ix;
-                Some(finally_block_end_ix)
-            })
+            control_flow!(self, |cfg| Some(cfg.current_node_ix))
             /* cfg */
         } else {
             None
@@ -1578,28 +1613,25 @@ impl<'a> Visit<'a> for SemanticBuilder<'a> {
 
         /* cfg */
         control_flow!(self, |cfg| {
-            let after_try_statement_block_ix = cfg.new_basic_block_normal();
             cfg.add_edge(
                 before_try_statement_graph_ix,
                 before_try_block_graph_ix,
                 EdgeType::Normal,
             );
-            if let Some(catch_block_end_ix) = catch_block_end_ix {
-                if finally_block_end_ix.is_none() {
-                    cfg.add_edge(
-                        after_try_block_graph_ix,
-                        after_try_statement_block_ix,
-                        EdgeType::Normal,
-                    );
+            if let Some(catch_block_end_ix) = catch_block_end_ix
+                && finally_block_end_ix.is_none()
+            {
+                let after_try_statement_block_ix = cfg.new_basic_block_normal();
+                cfg.add_edge(
+                    after_try_block_graph_ix,
+                    after_try_statement_block_ix,
+                    EdgeType::Normal,
+                );
 
-                    cfg.add_edge(
-                        catch_block_end_ix,
-                        after_try_statement_block_ix,
-                        EdgeType::Normal,
-                    );
-                }
+                cfg.add_edge(catch_block_end_ix, after_try_statement_block_ix, EdgeType::Normal);
             }
             if let Some(finally_block_end_ix) = finally_block_end_ix {
+                let after_try_statement_block_ix = cfg.new_basic_block_normal();
                 if catch_block_end_ix.is_some() {
                     cfg.add_edge(
                         finally_block_end_ix,
@@ -1683,6 +1715,7 @@ impl<'a> Visit<'a> for SemanticBuilder<'a> {
         /* cfg */
 
         self.visit_expression(&stmt.object);
+        self.enter_scope(ScopeFlags::empty(), &stmt.scope_id);
 
         /* cfg - body basic block */
         #[cfg(feature = "cfg")]
@@ -1702,6 +1735,7 @@ impl<'a> Visit<'a> for SemanticBuilder<'a> {
         });
         /* cfg */
 
+        self.leave_scope();
         self.leave_node(kind);
     }
 
@@ -2155,8 +2189,7 @@ impl<'a> SemanticBuilder<'a> {
             AstKind::YieldExpression(_) => {
                 // If not in a function, `current_function_node_id` is `NodeId` of `Program`.
                 // But it shouldn't be possible for `yield` to be at top level - that's a parse error.
-                *self.nodes.get_node_mut(self.current_function_node_id).flags_mut() |=
-                    NodeFlags::HasYield;
+                *self.nodes.flags_mut(self.current_function_node_id) |= NodeFlags::HasYield;
             }
             AstKind::CallExpression(call_expr) => {
                 if !call_expr.optional && call_expr.callee.is_specific_id("eval") {

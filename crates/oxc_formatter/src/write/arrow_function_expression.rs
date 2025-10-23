@@ -4,6 +4,7 @@ use oxc_ast::ast::*;
 use oxc_span::GetSpan;
 
 use crate::{
+    ast_nodes::{AstNode, AstNodes},
     format_args,
     formatter::{
         Buffer, Comments, Format, FormatError, FormatResult, Formatter, SourceText,
@@ -11,12 +12,13 @@ use crate::{
         prelude::*,
         trivia::{FormatLeadingComments, format_trailing_comments},
     },
-    generated::ast_nodes::{AstNode, AstNodes},
     options::FormatTrailingCommas,
-    utils::assignment_like::AssignmentLikeLayout,
+    utils::{assignment_like::AssignmentLikeLayout, expression::ExpressionLeftSide},
     write,
-    write::parameter_list::has_only_simple_parameters,
+    write::function::FormatContentWithCacheMode,
 };
+
+use super::parameters::has_only_simple_parameters;
 
 #[derive(Clone, Copy)]
 pub struct FormatJsArrowFunctionExpression<'a, 'b> {
@@ -29,7 +31,7 @@ pub struct FormatJsArrowFunctionExpressionOptions {
     pub assignment_layout: Option<AssignmentLikeLayout>,
     pub call_arg_layout: Option<GroupedCallArgumentLayout>,
     // Determine whether the signature and body should be cached.
-    pub cache_mode: FunctionBodyCacheMode,
+    pub cache_mode: FunctionCacheMode,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -52,7 +54,7 @@ impl GroupedCallArgumentLayout {
 }
 
 #[derive(Default, Debug, Clone, Copy)]
-pub enum FunctionBodyCacheMode {
+pub enum FunctionCacheMode {
     /// Format the body without caching it or retrieving it from the cache.
     #[default]
     NoCache,
@@ -157,37 +159,19 @@ impl<'a> Format<'a> for FormatJsArrowFunctionExpression<'a, '_> {
                     };
                 }
 
-                #[expect(clippy::match_same_arms)]
-                let body_has_soft_line_break = arrow_expression.is_none_or(|expression| {
-                    match expression {
+                let body_has_soft_line_break =
+                    arrow_expression.is_none_or(|expression| match expression {
                         Expression::ArrowFunctionExpression(_)
                         | Expression::ArrayExpression(_)
                         | Expression::ObjectExpression(_) => {
-                            // TODO: It seems no difference whether check there is a leading comment or not.
-                            // !f.comments().has_leading_own_line_comment(body.span().start)
-                            true
+                            !f.comments().has_leading_own_line_comment(body.span().start)
                         }
                         Expression::JSXElement(_) | Expression::JSXFragment(_) => true,
-                        Expression::TemplateLiteral(template) => {
-                            is_multiline_template_starting_on_same_line(
-                                template.span.start,
-                                template,
-                                f.source_text(),
-                            )
+                        _ => {
+                            is_multiline_template_starting_on_same_line(expression, f.source_text())
                         }
-                        Expression::TaggedTemplateExpression(template) => {
-                            is_multiline_template_starting_on_same_line(
-                                template.span.start,
-                                &template.quasi,
-                                f.source_text(),
-                            )
-                        }
-                        _ => false,
-                    }
-                });
+                    });
 
-                let body_is_condition_type =
-                    matches!(arrow_expression, Some(Expression::ConditionalExpression(_)));
                 if body_has_soft_line_break {
                     write!(f, [formatted_signature, space(), format_body])
                 } else {
@@ -198,11 +182,13 @@ impl<'a> Format<'a> for FormatJsArrowFunctionExpression<'a, '_> {
                         Some(GroupedCallArgumentLayout::GroupedLastArgument)
                     );
 
-                    let should_add_soft_line = (is_last_call_arg
+                    let should_add_soft_line = is_last_call_arg
                         // if it's inside a JSXExpression (e.g. an attribute) we should align the expression's closing } with the line with the opening {.
-                        || matches!(self.arrow.parent, AstNodes::JSXExpressionContainer(_)));
-                    // TODO: it seems no difference whether check there is a comment or not.
-                    //&& !f.context().comments().has_comments(node.syntax());
+                        || (matches!(self.arrow.parent, AstNodes::JSXExpressionContainer(container)
+                            if !f.context().comments().has_comment_in_range(arrow.span.end, container.span.end)));
+
+                    let body_is_condition_type =
+                        matches!(arrow_expression, Some(Expression::ConditionalExpression(_)));
 
                     if body_is_condition_type {
                         write!(
@@ -297,32 +283,28 @@ impl<'a, 'b> ArrowFunctionLayout<'a, 'b> {
         let mut should_break = false;
 
         loop {
-            if current.expression() {
-                if let Some(AstNodes::ExpressionStatement(expr_stmt)) =
+            if current.expression()
+                && let Some(AstNodes::ExpressionStatement(expr_stmt)) =
                     current.body().statements().first().map(AstNode::<Statement>::as_ast_nodes)
-                {
-                    if let AstNodes::ArrowFunctionExpression(next) =
-                        &expr_stmt.expression().as_ast_nodes()
-                    {
-                        if matches!(
-                            options.call_arg_layout,
-                            None | Some(GroupedCallArgumentLayout::GroupedLastArgument)
-                        ) {
-                            should_break = should_break || Self::should_break_chain(current);
+                && let AstNodes::ArrowFunctionExpression(next) =
+                    &expr_stmt.expression().as_ast_nodes()
+                && matches!(
+                    options.call_arg_layout,
+                    None | Some(GroupedCallArgumentLayout::GroupedLastArgument)
+                )
+            {
+                should_break = should_break || Self::should_break_chain(current);
 
-                            should_break = should_break || Self::should_break_chain(next);
+                should_break = should_break || Self::should_break_chain(next);
 
-                            if head.is_none() {
-                                head = Some(current);
-                            } else {
-                                middle.push(current);
-                            }
-
-                            current = next;
-                            continue;
-                        }
-                    }
+                if head.is_none() {
+                    head = Some(current);
+                } else {
+                    middle.push(current);
                 }
+
+                current = next;
+                continue;
             }
             break match head {
                 None => ArrowFunctionLayout::Single(current),
@@ -361,7 +343,7 @@ impl<'a, 'b> ArrowFunctionLayout<'a, 'b> {
             return true;
         }
 
-        let has_parameters = parameters.items.is_empty();
+        let has_parameters = !parameters.items.is_empty();
         let has_type_and_parameters = arrow.return_type.is_some() && has_parameters;
         has_type_and_parameters || has_rest_object_or_array_parameter(parameters)
     }
@@ -394,10 +376,15 @@ impl<'a, 'b> ArrowFunctionLayout<'a, 'b> {
 ///
 /// Returns `false` because the template isn't on the same line as the '+' token.
 pub fn is_multiline_template_starting_on_same_line(
-    start: u32,
-    template: &TemplateLiteral,
+    expression: &Expression,
     source_text: SourceText,
 ) -> bool {
+    let (start, template) = match expression {
+        Expression::TemplateLiteral(template) => (template.span.start, template.as_ref()),
+        Expression::TaggedTemplateExpression(tagged) => (tagged.span.start, &tagged.quasi),
+        _ => return false,
+    };
+
     template.quasis.iter().any(|quasi| source_text.contains_newline(quasi.span))
         && !source_text.has_newline_before(start)
 }
@@ -495,7 +482,11 @@ impl<'a> Format<'a> for ArrowChain<'a, '_> {
         // This tracks that state and is used to prevent the insertion of
         // additional indents under `format_arrow_signatures`, then also to
         // add the outer indent under `format_inner`.
-        let has_initial_indent = is_callee || is_assignment_rhs;
+        let has_initial_indent = is_callee
+            || self
+                .options
+                .assignment_layout
+                .is_some_and(|layout| layout != AssignmentLikeLayout::BreakAfterOperator);
 
         let format_arrow_signatures = format_with(|f| {
             let join_signatures = format_with(|f| {
@@ -682,131 +673,6 @@ impl<'a> Format<'a> for ArrowChain<'a, '_> {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-pub enum ExpressionLeftSide<'a, 'b> {
-    Expression(&'b AstNode<'a, Expression<'a>>),
-    AssignmentTarget(&'b AstNode<'a, AssignmentTarget<'a>>),
-    SimpleAssignmentTarget(&'b AstNode<'a, SimpleAssignmentTarget<'a>>),
-}
-
-impl<'a, 'b> From<&'b AstNode<'a, Expression<'a>>> for ExpressionLeftSide<'a, 'b> {
-    fn from(value: &'b AstNode<'a, Expression<'a>>) -> Self {
-        Self::Expression(value)
-    }
-}
-
-impl<'a, 'b> From<&'b AstNode<'a, AssignmentTarget<'a>>> for ExpressionLeftSide<'a, 'b> {
-    fn from(value: &'b AstNode<'a, AssignmentTarget<'a>>) -> Self {
-        Self::AssignmentTarget(value)
-    }
-}
-
-impl<'a, 'b> From<&'b AstNode<'a, SimpleAssignmentTarget<'a>>> for ExpressionLeftSide<'a, 'b> {
-    fn from(value: &'b AstNode<'a, SimpleAssignmentTarget<'a>>) -> Self {
-        Self::SimpleAssignmentTarget(value)
-    }
-}
-
-impl<'a, 'b> ExpressionLeftSide<'a, 'b> {
-    pub fn leftmost(expression: &'b AstNode<'a, Expression<'a>>) -> Self {
-        let mut current: Self = expression.into();
-        loop {
-            match current.left_expression() {
-                None => {
-                    break current;
-                }
-                Some(left) => {
-                    current = left;
-                }
-            }
-        }
-    }
-
-    /// Returns the left side of an expression (an expression where the first child is a `Node` or [None]
-    /// if the expression has no left side.
-    pub fn left_expression(&self) -> Option<Self> {
-        match self {
-            Self::Expression(expression) => match expression.as_ast_nodes() {
-                AstNodes::SequenceExpression(expr) => expr.expressions().first().map(Into::into),
-                AstNodes::StaticMemberExpression(expr) => Some(expr.object().into()),
-                AstNodes::ComputedMemberExpression(expr) => Some(expr.object().into()),
-                AstNodes::PrivateFieldExpression(expr) => Some(expr.object().into()),
-                AstNodes::TaggedTemplateExpression(expr) => Some(expr.tag().into()),
-                AstNodes::NewExpression(expr) => Some(expr.callee().into()),
-                AstNodes::CallExpression(expr) => Some(expr.callee().into()),
-                AstNodes::ConditionalExpression(expr) => Some(expr.test().into()),
-                AstNodes::TSAsExpression(expr) => Some(expr.expression().into()),
-                AstNodes::TSSatisfiesExpression(expr) => Some(expr.expression().into()),
-                AstNodes::TSNonNullExpression(expr) => Some(expr.expression().into()),
-                AstNodes::AssignmentExpression(expr) => Some(Self::AssignmentTarget(expr.left())),
-                AstNodes::UpdateExpression(expr) => {
-                    if expr.prefix {
-                        None
-                    } else {
-                        Some(Self::SimpleAssignmentTarget(expr.argument()))
-                    }
-                }
-                AstNodes::BinaryExpression(binary) => Some(binary.left().into()),
-                AstNodes::LogicalExpression(logical) => Some(logical.left().into()),
-                AstNodes::ChainExpression(chain) => match &chain.expression().as_ast_nodes() {
-                    AstNodes::CallExpression(expr) => Some(expr.callee().into()),
-                    AstNodes::TSNonNullExpression(expr) => Some(expr.expression().into()),
-                    AstNodes::ComputedMemberExpression(expr) => Some(expr.object().into()),
-                    AstNodes::StaticMemberExpression(expr) => Some(expr.object().into()),
-                    AstNodes::PrivateFieldExpression(expr) => Some(expr.object().into()),
-                    _ => {
-                        unreachable!()
-                    }
-                },
-                _ => None,
-            },
-            Self::AssignmentTarget(target) => {
-                Self::get_left_side_of_assignment(target.as_ast_nodes())
-            }
-            Self::SimpleAssignmentTarget(target) => {
-                Self::get_left_side_of_assignment(target.as_ast_nodes())
-            }
-        }
-    }
-
-    pub fn iter(&self) -> impl Iterator<Item = ExpressionLeftSide<'a, 'b>> {
-        iter::successors(Some(*self), |f| match f {
-            ExpressionLeftSide::Expression(expression) => {
-                Self::Expression(expression).left_expression()
-            }
-            _ => None,
-        })
-    }
-
-    pub fn iter_expression(&self) -> impl Iterator<Item = &AstNode<'_, Expression<'_>>> {
-        self.iter().filter_map(|left| match left {
-            ExpressionLeftSide::Expression(expression) => Some(expression),
-            _ => None,
-        })
-    }
-
-    pub fn span(&self) -> Span {
-        match self {
-            ExpressionLeftSide::Expression(expression) => expression.span(),
-            ExpressionLeftSide::AssignmentTarget(target) => target.span(),
-            ExpressionLeftSide::SimpleAssignmentTarget(target) => target.span(),
-        }
-    }
-
-    fn get_left_side_of_assignment(node: &'b AstNodes<'a>) -> Option<ExpressionLeftSide<'a, 'b>> {
-        match node {
-            AstNodes::TSAsExpression(expr) => Some(expr.expression().into()),
-            AstNodes::TSSatisfiesExpression(expr) => Some(expr.expression().into()),
-            AstNodes::TSNonNullExpression(expr) => Some(expr.expression().into()),
-            AstNodes::TSTypeAssertion(expr) => Some(expr.expression().into()),
-            AstNodes::ComputedMemberExpression(expr) => Some(expr.object().into()),
-            AstNodes::StaticMemberExpression(expr) => Some(expr.object().into()),
-            AstNodes::PrivateFieldExpression(expr) => Some(expr.object().into()),
-            _ => None,
-        }
-    }
-}
-
 fn should_add_parens(body: &AstNode<'_, FunctionBody<'_>>) -> bool {
     let AstNodes::ExpressionStatement(stmt) = body.statements().first().unwrap().as_ast_nodes()
     else {
@@ -818,14 +684,10 @@ fn should_add_parens(body: &AstNode<'_, FunctionBody<'_>>) -> bool {
     // case and added by the object expression itself
     if matches!(&stmt.expression, Expression::ConditionalExpression(_)) {
         !matches!(
-            ExpressionLeftSide::leftmost(stmt.expression()),
-            ExpressionLeftSide::Expression(
-                e
-            ) if matches!(e.as_ref(),
-                Expression::ObjectExpression(_)
+            ExpressionLeftSide::leftmost(stmt.expression()).as_ref(),
+            Expression::ObjectExpression(_)
                 | Expression::FunctionExpression(_)
                 | Expression::ClassExpression(_)
-            )
         )
     } else {
         false
@@ -852,50 +714,32 @@ fn format_signature<'a, 'b>(
     arrow: &'b AstNode<'a, ArrowFunctionExpression<'a>>,
     is_first_or_last_call_argument: bool,
     is_first_in_chain: bool,
-    cache_mode: FunctionBodyCacheMode,
+    cache_mode: FunctionCacheMode,
 ) -> impl Format<'a> + 'b {
     format_with(move |f| {
-        let formatted_async_token =
-            format_with(|f| if arrow.r#async() { write!(f, ["async", space()]) } else { Ok(()) });
-
-        let formatted_parameters =
-            format_with(|f| write!(f, [arrow.type_parameters(), arrow.params()]));
-
-        let format_return_type = format_with(|f| write!(f, arrow.return_type()));
-
-        let signatures = format_once(|f| {
-            write!(
-                f,
-                [group(&format_args!(
-                    maybe_space(!is_first_in_chain),
-                    formatted_async_token,
-                    group(&formatted_parameters),
-                    group(&format_return_type)
-                ))]
-            )
+        let content = format_once(|f| {
+            group(&format_args!(
+                maybe_space(!is_first_in_chain),
+                arrow.r#async().then_some("async "),
+                arrow.type_parameters(),
+                arrow.params(),
+                format_once(|f| {
+                    let needs_space = arrow.return_type.as_ref().is_some_and(|return_type| {
+                        f.context().comments().has_comment_before(return_type.span.start)
+                    });
+                    maybe_space(needs_space).fmt(f)
+                }),
+                group(&arrow.return_type())
+            ))
+            .fmt(f)
         });
-
-        // The [`call_arguments`] will format the argument that can be grouped in different ways until
-        // find the best layout. So we have to cache the parameters because it never be broken.
-        let cached_signature = format_once(|f| {
-            if matches!(cache_mode, FunctionBodyCacheMode::NoCache) {
-                signatures.fmt(f)
-            } else if let Some(grouped) = f.context().get_cached_element(&arrow.params.span) {
-                f.write_element(grouped)
-            } else {
-                if let Ok(Some(grouped)) = f.intern(&signatures) {
-                    f.context_mut().cache_element(&arrow.params.span, grouped.clone());
-                    f.write_element(grouped.clone());
-                }
-                Ok(())
-            }
-        });
+        let format_head = FormatContentWithCacheMode::new(arrow.params.span, content, cache_mode);
 
         if is_first_or_last_call_argument {
             let mut buffer = RemoveSoftLinesBuffer::new(f);
             let mut recording = buffer.start_recording();
 
-            write!(recording, cached_signature)?;
+            write!(recording, format_head)?;
 
             if recording.stop().will_break() {
                 return Err(FormatError::PoorLayout);
@@ -909,7 +753,7 @@ fn format_signature<'a, 'b>(
                     // line and can't break pre-emptively without also causing
                     // the parent (i.e., this ArrowChain) to break first.
                     (!is_first_in_chain).then_some(soft_line_break_or_space()),
-                    cached_signature
+                    format_head
                 ]
             )?;
         }
@@ -932,39 +776,20 @@ pub struct FormatMaybeCachedFunctionBody<'a, 'b> {
     pub expression: bool,
 
     /// If the body should be cached or if the formatter should try to retrieve it from the cache.
-    pub mode: FunctionBodyCacheMode,
-}
-
-impl<'a> FormatMaybeCachedFunctionBody<'a, '_> {
-    fn format(&self, f: &mut Formatter<'_, 'a>) -> FormatResult<()> {
-        if self.expression {
-            if let AstNodes::ExpressionStatement(s) =
-                &self.body.statements().first().unwrap().as_ast_nodes()
-            {
-                return s.expression().fmt(f);
-            }
-        }
-        self.body.fmt(f)
-    }
+    pub mode: FunctionCacheMode,
 }
 
 impl<'a> Format<'a> for FormatMaybeCachedFunctionBody<'a, '_> {
     fn fmt(&self, f: &mut Formatter<'_, 'a>) -> FormatResult<()> {
-        match self.mode {
-            FunctionBodyCacheMode::NoCache => self.format(f),
-            FunctionBodyCacheMode::Cache => {
-                if let Some(cached) = f.context().get_cached_element(&self.body.span) {
-                    f.write_element(cached)
-                } else {
-                    match f.intern(&format_once(|f| self.format(f)))? {
-                        Some(interned) => {
-                            f.context_mut().cache_element(&self.body.span, interned.clone());
-                            f.write_element(interned)
-                        }
-                        None => Ok(()),
-                    }
-                }
+        let content = format_once(|f| {
+            if self.expression
+                && let AstNodes::ExpressionStatement(s) =
+                    &self.body.statements().first().unwrap().as_ast_nodes()
+            {
+                return s.expression().fmt(f);
             }
-        }
+            self.body.fmt(f)
+        });
+        FormatContentWithCacheMode::new(self.body.span, content, self.mode).fmt(f)
     }
 }

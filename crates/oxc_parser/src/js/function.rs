@@ -32,7 +32,7 @@ impl<'a> ParserImpl<'a> {
         let span = self.start_span();
         self.expect(Kind::LCurly);
 
-        let (directives, statements) = self.context(Context::Return, Context::empty(), |p| {
+        let (directives, statements) = self.context_add(Context::Return, |p| {
             p.parse_directives_and_statements(/* is_top_level */ false)
         });
 
@@ -154,10 +154,11 @@ impl<'a> ParserImpl<'a> {
             self.asi();
         }
 
-        if ctx.has_ambient() && modifiers.contains_declare() {
-            if let Some(body) = &body {
-                self.error(diagnostics::implementation_in_ambient(Span::empty(body.span.start)));
-            }
+        if ctx.has_ambient()
+            && modifiers.contains_declare()
+            && let Some(body) = &body
+        {
+            self.error(diagnostics::implementation_in_ambient(Span::empty(body.span.start)));
         }
         self.verify_modifiers(
             modifiers,

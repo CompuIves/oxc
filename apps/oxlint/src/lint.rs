@@ -16,8 +16,7 @@ use serde_json::Value;
 use oxc_diagnostics::{DiagnosticSender, DiagnosticService, GraphicalReportHandler, OxcDiagnostic};
 use oxc_linter::{
     AllowWarnDeny, Config, ConfigStore, ConfigStoreBuilder, ExternalLinter, ExternalPluginStore,
-    InvalidFilterKind, LintFilter, LintOptions, LintService, LintServiceOptions, Linter, Oxlintrc,
-    TsGoLintState,
+    InvalidFilterKind, LintFilter, LintOptions, LintRunner, LintServiceOptions, Linter, Oxlintrc,
 };
 
 use crate::{
@@ -28,13 +27,13 @@ use crate::{
 use oxc_linter::LintIgnoreMatcher;
 
 #[derive(Debug)]
-pub struct LintRunner {
+pub struct CliRunner {
     options: LintCommand,
     cwd: PathBuf,
     external_linter: Option<ExternalLinter>,
 }
 
-impl LintRunner {
+impl CliRunner {
     pub(crate) fn new(options: LintCommand, external_linter: Option<ExternalLinter>) -> Self {
         Self {
             options,
@@ -311,25 +310,7 @@ impl LintRunner {
             .filter(|path| !ignore_matcher.should_ignore(Path::new(path)))
             .collect::<Vec<Arc<OsStr>>>();
 
-        // Run type-aware linting through tsgolint
-        // TODO: Add a warning message if `tsgolint` cannot be found, but type-aware rules are enabled
-        if self.options.type_aware {
-            let state = match TsGoLintState::try_new(options.cwd(), config_store.clone()) {
-                Ok(state) => state,
-                Err(err) => {
-                    print_and_flush_stdout(stdout, &err);
-                    return CliRunResult::TsGoLintError;
-                }
-            };
-
-            if let Err(err) =
-                state.with_silent(misc_options.silent).lint(&files_to_lint, tx_error.clone())
-            {
-                print_and_flush_stdout(stdout, &err);
-                return CliRunResult::TsGoLintError;
-            }
-        }
-
+        let has_external_linter = external_linter.is_some();
         let linter = Linter::new(LintOptions::default(), config_store, external_linter)
             .with_fix(fix_options.fix_kind())
             .with_report_unused_directives(report_unused_directives);
@@ -357,35 +338,51 @@ impl LintRunner {
 
         let number_of_rules = linter.number_of_rules(self.options.type_aware);
 
-        // Spawn linting in another thread so diagnostics can be printed immediately from diagnostic_service.run.
-        rayon::spawn(move || {
-            let has_external_linter = linter.has_external_linter();
+        // Create the LintRunner
+        // TODO: Add a warning message if `tsgolint` cannot be found, but type-aware rules are enabled
+        let lint_runner = match LintRunner::builder(options, linter)
+            .with_type_aware(self.options.type_aware)
+            .with_silent(misc_options.silent)
+            .build()
+        {
+            Ok(runner) => runner,
+            Err(err) => {
+                print_and_flush_stdout(stdout, &err);
+                return CliRunResult::TsGoLintError;
+            }
+        };
 
-            let mut lint_service = LintService::new(linter, options);
-            lint_service.with_paths(files_to_lint);
-
-            // Use `RawTransferFileSystem` if `ExternalLinter` exists.
-            // This reads the source text into start of allocator, instead of the end.
-            if has_external_linter {
-                #[cfg(all(
-                    feature = "napi",
-                    target_pointer_width = "64",
-                    target_endian = "little"
-                ))]
-                lint_service.with_file_system(Box::new(crate::js_plugins::RawTransferFileSystem));
-
-                #[cfg(not(all(
-                    feature = "napi",
-                    target_pointer_width = "64",
-                    target_endian = "little"
-                )))]
-                unreachable!(
-                    "On unsupported platforms, or with `napi` Cargo feature disabled, `ExternalLinter` should not exist"
-                );
+        // Configure the file system for external linter if needed
+        let file_system = if has_external_linter {
+            #[cfg(all(feature = "napi", target_pointer_width = "64", target_endian = "little"))]
+            {
+                Some(Box::new(crate::js_plugins::RawTransferFileSystem)
+                    as Box<dyn oxc_linter::RuntimeFileSystem + Sync + Send>)
             }
 
-            lint_service.run(&tx_error);
-        });
+            #[cfg(not(all(
+                feature = "napi",
+                target_pointer_width = "64",
+                target_endian = "little"
+            )))]
+            unreachable!(
+                "On unsupported platforms, or with `napi` Cargo feature disabled, `ExternalLinter` should not exist"
+            );
+        } else {
+            None
+        };
+
+        match lint_runner.lint_files(&files_to_lint, tx_error.clone(), file_system) {
+            Ok(lint_runner) => {
+                lint_runner.report_unused_directives(report_unused_directives, &tx_error);
+            }
+            Err(err) => {
+                print_and_flush_stdout(stdout, &err);
+                return CliRunResult::TsGoLintError;
+            }
+        }
+
+        drop(tx_error);
 
         let diagnostic_result = diagnostic_service.run(stdout);
 
@@ -410,7 +407,7 @@ impl LintRunner {
     }
 }
 
-impl LintRunner {
+impl CliRunner {
     const DEFAULT_OXLINTRC: &'static str = ".oxlintrc.json";
 
     #[must_use]
@@ -617,7 +614,7 @@ fn render_report(handler: &GraphicalReportHandler, diagnostic: &OxcDiagnostic) -
 mod test {
     use std::{fs, path::PathBuf};
 
-    use super::LintRunner;
+    use super::CliRunner;
     use crate::tester::Tester;
 
     // lints the full directory of fixtures,
@@ -987,14 +984,14 @@ mod test {
 
     #[test]
     fn test_init_config() {
-        assert!(!fs::exists(LintRunner::DEFAULT_OXLINTRC).unwrap());
+        assert!(!fs::exists(CliRunner::DEFAULT_OXLINTRC).unwrap());
 
         let args = &["--init"];
         Tester::new().with_cwd("fixtures".into()).test(args);
 
-        assert!(fs::exists(LintRunner::DEFAULT_OXLINTRC).unwrap());
+        assert!(fs::exists(CliRunner::DEFAULT_OXLINTRC).unwrap());
 
-        fs::remove_file(LintRunner::DEFAULT_OXLINTRC).unwrap();
+        fs::remove_file(CliRunner::DEFAULT_OXLINTRC).unwrap();
     }
 
     #[test]
@@ -1106,7 +1103,7 @@ mod test {
 
     #[test]
     fn test_report_unused_directives() {
-        let args = &["-c", ".oxlintrc.json", "--report-unused-disable-directives", "test.js"];
+        let args = &["-c", ".oxlintrc.json", "--report-unused-disable-directives"];
 
         Tester::new().with_cwd("fixtures/report_unused_directives".into()).test_and_snapshot(args);
     }
@@ -1189,17 +1186,17 @@ mod test {
 
         // Test case 1: Invalid path that should fail
         let invalid_config = PathBuf::from("child/../../fixtures/linter/eslintrc.json");
-        let result = LintRunner::find_oxlint_config(&cwd, Some(&invalid_config));
+        let result = CliRunner::find_oxlint_config(&cwd, Some(&invalid_config));
         assert!(result.is_err(), "Expected config lookup to fail with invalid path");
 
         // Test case 2: Valid path that should pass
         let valid_config = PathBuf::from("fixtures/linter/eslintrc.json");
-        let result = LintRunner::find_oxlint_config(&cwd, Some(&valid_config));
+        let result = CliRunner::find_oxlint_config(&cwd, Some(&valid_config));
         assert!(result.is_ok(), "Expected config lookup to succeed with valid path");
 
         // Test case 3: Valid path using parent directory (..) syntax that should pass
         let valid_parent_config = PathBuf::from("fixtures/linter/../linter/eslintrc.json");
-        let result = LintRunner::find_oxlint_config(&cwd, Some(&valid_parent_config));
+        let result = CliRunner::find_oxlint_config(&cwd, Some(&valid_parent_config));
         assert!(result.is_ok(), "Expected config lookup to succeed with parent directory syntax");
 
         // Verify the resolved path is correct
@@ -1306,5 +1303,25 @@ mod test {
         // tsgolint shouldn't run when no files need type aware linting
         let args = &["--type-aware", "test.svelte"];
         Tester::new().with_cwd("fixtures/tsgolint".into()).test_and_snapshot(args);
+    }
+
+    #[cfg(not(target_endian = "big"))]
+    #[test]
+    fn test_tsgolint_unused_disable_directives() {
+        // Test that unused disable directives are reported with type-aware rules
+        let args = &["--type-aware", "--report-unused-disable-directives", "unused.ts"];
+        Tester::new()
+            .with_cwd("fixtures/tsgolint_disable_directives".into())
+            .test_and_snapshot(args);
+    }
+
+    #[cfg(not(target_endian = "big"))]
+    #[test]
+    fn test_tsgolint_disable_directives() {
+        // Test that disable directives work with type-aware rules
+        let args = &["--type-aware", "test.ts"];
+        Tester::new()
+            .with_cwd("fixtures/tsgolint_disable_directives".into())
+            .test_and_snapshot(args);
     }
 }

@@ -42,6 +42,14 @@ fn export_type() {
 fn expr() {
     test("new (foo()).bar();", "new (foo()).bar();\n");
     test_minify("x in new Error()", "x in new Error;");
+    test(
+        "new function() { let a = foo?.bar().baz; return a; }();",
+        "new function() {\n\tlet a = foo?.bar().baz;\n\treturn a;\n}();\n",
+    );
+    test(
+        "new class { foo() { let a = foo?.bar().baz; return a; } }();",
+        "new class {\n\tfoo() {\n\t\tlet a = foo?.bar().baz;\n\t\treturn a;\n\t}\n}();\n",
+    );
 
     test("1000000000000000128.0.toFixed(0)", "0xde0b6b3a7640080.toFixed(0);\n");
     test_minify("1000000000000000128.0.toFixed(0)", "0xde0b6b3a7640080.toFixed(0);");
@@ -390,6 +398,14 @@ fn vite_special_comments() {
         "import(/* @vite-ignore */ module1Url).then((module1) => {\nself.postMessage(module.default + module1.msg1 + import.meta.env.BASE_URL)})",
         "import(\n\t/* @vite-ignore */\n\tmodule1Url\n).then((module1) => {\n\tself.postMessage(module.default + module1.msg1 + import.meta.env.BASE_URL);\n});\n",
     );
+}
+
+#[test]
+fn import_phase() {
+    test_minify("import.defer('foo')", "import.defer(`foo`);");
+    test_minify("import.source('foo')", "import.source(`foo`);");
+    test("import.defer('foo')", "import.defer(\"foo\");\n");
+    test("import.source('foo')", "import.source(\"foo\");\n");
 }
 
 // <https://github.com/javascript-compiler-hints/compiler-notations-spec/blob/main/pure-notation-spec.md#semantics>

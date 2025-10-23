@@ -3,7 +3,7 @@ use std::borrow::Cow;
 use cow_utils::CowUtils;
 
 use oxc_allocator::{Box, TakeIn};
-use oxc_ast::ast::*;
+use oxc_ast::{NONE, ast::*};
 use oxc_compat::ESFeature;
 use oxc_ecmascript::{
     StringCharAt, StringCharAtResult, ToBigInt, ToIntegerIndex,
@@ -127,7 +127,8 @@ impl<'a> PeepholeOptimizations {
             return;
         };
 
-        if matches!(ctx.parent(), Ancestor::StaticMemberExpressionObject(_)) {
+        if matches!(ctx.parent(), Ancestor::StaticMemberExpressionObject(member) if member.property().name == "concat")
+        {
             return;
         }
 
@@ -190,7 +191,7 @@ impl<'a> PeepholeOptimizations {
         *node = ctx.ast.expression_call(
             original_span,
             new_root_callee.take_in(ctx.ast),
-            Option::<TSTypeParameterInstantiation>::None,
+            NONE,
             ctx.ast.vec_from_iter(
                 collected_arguments.into_iter().rev().flat_map(|arg| arg.take_in(ctx.ast)),
             ),
@@ -208,10 +209,10 @@ impl<'a> PeepholeOptimizations {
         ctx: &Ctx<'a, '_>,
     ) -> Option<Expression<'a>> {
         // let concat chaining reduction handle it first
-        if let Ancestor::StaticMemberExpressionObject(parent_member) = ctx.parent() {
-            if parent_member.property().name.as_str() == "concat" {
-                return None;
-            }
+        if let Ancestor::StaticMemberExpressionObject(parent_member) = ctx.parent()
+            && parent_member.property().name.as_str() == "concat"
+        {
+            return None;
         }
 
         let object = match callee {
@@ -258,7 +259,7 @@ impl<'a> PeepholeOptimizations {
                     Some(ctx.ast.expression_call(
                         span,
                         callee.take_in(ctx.ast),
-                        Option::<TSTypeParameterInstantiation>::None,
+                        NONE,
                         args.take_in(ctx.ast),
                         false,
                     ))
@@ -395,20 +396,19 @@ impl<'a> PeepholeOptimizations {
                         return;
                     }
                     Expression::BigIntLiteral(b) => {
-                        if !b.is_negative() {
-                            if let Some(integer_index) =
+                        if !b.is_negative()
+                            && let Some(integer_index) =
                                 b.to_big_int(ctx).and_then(ToIntegerIndex::to_integer_index)
-                            {
-                                let span = member.span;
-                                if let Some(replacement) = Self::try_fold_integer_index_access(
-                                    &mut member.object,
-                                    integer_index,
-                                    span,
-                                    ctx,
-                                ) {
-                                    ctx.state.changed = true;
-                                    *node = replacement;
-                                }
+                        {
+                            let span = member.span;
+                            if let Some(replacement) = Self::try_fold_integer_index_access(
+                                &mut member.object,
+                                integer_index,
+                                span,
+                                ctx,
+                            ) {
+                                ctx.state.changed = true;
+                                *node = replacement;
                             }
                         }
                         return;
@@ -1390,15 +1390,22 @@ mod test {
         // array
         test("x = [1,2].concat(1).concat(2,['abc']).concat('abc')", "x = [1,2,1,2,'abc','abc']");
         test("x = [].concat(['abc']).concat(1).concat([2,3])", "x = ['abc',1,2,3]");
+        test("x = [].concat(1).concat(2).join(',')", "x = [1,2].join(',')");
 
         test("var x, y; [1].concat(x).concat(y)", "var x, y; [1].concat(x, y)");
         test("var y; [1].concat(x).concat(y)", "var y; [1].concat(x, y)"); // x might have a getter that updates y, but that side effect is preserved correctly
         test("var x; [1].concat(x.a).concat(x)", "var x; [1].concat(x.a, x)"); // x.a might have a getter that updates x, but that side effect is preserved correctly
+        test_same("x = [].map(a => a + 1).concat(1)");
 
         // string
         test("x = '1'.concat(1).concat(2,['abc']).concat('abc')", "x = '112abcabc'");
         test("x = ''.concat(['abc']).concat(1).concat([2,3])", "x = 'abc12,3'");
         test("x = ''.concat(1)", "x = '1'");
+        test(
+            "x = ''.concat('a', ' ').concat('b').split(/[\\s\\n]+/)",
+            "x = 'a b'.split(/[\\s\\n]+/)",
+        );
+        test_same("x = ''.split().concat(1)");
 
         test("var x, y; v = ''.concat(x).concat(y)", "var x, y; v = `${x}${y}`");
         test("var y; v = ''.concat(x).concat(y)", "var y; v = `${x}${y}`"); // x might have a getter that updates y, but that side effect is preserved correctly

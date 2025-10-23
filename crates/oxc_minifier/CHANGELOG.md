@@ -4,6 +4,88 @@ All notable changes to this package will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0).
 
+## [0.95.0] - 2025-10-15
+
+### 🚀 Features
+
+- bce31b5 napi/playground: Call `with_private_member_mappings()` for private class member mangling (#14380) (copilot-swe-agent)
+
+### 🐛 Bug Fixes
+
+- 1bf83eb minifier: Bail out `arguments` copy loop substitution if the temporary variables are referenced outside the for loop (#14613) (sapphi-red)
+
+
+## [0.94.0] - 2025-10-06
+
+### 🚀 Features
+
+- 6123684 minifier: Inline single-use variable past read-only variables (#14184) (sapphi-red)
+
+### 🐛 Bug Fixes
+
+- c257b41 mangler: Avoid reusing same mangled names in the outer class (#14362) (sapphi-red)
+- fc519c8 mangler: Mangle private class members in subsequent classes correctly (#14361) (sapphi-red)
+- 6b2daa8 minifier: Don't inline single use variable in conditional logical expressions (#14185) (sapphi-red)
+- e4e963b minifier: Remove `continue` in the end of for-in / for-of (#14186) (sapphi-red)
+- 353c001 minifier: Keep private class members used in nested classes (#14217) (sapphi-red)
+- b83ffe5 mangler: Mangle private class members used in nested classes properly (#14218) (sapphi-red)
+
+### 🚜 Refactor
+
+- 11dd63b minifier: Use `oxc_ast::NONE` (#14322) (sapphi-red)
+
+
+## [0.93.0] - 2025-09-28
+
+### 🚀 Features
+
+- 402e6c7 minifier: Inline single use variables within the same variable declarations (#13959) (sapphi-red)
+- 1337811 minifier: Evaluate `.concat` calls that has subsequent method calls (#14074) (sapphi-red)
+
+### 🐛 Bug Fixes
+
+- 358f2fc minifier: Remove continue in for-in / for-of (#14151) (夕舞八弦)
+- d02d750 mangler: Mangle non top-level `exports` variable (#14169) (sapphi-red)
+
+
+## [0.92.0] - 2025-09-24
+
+### 🚀 Features
+
+- 0fe4d95 mangler: Mangle private class members (#14027) (sapphi-red)
+- aac45ef minifier: Remove unused private class members (#14026) (sapphi-red)
+
+### ⚡ Performance
+
+- c0ef5f3 minifier: Use oxc_data_structures::stack::Stack for ClassSymbolsStack (#14029) (sapphi-red)
+
+
+## [0.91.0] - 2025-09-22
+
+### 💥 BREAKING CHANGES
+
+- 6fcb0d0 minifier: [**BREAKING**] Receive supported engines instead of ecmascript versions (#13933) (sapphi-red)
+
+### 🚀 Features
+
+- b2b2037 minifier: Only apply `arguments` copy loop transformation in functions (#13952) (sapphi-red)
+- fa76365 minifier: Only apply `arguments` copy loop transformation in strict mode (#13951) (sapphi-red)
+- 638416e tasks/coverage: Add node compat table tests for minifier (#13925) (sapphi-red)
+
+### 🐛 Bug Fixes
+
+- 5198a01 minifier: Handle __proto__ when inlining single-use variables (#13926) (sapphi-red)
+
+### 📚 Documentation
+
+- 4817021 minifier: Clarify assumptions (#13950) (sapphi-red)
+- f1862c4 minifier: Add comprehensive documentation for oxc_minifier (#13938) (Boshen)
+
+### 💼 Other
+
+- fb347da crates: V0.91.0 (#13961) (Boshen)
+
+
 ## [0.91.0] - 2025-09-21
 
 ### 💥 BREAKING CHANGES

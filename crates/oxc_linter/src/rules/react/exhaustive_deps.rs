@@ -126,6 +126,13 @@ fn literal_in_dependency_array_diagnostic(span: Span) -> OxcDiagnostic {
         .with_error_code_scope(SCOPE)
 }
 
+fn duplicate_dependency_diagnostic(span: Span) -> OxcDiagnostic {
+    OxcDiagnostic::warn("This dependency is specified more than once in the dependency array.")
+        .with_label(span)
+        .with_help("Remove the duplicate dependency from the array.")
+        .with_error_code_scope(SCOPE)
+}
+
 fn complex_expression_in_dependency_array_diagnostic(hook_name: &str, span: Span) -> OxcDiagnostic {
     OxcDiagnostic::warn(format!(
         "React Hook {hook_name} has a complex expression in the dependency array.",
@@ -179,6 +186,17 @@ fn ref_accessed_directly_in_effect_cleanup_diagnostic(span: Span) -> OxcDiagnost
         .with_label(span)
         .with_help("The ref value will likely have changed by the time this effect cleanup function runs. If this ref points to a node rendered by react, copy it to a variable inside the effect and use that variable in the cleanup function.")
         .with_error_code_scope(SCOPE)
+}
+
+fn functions_returned_from_use_effect_event_must_not_be_included_in_dependency_array(
+    span: Span,
+) -> OxcDiagnostic {
+    OxcDiagnostic::warn(
+        "Functions returned from `useEffectEvent` must not be included in the dependency array.",
+    )
+    .with_label(span)
+    .with_help("Remove the dependency from the dependency array.")
+    .with_error_code_scope(SCOPE)
 }
 
 #[derive(Debug, Default, Clone)]
@@ -259,6 +277,7 @@ impl Rule for ExhaustiveDeps {
             .map(|config_json| ExhaustiveDepsConfig {
                 additional_hooks: config_json
                     .additional_hooks
+                    .filter(|pattern| !pattern.is_empty())
                     .and_then(|pattern| Regex::new(&pattern).ok()),
             })
             .unwrap_or_default();
@@ -519,6 +538,9 @@ impl Rule for ExhaustiveDeps {
 
                     if let Ok(dep) = analyze_property_chain(elem, ctx) {
                         dep
+                    } else if elem.is_literal() {
+                        ctx.diagnostic(literal_in_dependency_array_diagnostic(elem.span()));
+                        None
                     } else {
                         ctx.diagnostic(complex_expression_in_dependency_array_diagnostic(
                             hook_name.as_str(),
@@ -534,7 +556,7 @@ impl Rule for ExhaustiveDeps {
             for item in declared_dependencies_iter {
                 let span = item.span;
                 if !declared_dependencies.insert(item) {
-                    ctx.diagnostic(literal_in_dependency_array_diagnostic(span));
+                    ctx.diagnostic(duplicate_dependency_diagnostic(span));
                 }
             }
 
@@ -589,6 +611,18 @@ impl Rule for ExhaustiveDeps {
                 missing_dependency_diagnostic(hook_name, &undeclared, dependencies_node.span()),
                 |fixer| fix::append_dependencies(fixer, &undeclared, dependencies_node.as_ref()),
             );
+        }
+
+        for dep in &declared_dependencies {
+            if let Some(symbol_id) = dep.symbol_id
+                && let AstKind::VariableDeclarator(var_decl) =
+                    ctx.semantic().symbol_declaration(symbol_id).kind()
+                && let Some(Expression::CallExpression(call_expr)) = &var_decl.init
+                && let Some(name) = func_call_without_react_namespace(call_expr)
+                && name == "useEffectEvent"
+            {
+                ctx.diagnostic(functions_returned_from_use_effect_event_must_not_be_included_in_dependency_array(dep.span));
+            }
         }
 
         // effects are allowed to have extra dependencies
@@ -984,10 +1018,10 @@ fn is_stable_value<'a, 'b>(
     component_scope_id: ScopeId,
     visited: &mut FxHashSet<SymbolId>,
 ) -> bool {
-    if let Some(symbol_id) = ctx.scoping().get_reference(ident_reference_id).symbol_id() {
-        if !visited.insert(symbol_id) {
-            return true;
-        }
+    if let Some(symbol_id) = ctx.scoping().get_reference(ident_reference_id).symbol_id()
+        && !visited.insert(symbol_id)
+    {
+        return true;
     }
 
     match node.kind() {
@@ -1047,7 +1081,7 @@ fn is_stable_value<'a, 'b>(
                 return false;
             };
 
-            if init_name == "useRef" {
+            if init_name == "useRef" || init_name == "useEffectEvent" {
                 return true;
             }
 
@@ -1490,7 +1524,7 @@ mod fix {
         fixer: RuleFixer<'c, 'a>,
         names: &[Name<'a>],
         deps: &ArrayExpression<'a>,
-    ) -> RuleFix<'a> {
+    ) -> RuleFix {
         let mut codegen = fixer.codegen();
 
         let alloc = Allocator::default();
@@ -1514,7 +1548,7 @@ mod fix {
         fixer: RuleFixer<'c, 'a>,
         dependency: &Dependency,
         deps: &ArrayExpression<'a>,
-    ) -> RuleFix<'a> {
+    ) -> RuleFix {
         let mut codegen = fixer.codegen();
 
         let alloc = Allocator::default();
@@ -2605,7 +2639,17 @@ fn test() {
         r"function MyComponent(props) { useEffect(() => { console.log((props.foo).bar) }, [props.foo!.bar]) }",
         r"function MyComponent(props) { const external = {}; const y = useMemo(() => { const z = foo<typeof external>(); return z; }, []) }",
         r#"function Test() { const [state, setState] = useState(); useEffect(() => { console.log("state", state); }); }"#,
-        "function Test() { const [foo, setFoo] = useState(true); _setFoo = setFoo; useEffect(() => { setFoo(false) }, []); }",
+        "function MyComponent({ theme }) {
+          const onStuff = useEffectEvent(() => {
+            showNotification(theme);
+          });
+          useEffect(() => {
+            onStuff();
+          }, []);
+          React.useEffect(() => {
+            onStuff();
+          }, []);
+        }",
     ];
 
     let fail = vec![
@@ -4063,6 +4107,17 @@ fn test() {
           log();
         }, []);
         }"#,
+        r"function MyComponent({ theme }) {
+          const onStuff = useEffectEvent(() => {
+            showNotification(theme);
+          });
+          useEffect(() => {
+            onStuff();
+          }, [onStuff]);
+          React.useEffect(() => {
+            onStuff();
+          }, [onStuff]);
+        }",
     ];
 
     let pass_additional_hooks = vec![(
@@ -4072,6 +4127,14 @@ fn test() {
           });
         }",
         Some(serde_json::json!([{ "additionalHooks": "useSpecialEffect" }])),
+    )];
+
+    let pass_additional_hooks_empty_string = vec![(
+        "function MyComponent(props) {
+          const foo = bar.add();
+        }
+        ",
+        Some(serde_json::json!([{ "additionalHooks": "" }])),
     )];
 
     let fail_additional_hooks = vec![(
@@ -4215,7 +4278,11 @@ fn test() {
     Tester::new(
         ExhaustiveDeps::NAME,
         ExhaustiveDeps::PLUGIN,
-        pass.iter().map(|&code| (code, None)).chain(pass_additional_hooks).collect::<Vec<_>>(),
+        pass.iter()
+            .map(|&code| (code, None))
+            .chain(pass_additional_hooks)
+            .chain(pass_additional_hooks_empty_string)
+            .collect::<Vec<_>>(),
         fail.iter().map(|&code| (code, None)).chain(fail_additional_hooks).collect::<Vec<_>>(),
     )
     .expect_fix(fix)

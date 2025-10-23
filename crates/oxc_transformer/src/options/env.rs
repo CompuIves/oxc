@@ -9,6 +9,7 @@ use crate::{
     es2020::ES2020Options,
     es2021::ES2021Options,
     es2022::{ClassPropertiesOptions, ES2022Options},
+    es2026::ES2026Options,
     regexp::RegExpOptions,
 };
 
@@ -38,6 +39,8 @@ pub struct EnvOptions {
     pub es2021: ES2021Options,
 
     pub es2022: ES2022Options,
+
+    pub es2026: ES2026Options,
 }
 
 impl EnvOptions {
@@ -74,6 +77,7 @@ impl EnvOptions {
             },
             es2019: ES2019Options { optional_catch_binding: true },
             es2020: ES2020Options {
+                export_namespace_from: true,
                 nullish_coalescing_operator: true,
                 // Turn this on would throw error for all bigints.
                 big_int: false,
@@ -84,6 +88,7 @@ impl EnvOptions {
                 class_static_block: true,
                 class_properties: Some(ClassPropertiesOptions::default()),
             },
+            es2026: ES2026Options { explicit_resource_management: true },
         }
     }
 
@@ -150,6 +155,7 @@ impl From<EngineTargets> for EnvOptions {
                 optional_catch_binding: o.has_feature(ES2019OptionalCatchBinding),
             },
             es2020: ES2020Options {
+                export_namespace_from: o.has_feature(ES2020ExportNamespaceFrom),
                 nullish_coalescing_operator: o.has_feature(ES2020NullishCoalescingOperator),
                 big_int: o.has_feature(ES2020BigInt),
                 optional_chaining: o.has_feature(ES2020OptionalChaining),
@@ -160,6 +166,9 @@ impl From<EngineTargets> for EnvOptions {
             es2022: ES2022Options {
                 class_static_block: o.has_feature(ES2022ClassStaticBlock),
                 class_properties: o.has_feature(ES2022ClassProperties).then(Default::default),
+            },
+            es2026: ES2026Options {
+                explicit_resource_management: o.has_feature(ES2026ExplicitResourceManagement),
             },
         }
     }

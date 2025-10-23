@@ -4,6 +4,69 @@ All notable changes to this package will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0).
 
+## [0.95.0] - 2025-10-15
+
+### 🚀 Features
+
+- b1a9a03 linter/plugins: Implement `SourceCode#getAllComments` (#14589) (Arsh)
+- 368829b ast: Show `JSXText({value})` in `debug_name()` (#14461) (leaysgur)
+
+### 🐛 Bug Fixes
+
+- a86ca0b ast: Skip `source_text` and `comments` fields in `ContentEq` for `Program` (#14370) (overlookmotel)
+
+
+## [0.94.0] - 2025-10-06
+
+### 🚀 Features
+
+- 7e4d04f napi/parser: Add option to add `parent` prop to AST nodes with raw transfer (#14344) (overlookmotel)
+- 6374065 napi/parser: Raw transfer support `range` field (#14319) (overlookmotel)
+
+### 🐛 Bug Fixes
+
+- a11bc9f napi/parser, linter/plugins: Add `range` field to `TemplateElement` (#14339) (overlookmotel)
+
+### 🚜 Refactor
+
+- 34e1c0b napi/parser: Use minifier to generate JS/TS raw transfer deserializers from single source (#14312) (overlookmotel)
+
+### ⚡ Performance
+
+- e75d42d napi/parser, linter/plugins: Remove runtime `preserveParens` option from raw transfer deserializers (#14338) (overlookmotel)
+
+
+## [0.93.0] - 2025-09-28
+
+### 🚜 Refactor
+
+- 6fffdf9 ast: Remove unneccesary `#[estree(field_order)]` attrs (#14143) (overlookmotel)
+
+
+
+## [0.91.0] - 2025-09-22
+
+### 🚀 Features
+
+- a14aa79 npm/oxlint: Convert to ES modules (#13876) (Boshen)
+
+### 🐛 Bug Fixes
+
+- 0185984 napi/parser: Raw transfer `preserveParens` option apply to `TSParenthesizedType` (#13964) (overlookmotel)
+
+### 📚 Documentation
+
+- af8473a ast: Document `JSDocUnknownType` (#13973) (overlookmotel)
+
+### 🎨 Styling
+
+- 830b733 ast: Remove trailing whitespace (#13963) (overlookmotel)
+
+### 💼 Other
+
+- fb347da crates: V0.91.0 (#13961) (Boshen)
+
+
 ## [0.91.0] - 2025-09-21
 
 ### 🚀 Features

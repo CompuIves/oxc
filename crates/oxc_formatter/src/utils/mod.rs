@@ -1,21 +1,26 @@
+pub mod array;
 pub mod assignment_like;
 pub mod call_expression;
 pub mod conditional;
 pub mod expression;
+pub mod format_node_without_trailing_comments;
 pub mod jsx;
 pub mod member_chain;
 pub mod object;
+pub mod statement_body;
 pub mod string_utils;
 pub mod suppressed;
 pub mod typecast;
+pub mod typescript;
 
 use oxc_allocator::Address;
 use oxc_ast::{AstKind, ast::CallExpression};
 
 use crate::{
-    Format, FormatResult, FormatTrailingCommas, format_args,
+    Format, FormatResult, FormatTrailingCommas,
+    ast_nodes::{AstNode, AstNodes},
+    format_args,
     formatter::{Formatter, prelude::soft_line_break_or_space},
-    generated::ast_nodes::{AstNode, AstNodes},
 };
 
 /// Tests if expression is a long curried call

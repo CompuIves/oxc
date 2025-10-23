@@ -4,8 +4,8 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::{
     Buffer, Format, FormatResult,
+    ast_nodes::{AstNode, AstNodes},
     formatter::Formatter,
-    generated::ast_nodes::{AstNode, AstNodes},
     utils::string_utils::{FormatLiteralStringToken, StringLiteralParentKind},
     write,
 };
@@ -15,12 +15,21 @@ pub fn format_property_key<'a>(
     f: &mut Formatter<'_, 'a>,
 ) -> FormatResult<()> {
     if let PropertyKey::StringLiteral(s) = key.as_ref() {
+        // `"constructor"` property in the class should be kept quoted
+        let kind = if matches!(key.parent, AstNodes::PropertyDefinition(_))
+            && matches!(key.as_ref(), PropertyKey::StringLiteral(string) if string.value == "constructor")
+        {
+            StringLiteralParentKind::Expression
+        } else {
+            StringLiteralParentKind::Member
+        };
+
         FormatLiteralStringToken::new(
             f.source_text().text_for(s.as_ref()),
             s.span,
             /* jsx */
             false,
-            StringLiteralParentKind::Member,
+            kind,
         )
         .fmt(f)
     } else {

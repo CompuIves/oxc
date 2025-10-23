@@ -320,6 +320,8 @@ impl<'a> Visit<'a> for TestCase {
                     PropertyKey::StaticIdentifier(ident) if ident.name == "filename" => {
                         let span = prop.value.span();
                         let filename = span.source_text(&self.source_text);
+                        // trim quotes
+                        let filename = filename.trim_matches('"').trim_matches('\'');
                         self.filename = Some(filename.to_string());
                     }
                     PropertyKey::StaticIdentifier(ident) if ident.name == "languageOptions" => {
@@ -1595,6 +1597,27 @@ fn main() {
     if let Err(err) = add_rules_entry(&context, rule_kind) {
         eprintln!("failed to add {rule_name} to rules file: {err}");
     }
+
+    if let Err(err) = generate_rule_runner_impl() {
+        eprintln!("failed to generate RuleRunner impl for {rule_name}: {err}");
+    }
+}
+
+fn generate_rule_runner_impl() -> Result<(), Box<dyn std::error::Error>> {
+    use std::process::{Command, Stdio};
+
+    println!("Generating RuleRunner impl...");
+    let output = Command::new("cargo")
+        .args(["run", "-p", "oxc_linter_codegen"])
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .output()?;
+
+    if !output.status.success() {
+        return Err("Failed to run oxc_linter_codegen".into());
+    }
+
+    Ok(())
 }
 
 fn get_mod_name(rule_kind: RuleKind) -> String {
@@ -1680,25 +1703,43 @@ fn add_rules_entry(ctx: &Context, rule_kind: RuleKind) -> Result<(), Box<dyn std
 
     // Insert the rule declaration if it doesn't exist
     if needs_rule_insertion {
-        let rule_def_start = rules[declare_all_lint_rules_start..]
+        let iter = rules[declare_all_lint_rules_start..]
             .lines()
-            .filter_map(|line| line.trim().split_once("::"))
-            .find_map(|(plugin, rule)| {
-                if plugin == mod_name && rule > ctx.kebab_rule_name.as_str() {
-                    let def = format!("{plugin}::{rule}");
-                    rules.find(&def)
-                } else {
-                    None
-                }
+            .scan(0, |acc, line| {
+                let current_offset = *acc;
+                *acc += line.len() + 1; // +1 for newline
+                Some((current_offset, line))
             })
-            .ok_or(format!(
-                "failed to find where to insert the new rule def ({rule_def}) in {rules_path}"
-            ))?;
+            .peekable()
+            .skip_while(|(_, line)| !line.trim().starts_with(&format!("{mod_name}::")));
+
+        let new_rule = format!("{mod_name}::{}", ctx.snake_rule_name);
+        let mut insert_pos = None;
+
+        for (offset, line) in iter {
+            let trimmed = line.trim().trim_end_matches(',');
+            if !trimmed.starts_with(&format!("{mod_name}::")) {
+                // We've reached the next plugin section or the end of the macro
+                insert_pos = Some(offset);
+                break;
+            }
+
+            // Compare alphabetically
+            if trimmed > new_rule.as_str() {
+                insert_pos = Some(offset);
+                break;
+            }
+        }
+
+        let insert_pos =
+            insert_pos.unwrap_or_else(|| rules[declare_all_lint_rules_start..].rfind('}').unwrap());
+
+        let insert_position = declare_all_lint_rules_start + insert_pos - 1;
 
         rules.insert_str(
-            rule_def_start,
+            insert_position,
             &format!(
-                "{mod_name}::{rule_name},\n    ",
+                "\n    {mod_name}::{rule_name},",
                 mod_name = mod_name,
                 rule_name = ctx.snake_rule_name
             ),

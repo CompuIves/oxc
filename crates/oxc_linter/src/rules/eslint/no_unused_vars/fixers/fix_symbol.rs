@@ -12,7 +12,7 @@ impl<'s, 'a> Symbol<'s, 'a> {
         fixer: RuleFixer<'_, 'a>,
         list: &[T],
         own: &T,
-    ) -> RuleFix<'a>
+    ) -> RuleFix
     where
         T: GetSpan,
         Symbol<'s, 'a>: PartialEq<T>,
@@ -34,11 +34,11 @@ impl<'s, 'a> Symbol<'s, 'a> {
 
         // `let x = 1, y = 2, z = 3;` -> `let x = 1, y = 2, z = 3;`
         //             ^^^^^                       ^^^^^^^
-        if own_position > 0 {
-            if let Some(left_neighbor) = list.get(own_position - 1) {
-                delete_range.start = left_neighbor.span().end;
-                has_left = true;
-            }
+        if own_position > 0
+            && let Some(left_neighbor) = list.get(own_position - 1)
+        {
+            delete_range.start = left_neighbor.span().end;
+            has_left = true;
         }
 
         // both left and right neighbors are present, so we need to
@@ -52,8 +52,8 @@ impl<'s, 'a> Symbol<'s, 'a> {
         fixer.delete(&delete_range)
     }
 
-    pub(super) fn rename(&self, new_name: &CompactStr) -> RuleFix<'a> {
-        let mut fixes: Vec<Fix<'a>> = vec![];
+    pub(super) fn rename(&self, new_name: &CompactStr) -> RuleFix {
+        let mut fixes: Vec<Fix> = vec![];
         let decl_span = self.span();
         fixes.push(Fix::new(new_name.clone(), decl_span));
 

@@ -4,6 +4,204 @@ All notable changes to this package will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0).
 
+## [0.95.0] - 2025-10-15
+
+### 🚀 Features
+
+- 0ec0847 ci: Run napi tests on windows (#14383) (camc314)
+- b3c5132 parser: Use typescript for raw transfer tests (#14390) (camc314)
+
+### 🚜 Refactor
+
+- 4f301de napi/parser, linter/plugins: Improve formatting of generated code (#14554) (overlookmotel)
+- 68c0252 napi/parser, linter/plugins: Shorten generated raw transfer deserializer code (#14553) (overlookmotel)
+- f6d890a napi/parser: Re-run `ast_tools` codegen (#14547) (overlookmotel)
+- 52f35c6 napi/parser, linter/plugins: Rename `types.js` to `type_ids.js` (#14384) (overlookmotel)
+
+### 🧪 Testing
+
+- f293e3e napi/parser: Disable raw transfer tests on `antd.js` fixture (#14446) (overlookmotel)
+- 994c099 napi/parser: Skip slow test (#14424) (overlookmotel)
+- 0b076b4 napi/parser: Fix and clarify exclude tests logic (#14409) (overlookmotel)
+- 56274a5 napi/parser: Increase timeout on slow test (#14391) (overlookmotel)
+
+
+## [0.94.0] - 2025-10-06
+
+### 🚀 Features
+
+- a2914fe linter/plugins: Add `loc` field getter to all AST nodes (#14355) (overlookmotel)
+- c8de6fe linter/plugins: Add `parent` field to AST nodes (#14345) (overlookmotel)
+- 7e4d04f napi/parser: Add option to add `parent` prop to AST nodes with raw transfer (#14344) (overlookmotel)
+- 6374065 napi/parser: Raw transfer support `range` field (#14319) (overlookmotel)
+
+### 🐛 Bug Fixes
+
+- a11bc9f napi/parser, linter/plugins: Add `range` field to `TemplateElement` (#14339) (overlookmotel)
+- c65e782 napi/parser: Fix JSDoc comments (#14318) (overlookmotel)
+
+### 🚜 Refactor
+
+- 1489376 napi/parser, linter/plugins: Minify walker code (#14376) (overlookmotel)
+- c8eeeb5 linter/plugins: Remove build-time dependency on `napi/parser` (#14374) (overlookmotel)
+- 073167a napi/parser: Simplify raw transfer deserializer codegen (#14313) (overlookmotel)
+- 34e1c0b napi/parser: Use minifier to generate JS/TS raw transfer deserializers from single source (#14312) (overlookmotel)
+- a98757a napi/parser: Minify syntax in raw transfer deserializers (#14308) (overlookmotel)
+
+### ⚡ Performance
+
+- e75d42d napi/parser, linter/plugins: Remove runtime `preserveParens` option from raw transfer deserializers (#14338) (overlookmotel)
+
+
+## [0.94.0] - 2025-10-06
+
+### 🚀 Features
+
+- a2914fe linter/plugins: Add `loc` field getter to all AST nodes (#14355) (overlookmotel)
+- c8de6fe linter/plugins: Add `parent` field to AST nodes (#14345) (overlookmotel)
+- 7e4d04f napi/parser: Add option to add `parent` prop to AST nodes with raw transfer (#14344) (overlookmotel)
+- 6374065 napi/parser: Raw transfer support `range` field (#14319) (overlookmotel)
+
+### 🐛 Bug Fixes
+
+- a11bc9f napi/parser, linter/plugins: Add `range` field to `TemplateElement` (#14339) (overlookmotel)
+- c65e782 napi/parser: Fix JSDoc comments (#14318) (overlookmotel)
+
+### 🚜 Refactor
+
+- 1489376 napi/parser, linter/plugins: Minify walker code (#14376) (overlookmotel)
+- c8eeeb5 linter/plugins: Remove build-time dependency on `napi/parser` (#14374) (overlookmotel)
+- 073167a napi/parser: Simplify raw transfer deserializer codegen (#14313) (overlookmotel)
+- 34e1c0b napi/parser: Use minifier to generate JS/TS raw transfer deserializers from single source (#14312) (overlookmotel)
+- a98757a napi/parser: Minify syntax in raw transfer deserializers (#14308) (overlookmotel)
+
+### ⚡ Performance
+
+- e75d42d napi/parser, linter/plugins: Remove runtime `preserveParens` option from raw transfer deserializers (#14338) (overlookmotel)
+
+
+## [0.93.0] - 2025-09-28
+
+### 🚜 Refactor
+
+- c0c0c17 napi/parser: Remove unnecessary `#[estree(field_order)]` attr (#14144) (overlookmotel)
+
+### 🧪 Testing
+
+- 8c09592 napi/parser: Align fixture version with other tasks (#14146) (overlookmotel)
+
+
+## [0.93.0] - 2025-09-28
+
+### 🚜 Refactor
+
+- c0c0c17 napi/parser: Remove unnecessary `#[estree(field_order)]` attr (#14144) (overlookmotel)
+
+### 🧪 Testing
+
+- 8c09592 napi/parser: Align fixture version with other tasks (#14146) (overlookmotel)
+
+
+## [0.92.0] - 2025-09-24
+
+### 💥 BREAKING CHANGES
+
+- b1da5d5 napi/parser: [**BREAKING**] Change `oxc-parser` to ESM (#14042) (overlookmotel)
+
+### 🐛 Bug Fixes
+
+- 1f4be38 napi/parser: Generate `.d.mts` extension for types (#14038) (Daniel Roe)
+
+### 🚜 Refactor
+
+- cc0019f napi: Move scripts into `scripts` directory (#14048) (overlookmotel)
+- bb040bc parser, linter: Replace `.mjs` files with `.js` (#14045) (overlookmotel)
+- e0be08b napi/parser: Freeze `visitorKeys` export (#14012) (overlookmotel)
+
+### 📚 Documentation
+
+- 909a086 parser: Simplify example (#14044) (overlookmotel)
+
+### 🧪 Testing
+
+- 55cd2f3 parser: Remove unused import (#14043) (overlookmotel)
+
+
+## [0.92.0] - 2025-09-24
+
+### 💥 BREAKING CHANGES
+
+- b1da5d5 napi/parser: [**BREAKING**] Change `oxc-parser` to ESM (#14042) (overlookmotel)
+
+### 🐛 Bug Fixes
+
+- 1f4be38 napi/parser: Generate `.d.mts` extension for types (#14038) (Daniel Roe)
+
+### 🚜 Refactor
+
+- cc0019f napi: Move scripts into `scripts` directory (#14048) (overlookmotel)
+- bb040bc parser, linter: Replace `.mjs` files with `.js` (#14045) (overlookmotel)
+- e0be08b napi/parser: Freeze `visitorKeys` export (#14012) (overlookmotel)
+
+### 📚 Documentation
+
+- 909a086 parser: Simplify example (#14044) (overlookmotel)
+
+### 🧪 Testing
+
+- 55cd2f3 parser: Remove unused import (#14043) (overlookmotel)
+
+
+## [0.91.0] - 2025-09-22
+
+### 🐛 Bug Fixes
+
+- 0185984 napi/parser: Raw transfer `preserveParens` option apply to `TSParenthesizedType` (#13964) (overlookmotel)
+- bd2fa90 napi/parser: Move `browser.js` file (#13918) (overlookmotel)
+- 5ff91bc napi/parser: Fix example (#13887) (overlookmotel)
+- 21bbf95 napi: Rebuild bindings file for NAPI packages (#13889) (overlookmotel)
+
+### 🚜 Refactor
+
+- 48062d0 napi/parser: Itemize files in `package.json` (#13978) (overlookmotel)
+- 329b7e7 napi/parser: Move scripts to `scripts` directory (#13900) (overlookmotel)
+- ac3e9e9 napi/parser: Move JS code into `src-js` directory (#13899) (overlookmotel)
+- 2cef8ec napi/parser: Remove outdated comment (#13886) (overlookmotel)
+
+### 📚 Documentation
+
+- 7a50ad9 napi/parser, napi/transform: Correct README examples (#13934) (overlookmotel)
+
+### 💼 Other
+
+- fb347da crates: V0.91.0 (#13961) (Boshen)
+
+
+## [0.91.0] - 2025-09-22
+
+### 🐛 Bug Fixes
+
+- 0185984 napi/parser: Raw transfer `preserveParens` option apply to `TSParenthesizedType` (#13964) (overlookmotel)
+- bd2fa90 napi/parser: Move `browser.js` file (#13918) (overlookmotel)
+- 5ff91bc napi/parser: Fix example (#13887) (overlookmotel)
+- 21bbf95 napi: Rebuild bindings file for NAPI packages (#13889) (overlookmotel)
+
+### 🚜 Refactor
+
+- 48062d0 napi/parser: Itemize files in `package.json` (#13978) (overlookmotel)
+- 329b7e7 napi/parser: Move scripts to `scripts` directory (#13900) (overlookmotel)
+- ac3e9e9 napi/parser: Move JS code into `src-js` directory (#13899) (overlookmotel)
+- 2cef8ec napi/parser: Remove outdated comment (#13886) (overlookmotel)
+
+### 📚 Documentation
+
+- 7a50ad9 napi/parser, napi/transform: Correct README examples (#13934) (overlookmotel)
+
+### 💼 Other
+
+- fb347da crates: V0.91.0 (#13961) (Boshen)
+
+
 ## [0.91.0] - 2025-09-21
 
 ### 🐛 Bug Fixes

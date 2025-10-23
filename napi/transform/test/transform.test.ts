@@ -113,6 +113,7 @@ describe('target', () => {
     ['es2019', 'a?.b;\n'],
     ['es2019', 'a ?? b;\n'],
     ['es2021', 'class foo {\n\tstatic {}\n}\n'],
+    ['es2025', 'using handlerSync = openSync();\n'],
   ];
 
   test.each(data)('transform %s', (target, code) => {
@@ -171,7 +172,7 @@ describe('helpers', () => {
 });
 
 describe('modules', () => {
-  it('should transform export = and import ', () => {
+  it('should transform `export =` and `import =`', () => {
     const code = `
 export = function foo (): void {}
 import bar = require('bar')
@@ -289,6 +290,16 @@ describe('define plugin', () => {
     });
     // Replaced `undefined` with `void 0` by DCE.
     expect(ret.code).toEqual('new (void 0)();\n');
+  });
+
+  it('keeps debugger', () => {
+    const code = 'Foo; debugger;';
+    const ret = transform('test.js', code, {
+      define: {
+        Foo: 'Bar',
+      },
+    });
+    expect(ret.code).toEqual('Bar;\ndebugger;\n');
   });
 });
 

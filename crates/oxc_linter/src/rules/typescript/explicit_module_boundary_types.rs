@@ -281,7 +281,7 @@ impl ExplicitModuleBoundaryTypes {
                 // walk::walk_variable_declarator(&mut checker, it)
             }
             AstKind::Function(it) => {
-                walk::walk_function(checker, it, ScopeFlags::Function);
+                checker.visit_function(it, ScopeFlags::Function);
             }
             AstKind::Class(it) => walk::walk_class(checker, it),
             _ => {}
@@ -578,10 +578,10 @@ impl<'a> Visit<'a> for ExplicitTypesChecker<'a, '_> {
             return;
         }
 
-        if let ClassElement::PropertyDefinition(prop) = &el {
-            if prop.type_annotation.is_some() {
-                return;
-            }
+        if let ClassElement::PropertyDefinition(prop) = &el
+            && prop.type_annotation.is_some()
+        {
+            return;
         }
         if self.rule.is_some_allowed_name(el.static_name()) {
             return;
@@ -1991,6 +1991,7 @@ mod test {
                 "function Test(): void { const _x = () => { }; } function Test2() { return () => { }; } export { Test2 };",
                 None,
             ),
+            ("function App() { return 42; } export default App", None),
         ];
 
         Tester::new(

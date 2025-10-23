@@ -104,39 +104,20 @@ impl Gen for Directive<'_> {
 impl Gen for Statement<'_> {
     fn r#gen(&self, p: &mut Codegen, ctx: Context) {
         match self {
+            // Most common statements first (based on parser order and frequency)
             Self::BlockStatement(stmt) => {
                 p.print_comments_at(stmt.span.start);
                 stmt.print(p, ctx);
             }
-            Self::BreakStatement(stmt) => stmt.print(p, ctx),
-            Self::ContinueStatement(stmt) => stmt.print(p, ctx),
-            Self::DebuggerStatement(stmt) => stmt.print(p, ctx),
-            Self::DoWhileStatement(stmt) => stmt.print(p, ctx),
-            Self::EmptyStatement(stmt) => stmt.print(p, ctx),
             Self::ExpressionStatement(stmt) => stmt.print(p, ctx),
-            Self::ForInStatement(stmt) => stmt.print(p, ctx),
-            Self::ForOfStatement(stmt) => stmt.print(p, ctx),
-            Self::ForStatement(stmt) => stmt.print(p, ctx),
-            Self::IfStatement(stmt) => stmt.print(p, ctx),
-            Self::LabeledStatement(stmt) => stmt.print(p, ctx),
-            Self::ReturnStatement(stmt) => stmt.print(p, ctx),
-            Self::SwitchStatement(stmt) => stmt.print(p, ctx),
-            Self::ThrowStatement(stmt) => stmt.print(p, ctx),
-            Self::TryStatement(stmt) => stmt.print(p, ctx),
-            Self::WhileStatement(stmt) => stmt.print(p, ctx),
-            Self::WithStatement(stmt) => stmt.print(p, ctx),
-            Self::ImportDeclaration(decl) => decl.print(p, ctx),
-            Self::ExportAllDeclaration(decl) => decl.print(p, ctx),
-            Self::ExportDefaultDeclaration(decl) => decl.print(p, ctx),
-            Self::ExportNamedDeclaration(decl) => decl.print(p, ctx),
-            Self::TSExportAssignment(decl) => decl.print(p, ctx),
-            Self::TSNamespaceExportDeclaration(decl) => decl.print(p, ctx),
             Self::VariableDeclaration(decl) => {
                 p.print_comments_at(decl.span.start);
                 p.print_indent();
                 decl.print(p, ctx);
                 p.print_semicolon_after_statement();
             }
+            Self::IfStatement(stmt) => stmt.print(p, ctx),
+            Self::ReturnStatement(stmt) => stmt.print(p, ctx),
             Self::FunctionDeclaration(decl) => {
                 p.print_comments_at(decl.span.start);
                 if decl.pure && p.options.print_annotation_comment() {
@@ -147,12 +128,31 @@ impl Gen for Statement<'_> {
                 decl.print(p, ctx);
                 p.print_soft_newline();
             }
+            Self::ForStatement(stmt) => stmt.print(p, ctx),
+            Self::WhileStatement(stmt) => stmt.print(p, ctx),
+            Self::DoWhileStatement(stmt) => stmt.print(p, ctx),
+            Self::SwitchStatement(stmt) => stmt.print(p, ctx),
+            Self::BreakStatement(stmt) => stmt.print(p, ctx),
+            Self::ContinueStatement(stmt) => stmt.print(p, ctx),
+            Self::TryStatement(stmt) => stmt.print(p, ctx),
+            Self::ThrowStatement(stmt) => stmt.print(p, ctx),
+            Self::ForInStatement(stmt) => stmt.print(p, ctx),
+            Self::ForOfStatement(stmt) => stmt.print(p, ctx),
             Self::ClassDeclaration(decl) => {
                 p.print_comments_at(decl.span.start);
                 p.print_indent();
                 decl.print(p, ctx);
                 p.print_soft_newline();
             }
+            Self::LabeledStatement(stmt) => stmt.print(p, ctx),
+            Self::EmptyStatement(stmt) => stmt.print(p, ctx),
+            Self::ImportDeclaration(decl) => decl.print(p, ctx),
+            Self::ExportNamedDeclaration(decl) => decl.print(p, ctx),
+            Self::ExportDefaultDeclaration(decl) => decl.print(p, ctx),
+            Self::ExportAllDeclaration(decl) => decl.print(p, ctx),
+            Self::WithStatement(stmt) => stmt.print(p, ctx),
+            Self::DebuggerStatement(stmt) => stmt.print(p, ctx),
+            // TypeScript-specific (less common)
             Self::TSModuleDeclaration(decl) => {
                 p.print_comments_at(decl.span.start);
                 p.print_indent();
@@ -177,6 +177,8 @@ impl Gen for Statement<'_> {
                 decl.print(p, ctx);
                 p.print_soft_newline();
             }
+            Self::TSExportAssignment(decl) => decl.print(p, ctx),
+            Self::TSNamespaceExportDeclaration(decl) => decl.print(p, ctx),
             Self::TSImportEqualsDeclaration(decl) => {
                 p.print_indent();
                 p.print_comments_at(decl.span.start);
@@ -690,6 +692,7 @@ impl Gen for Function<'_> {
         let n = p.code_len();
         let wrap = self.is_expression()
             && ((p.start_of_stmt == n || p.start_of_default_export == n) || self.pife);
+        let ctx = ctx.and_forbid_call(false);
         p.wrap(wrap, |p| {
             p.print_space_before_identifier();
             p.add_source_mapping(self.span);
@@ -945,10 +948,11 @@ impl Gen for ImportAttribute<'_> {
 impl Gen for ExportNamedDeclaration<'_> {
     fn r#gen(&self, p: &mut Codegen, ctx: Context) {
         p.print_comments_at(self.span.start);
-        if let Some(Declaration::FunctionDeclaration(func)) = &self.declaration {
-            if func.pure && p.options.print_annotation_comment() {
-                p.print_str(NO_SIDE_EFFECTS_NEW_LINE_COMMENT);
-            }
+        if let Some(Declaration::FunctionDeclaration(func)) = &self.declaration
+            && func.pure
+            && p.options.print_annotation_comment()
+        {
+            p.print_str(NO_SIDE_EFFECTS_NEW_LINE_COMMENT);
         }
         p.add_source_mapping(self.span);
         p.print_indent();
@@ -1092,10 +1096,11 @@ impl Gen for ExportAllDeclaration<'_> {
 impl Gen for ExportDefaultDeclaration<'_> {
     fn r#gen(&self, p: &mut Codegen, ctx: Context) {
         p.print_comments_at(self.span.start);
-        if let ExportDefaultDeclarationKind::FunctionDeclaration(func) = &self.declaration {
-            if func.pure && p.options.print_annotation_comment() {
-                p.print_str(NO_SIDE_EFFECTS_NEW_LINE_COMMENT);
-            }
+        if let ExportDefaultDeclarationKind::FunctionDeclaration(func) = &self.declaration
+            && func.pure
+            && p.options.print_annotation_comment()
+        {
+            p.print_str(NO_SIDE_EFFECTS_NEW_LINE_COMMENT);
         }
         p.add_source_mapping(self.span);
         p.print_indent();
@@ -1127,58 +1132,79 @@ impl Gen for ExportDefaultDeclarationKind<'_> {
 impl GenExpr for Expression<'_> {
     fn gen_expr(&self, p: &mut Codegen, precedence: Precedence, ctx: Context) {
         match self {
+            // Most common expressions first (identifiers, member access, calls)
+            Self::Identifier(ident) => ident.print(p, ctx),
+            Self::StaticMemberExpression(expr) => expr.print_expr(p, precedence, ctx),
+            Self::ComputedMemberExpression(expr) => expr.print_expr(p, precedence, ctx),
+            Self::CallExpression(expr) => expr.print_expr(p, precedence, ctx),
+            // Literals (very common)
+            Self::NumericLiteral(lit) => lit.print_expr(p, precedence, ctx),
+            Self::StringLiteral(lit) => lit.print(p, ctx),
             Self::BooleanLiteral(lit) => lit.print(p, ctx),
             Self::NullLiteral(lit) => lit.print(p, ctx),
-            Self::NumericLiteral(lit) => lit.print_expr(p, precedence, ctx),
-            Self::BigIntLiteral(lit) => lit.print_expr(p, precedence, ctx),
-            Self::RegExpLiteral(lit) => lit.print(p, ctx),
-            Self::StringLiteral(lit) => lit.print(p, ctx),
-            Self::Identifier(ident) => ident.print(p, ctx),
-            Self::ThisExpression(expr) => expr.print(p, ctx),
-            Self::ComputedMemberExpression(expr) => expr.print_expr(p, precedence, ctx),
-            Self::StaticMemberExpression(expr) => expr.print_expr(p, precedence, ctx),
-            Self::PrivateFieldExpression(expr) => expr.print_expr(p, precedence, ctx),
-            Self::CallExpression(expr) => expr.print_expr(p, precedence, ctx),
-            Self::ArrayExpression(expr) => expr.print(p, ctx),
+            // Binary and logical operations (common)
+            Self::BinaryExpression(expr) => expr.print_expr(p, precedence, ctx),
+            Self::LogicalExpression(expr) => expr.print_expr(p, precedence, ctx),
+            // Object and array literals (common)
             Self::ObjectExpression(expr) => expr.print_expr(p, precedence, ctx),
-            Self::FunctionExpression(func) => {
-                if func.pure && p.options.print_annotation_comment() {
-                    p.print_str(NO_SIDE_EFFECTS_COMMENT);
-                }
-                func.print(p, ctx);
-            }
+            Self::ArrayExpression(expr) => expr.print(p, ctx),
+            // Assignment and update (common)
+            Self::AssignmentExpression(expr) => expr.print_expr(p, precedence, ctx),
+            Self::UpdateExpression(expr) => expr.print_expr(p, precedence, ctx),
+            Self::UnaryExpression(expr) => expr.print_expr(p, precedence, ctx),
+            // Conditional and sequence
+            Self::ConditionalExpression(expr) => expr.print_expr(p, precedence, ctx),
+            Self::SequenceExpression(expr) => expr.print_expr(p, precedence, ctx),
+            // Function expressions
             Self::ArrowFunctionExpression(func) => {
                 if func.pure && p.options.print_annotation_comment() {
                     p.print_str(NO_SIDE_EFFECTS_COMMENT);
                 }
                 func.print_expr(p, precedence, ctx);
             }
-            Self::YieldExpression(expr) => expr.print_expr(p, precedence, ctx),
-            Self::UpdateExpression(expr) => expr.print_expr(p, precedence, ctx),
-            Self::UnaryExpression(expr) => expr.print_expr(p, precedence, ctx),
-            Self::BinaryExpression(expr) => expr.print_expr(p, precedence, ctx),
-            Self::PrivateInExpression(expr) => expr.print_expr(p, precedence, ctx),
-            Self::LogicalExpression(expr) => expr.print_expr(p, precedence, ctx),
-            Self::ConditionalExpression(expr) => expr.print_expr(p, precedence, ctx),
-            Self::AssignmentExpression(expr) => expr.print_expr(p, precedence, ctx),
-            Self::SequenceExpression(expr) => expr.print_expr(p, precedence, ctx),
-            Self::ImportExpression(expr) => expr.print_expr(p, precedence, ctx),
+            Self::FunctionExpression(func) => {
+                if func.pure && p.options.print_annotation_comment() {
+                    p.print_str(NO_SIDE_EFFECTS_COMMENT);
+                }
+                func.print(p, ctx);
+            }
+            // This and super
+            Self::ThisExpression(expr) => expr.print(p, ctx),
+            Self::Super(sup) => sup.print(p, ctx),
+            // New expression
+            Self::NewExpression(expr) => expr.print_expr(p, precedence, ctx),
+            // Template literals
             Self::TemplateLiteral(literal) => literal.print(p, ctx),
             Self::TaggedTemplateExpression(expr) => expr.print(p, ctx),
-            Self::Super(sup) => sup.print(p, ctx),
-            Self::AwaitExpression(expr) => expr.print_expr(p, precedence, ctx),
-            Self::ChainExpression(expr) => expr.print_expr(p, precedence, ctx),
-            Self::NewExpression(expr) => expr.print_expr(p, precedence, ctx),
-            Self::MetaProperty(expr) => expr.print(p, ctx),
+            // Other literals
+            Self::RegExpLiteral(lit) => lit.print(p, ctx),
+            Self::BigIntLiteral(lit) => lit.print_expr(p, precedence, ctx),
+            // Class expression
             Self::ClassExpression(expr) => expr.print(p, ctx),
+            // Async/await and yield
+            Self::AwaitExpression(expr) => expr.print_expr(p, precedence, ctx),
+            Self::YieldExpression(expr) => expr.print_expr(p, precedence, ctx),
+            // Import expression
+            Self::ImportExpression(expr) => expr.print_expr(p, precedence, ctx),
+            // Meta property
+            Self::MetaProperty(expr) => expr.print(p, ctx),
+            // Chain expression
+            Self::ChainExpression(expr) => expr.print_expr(p, precedence, ctx),
+            // Private field
+            Self::PrivateFieldExpression(expr) => expr.print_expr(p, precedence, ctx),
+            Self::PrivateInExpression(expr) => expr.print_expr(p, precedence, ctx),
+            // Parenthesized
+            Self::ParenthesizedExpression(e) => e.print_expr(p, precedence, ctx),
+            // JSX (less common in typical JS code)
             Self::JSXElement(el) => el.print(p, ctx),
             Self::JSXFragment(fragment) => fragment.print(p, ctx),
-            Self::ParenthesizedExpression(e) => e.print_expr(p, precedence, ctx),
+            // TypeScript (less common in runtime)
             Self::TSAsExpression(e) => e.print_expr(p, precedence, ctx),
             Self::TSSatisfiesExpression(e) => e.print_expr(p, precedence, ctx),
             Self::TSTypeAssertion(e) => e.print_expr(p, precedence, ctx),
             Self::TSNonNullExpression(e) => e.print_expr(p, precedence, ctx),
             Self::TSInstantiationExpression(e) => e.print_expr(p, precedence, ctx),
+            // V8 intrinsics (rare)
             Self::V8IntrinsicExpression(e) => e.print_expr(p, precedence, ctx),
         }
     }
@@ -1586,10 +1612,10 @@ impl Gen for ObjectProperty<'_> {
         if let PropertyKey::StaticIdentifier(key) = &self.key {
             if key.name == "__proto__" {
                 shorthand = self.shorthand;
-            } else if let Expression::Identifier(ident) = self.value.without_parentheses() {
-                if key.name == p.get_identifier_reference_name(ident) {
-                    shorthand = true;
-                }
+            } else if let Expression::Identifier(ident) = self.value.without_parentheses()
+                && key.name == p.get_identifier_reference_name(ident)
+            {
+                shorthand = true;
             }
         }
 
@@ -1597,12 +1623,11 @@ impl Gen for ObjectProperty<'_> {
 
         // "{ -1: 0 }" must be printed as "{ [-1]: 0 }"
         // "{ 1/0: 0 }" must be printed as "{ [1/0]: 0 }"
-        if !computed {
-            if let Some(Expression::NumericLiteral(n)) = self.key.as_expression() {
-                if n.value.is_sign_negative() || n.value.is_infinite() {
-                    computed = true;
-                }
-            }
+        if !computed
+            && let Some(Expression::NumericLiteral(n)) = self.key.as_expression()
+            && (n.value.is_sign_negative() || n.value.is_infinite())
+        {
+            computed = true;
         }
 
         if !shorthand {
@@ -2056,6 +2081,7 @@ impl GenExpr for ImportExpression<'_> {
             p.add_source_mapping(self.span);
             p.print_str("import");
             if let Some(phase) = self.phase {
+                p.print_ascii_byte(b'.');
                 p.print_str(phase.as_str());
             }
             p.print_ascii_byte(b'(');
@@ -2261,7 +2287,9 @@ impl Gen for Class<'_> {
     fn r#gen(&self, p: &mut Codegen, ctx: Context) {
         let n = p.code_len();
         let wrap = self.is_expression() && (p.start_of_stmt == n || p.start_of_default_export == n);
+        let ctx = ctx.and_forbid_call(false);
         p.wrap(wrap, |p| {
+            p.enter_class();
             p.print_decorators(&self.decorators, ctx);
             p.print_space_before_identifier();
             p.add_source_mapping(self.span);
@@ -2293,6 +2321,7 @@ impl Gen for Class<'_> {
             p.print_soft_space();
             self.body.print(p, ctx);
             p.needs_semicolon = false;
+            p.exit_class();
         });
     }
 }
@@ -2745,9 +2774,18 @@ impl Gen for AccessorProperty<'_> {
 
 impl Gen for PrivateIdentifier<'_> {
     fn r#gen(&self, p: &mut Codegen, _ctx: Context) {
+        let name = if let Some(private_member_mappings) = &p.private_member_mappings
+            && let Some(mangled) = p.current_class_ids().find_map(|class_id| {
+                private_member_mappings.get(class_id).and_then(|m| m.get(self.name.as_str()))
+            }) {
+            (*mangled).clone()
+        } else {
+            self.name.into_compact_str()
+        };
+
         p.print_ascii_byte(b'#');
         p.add_source_mapping_for_name(self.span, &self.name);
-        p.print_str(self.name.as_str());
+        p.print_str(name.as_str());
     }
 }
 
@@ -2810,10 +2848,9 @@ impl Gen for BindingProperty<'_> {
                 BindingPatternKind::AssignmentPattern(assignment_pattern) => {
                     if let BindingPatternKind::BindingIdentifier(ident) =
                         &assignment_pattern.left.kind
+                        && key.name == p.get_binding_identifier_name(ident)
                     {
-                        if key.name == p.get_binding_identifier_name(ident) {
-                            shorthand = true;
-                        }
+                        shorthand = true;
                     }
                 }
                 _ => {}
@@ -3204,12 +3241,12 @@ impl Gen for TSTemplateLiteralType<'_> {
     fn r#gen(&self, p: &mut Codegen, ctx: Context) {
         p.print_str("`");
         for (index, item) in self.quasis.iter().enumerate() {
-            if index != 0 {
-                if let Some(types) = self.types.get(index - 1) {
-                    p.print_str("${");
-                    types.print(p, ctx);
-                    p.print_str("}");
-                }
+            if index != 0
+                && let Some(types) = self.types.get(index - 1)
+            {
+                p.print_str("${");
+                types.print(p, ctx);
+                p.print_str("}");
             }
             p.print_str(item.value.raw.as_str());
         }

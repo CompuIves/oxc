@@ -3,9 +3,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use oxc_diagnostics::OxcDiagnostic;
 
@@ -64,6 +64,19 @@ use super::{
 #[non_exhaustive]
 pub struct Oxlintrc {
     pub plugins: Option<LintPlugins>,
+    /// JS plugins.
+    ///
+    /// Note: JS plugins are experimental and not subject to semver.
+    /// They are not supported in language server at present.
+    #[serde(
+        rename = "jsPlugins",
+        deserialize_with = "deserialize_external_plugins",
+        serialize_with = "serialize_external_plugins",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(with = "Option<FxHashSet<String>>")]
+    pub external_plugins: Option<FxHashSet<(PathBuf, String)>>,
     pub categories: OxlintCategories,
     /// Example
     ///
@@ -146,6 +159,24 @@ impl Oxlintrc {
 
         config.path = path.to_path_buf();
 
+        #[expect(clippy::missing_panics_doc)]
+        let config_dir = config.path.parent().unwrap();
+        if let Some(external_plugins) = &mut config.external_plugins {
+            *external_plugins = std::mem::take(external_plugins)
+                .into_iter()
+                .map(|(_, specifier)| (config_dir.to_path_buf(), specifier))
+                .collect();
+        }
+
+        for override_config in config.overrides.iter_mut() {
+            if let Some(external_plugins) = &mut override_config.external_plugins {
+                *external_plugins = std::mem::take(external_plugins)
+                    .into_iter()
+                    .map(|(_, specifier)| (config_dir.to_path_buf(), specifier))
+                    .collect();
+            }
+        }
+
         Ok(config)
     }
 
@@ -191,14 +222,24 @@ impl Oxlintrc {
         let mut overrides = self.overrides.clone();
         overrides.extend(other.overrides);
 
-        let plugins = if let Some(plugins) = &self.plugins {
-            Some(other.plugins.map_or_else(|| plugins.clone(), |p2| p2.union(plugins)))
-        } else {
-            other.plugins
+        let plugins = match (self.plugins, other.plugins) {
+            (Some(self_plugins), Some(other_plugins)) => Some(self_plugins | other_plugins),
+            (Some(self_plugins), None) => Some(self_plugins),
+            (None, other_plugins) => other_plugins,
+        };
+
+        let external_plugins = match (&self.external_plugins, &other.external_plugins) {
+            (Some(self_external), Some(other_external)) => {
+                Some(self_external.iter().chain(other_external).cloned().collect())
+            }
+            (Some(self_external), None) => Some(self_external.clone()),
+            (None, Some(other_external)) => Some(other_external.clone()),
+            (None, None) => None,
         };
 
         Oxlintrc {
             plugins,
+            external_plugins,
             categories,
             rules: OxlintRules::new(rules),
             settings,
@@ -216,11 +257,37 @@ fn is_json_ext(ext: &str) -> bool {
     ext == "json" || ext == "jsonc"
 }
 
+fn deserialize_external_plugins<'de, D>(
+    deserializer: D,
+) -> Result<Option<FxHashSet<(PathBuf, String)>>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let opt_set: Option<FxHashSet<String>> = Option::deserialize(deserializer)?;
+    Ok(opt_set
+        .map(|set| set.into_iter().map(|specifier| (PathBuf::default(), specifier)).collect()))
+}
+
+#[expect(clippy::ref_option)]
+fn serialize_external_plugins<S>(
+    plugins: &Option<FxHashSet<(PathBuf, String)>>,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    // Serialize as an array of original specifiers (the values in the map)
+    match plugins {
+        Some(set) => serializer.collect_seq(set.iter().map(|(_, specifier)| specifier)),
+        None => serializer.serialize_none(),
+    }
+}
+
 #[cfg(test)]
 mod test {
     use serde_json::json;
 
-    use crate::config::plugins::BuiltinLintPlugins;
+    use crate::config::plugins::LintPlugins;
 
     use super::*;
 
@@ -239,7 +306,7 @@ mod test {
     #[test]
     fn test_oxlintrc_de_plugins_empty_array() {
         let config: Oxlintrc = serde_json::from_value(json!({ "plugins": [] })).unwrap();
-        assert_eq!(config.plugins, Some(BuiltinLintPlugins::empty().into()));
+        assert_eq!(config.plugins, Some(LintPlugins::empty()));
     }
 
     #[test]
@@ -252,23 +319,17 @@ mod test {
     fn test_oxlintrc_specifying_plugins_will_override() {
         let config: Oxlintrc = serde_json::from_str(r#"{ "plugins": ["react", "oxc"] }"#).unwrap();
 
-        assert_eq!(
-            config.plugins,
-            Some(BuiltinLintPlugins::REACT.union(BuiltinLintPlugins::OXC).into())
-        );
+        assert_eq!(config.plugins, Some(LintPlugins::REACT | LintPlugins::OXC));
         let config: Oxlintrc =
             serde_json::from_str(r#"{ "plugins": ["typescript", "unicorn"] }"#).unwrap();
-        assert_eq!(
-            config.plugins,
-            Some(BuiltinLintPlugins::TYPESCRIPT.union(BuiltinLintPlugins::UNICORN).into())
-        );
+        assert_eq!(config.plugins, Some(LintPlugins::TYPESCRIPT | LintPlugins::UNICORN));
         let config: Oxlintrc =
             serde_json::from_str(r#"{ "plugins": ["typescript", "unicorn", "react", "oxc", "import", "jsdoc", "jest", "vitest", "jsx-a11y", "nextjs", "react-perf", "promise", "node", "regex", "vue"] }"#).unwrap();
-        assert_eq!(config.plugins, Some(BuiltinLintPlugins::all().into()));
+        assert_eq!(config.plugins, Some(LintPlugins::all()));
 
         let config: Oxlintrc =
             serde_json::from_str(r#"{ "plugins": ["typescript", "@typescript-eslint"] }"#).unwrap();
-        assert_eq!(config.plugins, Some(BuiltinLintPlugins::TYPESCRIPT.into()));
+        assert_eq!(config.plugins, Some(LintPlugins::TYPESCRIPT));
     }
 
     #[test]

@@ -70,9 +70,11 @@ declare_oxc_lint!(
 
 impl Rule for RequireRenderReturn {
     fn run<'a>(&self, node: &AstNode<'a>, ctx: &LintContext<'a>) {
-        if !matches!(node.kind(), AstKind::ArrowFunctionExpression(_) | AstKind::Function(_)) {
-            return;
+        match node.kind() {
+            AstKind::ArrowFunctionExpression(_) | AstKind::Function(_) => {}
+            _ => return,
         }
+
         let parent = ctx.nodes().parent_node(node.id());
         if !is_render_fn(parent) {
             return;
@@ -116,7 +118,7 @@ fn contains_return_statement(node: &AstNode, ctx: &LintContext) -> bool {
     let cfg = ctx.cfg();
     let state = neighbors_filtered_by_edge_weight(
         cfg.graph(),
-        node.cfg_id(),
+        ctx.nodes().cfg_id(node.id()),
         &|edge| match edge {
             // We only care about normal edges having a return statement.
             EdgeType::Jump | EdgeType::Normal => None,
@@ -130,10 +132,10 @@ fn contains_return_statement(node: &AstNode, ctx: &LintContext) -> bool {
         },
         &mut |basic_block_id, _state_going_into_this_rule| {
             // If its an arrow function with an expression, marked as founded and stop walking.
-            if let AstKind::ArrowFunctionExpression(arrow_expr) = node.kind() {
-                if arrow_expr.expression {
-                    return (FoundReturn::Yes, STOP_WALKING_ON_THIS_PATH);
-                }
+            if let AstKind::ArrowFunctionExpression(arrow_expr) = node.kind()
+                && arrow_expr.expression
+            {
+                return (FoundReturn::Yes, STOP_WALKING_ON_THIS_PATH);
             }
 
             for Instruction { kind, .. } in cfg.basic_block(*basic_block_id).instructions() {

@@ -1,9 +1,9 @@
 use std::{
     collections::BTreeSet,
     ffi::OsStr,
-    io::{ErrorKind, Read, Write},
+    io::{ErrorKind, Read, Write, stderr},
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, Mutex},
 };
 
 use rustc_hash::FxHashMap;
@@ -12,13 +12,10 @@ use serde::{Deserialize, Serialize};
 use oxc_diagnostics::{DiagnosticSender, DiagnosticService, OxcDiagnostic, Severity};
 use oxc_span::{SourceType, Span};
 
-use super::{AllowWarnDeny, ConfigStore, ResolvedLinterState, read_to_string};
+use super::{AllowWarnDeny, ConfigStore, DisableDirectives, ResolvedLinterState, read_to_string};
 
 #[cfg(feature = "language_server")]
-use crate::{
-    fixer::{CompositeFix, Message, PossibleFixes},
-    lsp::{MessageWithPosition, message_to_message_with_position},
-};
+use crate::fixer::{CompositeFix, Message, PossibleFixes};
 
 /// State required to initialize the `tsgolint` linter.
 #[derive(Debug, Clone)]
@@ -69,7 +66,12 @@ impl TsGoLintState {
     ///
     /// # Errors
     /// A human-readable error message indicating why the linting failed.
-    pub fn lint(self, paths: &[Arc<OsStr>], error_sender: DiagnosticSender) -> Result<(), String> {
+    pub fn lint(
+        self,
+        paths: &[Arc<OsStr>],
+        disable_directives_map: Arc<Mutex<FxHashMap<PathBuf, DisableDirectives>>>,
+        error_sender: DiagnosticSender,
+    ) -> Result<(), String> {
         if paths.is_empty() {
             return Ok(());
         }
@@ -85,7 +87,8 @@ impl TsGoLintState {
             let mut cmd = std::process::Command::new(&self.executable_path);
             cmd.arg("headless")
                 .stdin(std::process::Stdio::piped())
-                .stdout(std::process::Stdio::piped());
+                .stdout(std::process::Stdio::piped())
+                .stderr(stderr());
 
             if let Ok(trace_file) = std::env::var("OXLINT_TSGOLINT_TRACE") {
                 cmd.arg(format!("-trace={trace_file}"));
@@ -127,118 +130,118 @@ impl TsGoLintState {
             drop(stdin);
 
             // Stream diagnostics as they are emitted, rather than waiting for all output
-            let mut stdout = child.stdout.take().expect("Failed to open tsgolint stdout");
+            let stdout = child.stdout.take().expect("Failed to open tsgolint stdout");
 
             // Process stdout stream in a separate thread to send diagnostics as they arrive
             let cwd_clone = self.cwd.clone();
 
             let stdout_handler = std::thread::spawn(move || -> Result<(), String> {
-                let mut buffer = Vec::with_capacity(8192);
-                let mut read_buf = [0u8; 8192];
+                let disable_directives_map =
+                    disable_directives_map.lock().expect("disable_directives_map mutex poisoned");
+                let msg_iter = TsGoLintMessageStream::new(stdout);
 
                 let mut source_text_map: FxHashMap<PathBuf, String> = FxHashMap::default();
 
-                loop {
-                    match stdout.read(&mut read_buf) {
-                        Ok(0) => break, // EOF
-                        Ok(n) => {
-                            buffer.extend_from_slice(&read_buf[..n]);
+                for msg in msg_iter {
+                    match msg {
+                        Ok(TsGoLintMessage::Error(err)) => {
+                            return Err(err.error);
+                        }
+                        Ok(TsGoLintMessage::Diagnostic(tsgolint_diagnostic)) => {
+                            let path = tsgolint_diagnostic.file_path.clone();
+                            let Some(resolved_config) = resolved_configs.get(&path) else {
+                                // If we don't have a resolved config for this path, skip it. We should always
+                                // have a resolved config though, since we processed them already above.
+                                continue;
+                            };
 
-                            // Try to parse complete messages from buffer
-                            let mut cursor = std::io::Cursor::new(buffer.as_slice());
-                            let mut processed_up_to: u64 = 0;
-
-                            while cursor.position() < buffer.len() as u64 {
-                                let start_pos = cursor.position();
-                                match parse_single_message(&mut cursor) {
-                                    Ok(Some(TsGoLintMessage::Error(err))) => {
-                                        return Err(err.error);
+                            let severity =
+                                resolved_config.rules.iter().find_map(|(rule, status)| {
+                                    if rule.name() == tsgolint_diagnostic.rule {
+                                        Some(*status)
+                                    } else {
+                                        None
                                     }
-                                    Ok(Some(TsGoLintMessage::Diagnostic(tsgolint_diagnostic))) => {
-                                        processed_up_to = cursor.position();
+                                });
+                            let Some(severity) = severity else {
+                                // If the severity is not found, we should not report the diagnostic
+                                continue;
+                            };
 
-                                        let path = tsgolint_diagnostic.file_path.clone();
-                                        let Some(resolved_config) = resolved_configs.get(&path)
-                                        else {
-                                            // If we don't have a resolved config for this path, skip it. We should always
-                                            // have a resolved config though, since we processed them already above.
-                                            continue;
-                                        };
+                            let span = Span::new(
+                                tsgolint_diagnostic.range.pos,
+                                tsgolint_diagnostic.range.end,
+                            );
 
-                                        let severity = resolved_config.rules.iter().find_map(
-                                            |(rule, status)| {
-                                                if rule.name() == tsgolint_diagnostic.rule {
-                                                    Some(*status)
-                                                } else {
-                                                    None
-                                                }
-                                            },
-                                        );
-                                        let Some(severity) = severity else {
-                                            // If the severity is not found, we should not report the diagnostic
-                                            continue;
-                                        };
-
-                                        let oxc_diagnostic: OxcDiagnostic =
-                                            OxcDiagnostic::from(tsgolint_diagnostic);
-
-                                        let oxc_diagnostic = oxc_diagnostic.with_severity(
-                                            if severity == AllowWarnDeny::Deny {
-                                                Severity::Error
-                                            } else {
-                                                Severity::Warning
-                                            },
-                                        );
-
-                                        let source_text: &str = if self.silent {
-                                            // The source text is not needed in silent mode.
-                                            // The source text is only here to wrap the line before and after into a nice `oxc_diagnostic` Error
-                                            ""
-                                        } else if let Some(source_text) = source_text_map.get(&path)
-                                        {
-                                            source_text.as_str()
-                                        } else {
-                                            let source_text = read_to_string(&path)
-                                                .unwrap_or_else(|_| String::new());
-                                            // Insert and get a reference to the inserted string
-                                            let entry = source_text_map
-                                                .entry(path.clone())
-                                                .or_insert(source_text);
-                                            entry.as_str()
-                                        };
-
-                                        let diagnostics = DiagnosticService::wrap_diagnostics(
-                                            cwd_clone.clone(),
-                                            path.clone(),
-                                            source_text,
-                                            vec![oxc_diagnostic],
-                                        );
-
-                                        if error_sender.send((path, diagnostics)).is_err() {
-                                            // Receiver has been dropped, stop processing
-                                            return Ok(());
-                                        }
-                                    }
-                                    Ok(None) => {
-                                        // Successfully parsed but no diagnostic to add
-                                        processed_up_to = cursor.position();
-                                    }
-                                    Err(_) => {
-                                        // Could not parse a complete message, break and keep remaining data
-                                        cursor.set_position(start_pos);
-                                        break;
-                                    }
+                            let should_skip = {
+                                if let Some(directives) = disable_directives_map.get(&path) {
+                                    directives.contains(&tsgolint_diagnostic.rule, span)
+                                        || directives.contains(
+                                            &format!(
+                                                "typescript-eslint/{}",
+                                                tsgolint_diagnostic.rule
+                                            ),
+                                            span,
+                                        )
+                                        || directives.contains(
+                                            &format!(
+                                                "@typescript-eslint/{}",
+                                                tsgolint_diagnostic.rule
+                                            ),
+                                            span,
+                                        )
+                                } else {
+                                    debug_assert!(
+                                        false,
+                                        "disable_directives_map should have an entry for every file we linted"
+                                    );
+                                    false
                                 }
+                            };
+
+                            if should_skip {
+                                continue;
                             }
 
-                            // Keep unprocessed data for next iteration
-                            if processed_up_to > 0 {
-                                #[expect(clippy::cast_possible_truncation)]
-                                buffer.drain(..processed_up_to as usize);
+                            let oxc_diagnostic: OxcDiagnostic =
+                                OxcDiagnostic::from(tsgolint_diagnostic);
+
+                            let oxc_diagnostic =
+                                oxc_diagnostic.with_severity(if severity == AllowWarnDeny::Deny {
+                                    Severity::Error
+                                } else {
+                                    Severity::Warning
+                                });
+
+                            let source_text: &str = if self.silent {
+                                // The source text is not needed in silent mode.
+                                // The source text is only here to wrap the line before and after into a nice `oxc_diagnostic` Error
+                                ""
+                            } else if let Some(source_text) = source_text_map.get(&path) {
+                                source_text.as_str()
+                            } else {
+                                let source_text =
+                                    read_to_string(&path).unwrap_or_else(|_| String::new());
+                                // Insert and get a reference to the inserted string
+                                let entry =
+                                    source_text_map.entry(path.clone()).or_insert(source_text);
+                                entry.as_str()
+                            };
+
+                            let diagnostics = DiagnosticService::wrap_diagnostics(
+                                cwd_clone.clone(),
+                                path.clone(),
+                                source_text,
+                                vec![oxc_diagnostic],
+                            );
+
+                            if error_sender.send((path, diagnostics)).is_err() {
+                                // Receiver has been dropped, stop processing
+                                return Ok(());
                             }
                         }
                         Err(e) => {
-                            return Err(format!("Failed to read from tsgolint stdout: {e}"));
+                            return Err(e);
                         }
                     }
                 }
@@ -289,9 +292,7 @@ impl TsGoLintState {
         &self,
         path: &Arc<OsStr>,
         source_text: String,
-    ) -> Result<Vec<MessageWithPosition<'_>>, String> {
-        use oxc_data_structures::rope::Rope;
-
+    ) -> Result<Vec<Message>, String> {
         let mut resolved_configs: FxHashMap<PathBuf, ResolvedLinterState> = FxHashMap::default();
 
         let json_input = self.json_input(std::slice::from_ref(path), &mut resolved_configs);
@@ -329,103 +330,60 @@ impl TsGoLintState {
             drop(stdin);
 
             // Stream diagnostics as they are emitted, rather than waiting for all output
-            let mut stdout = child.stdout.take().expect("Failed to open tsgolint stdout");
+            let stdout = child.stdout.take().expect("Failed to open tsgolint stdout");
 
-            let stdout_handler =
-                std::thread::spawn(move || -> Result<Vec<MessageWithPosition<'_>>, String> {
-                    let mut buffer = Vec::with_capacity(8192);
-                    let mut read_buf = [0u8; 8192];
+            let stdout_handler = std::thread::spawn(move || -> Result<Vec<Message>, String> {
+                let msg_iter = TsGoLintMessageStream::new(stdout);
 
-                    let mut result = vec![];
+                let mut result = vec![];
 
-                    loop {
-                        match stdout.read(&mut read_buf) {
-                            Ok(0) => break, // EOF
-                            Ok(n) => {
-                                buffer.extend_from_slice(&read_buf[..n]);
+                for msg in msg_iter {
+                    match msg {
+                        Ok(TsGoLintMessage::Error(err)) => {
+                            return Err(err.error);
+                        }
+                        Ok(TsGoLintMessage::Diagnostic(tsgolint_diagnostic)) => {
+                            let path = tsgolint_diagnostic.file_path.clone();
+                            let Some(resolved_config) = resolved_configs.get(&path) else {
+                                // If we don't have a resolved config for this path, skip it. We should always
+                                // have a resolved config though, since we processed them already above.
+                                continue;
+                            };
 
-                                // Try to parse complete messages from buffer
-                                let mut cursor = std::io::Cursor::new(buffer.as_slice());
-                                let mut processed_up_to: u64 = 0;
-
-                                while cursor.position() < buffer.len() as u64 {
-                                    let start_pos = cursor.position();
-                                    match parse_single_message(&mut cursor) {
-                                        Ok(Some(TsGoLintMessage::Error(err))) => {
-                                            return Err(err.error);
-                                        }
-                                        Ok(Some(TsGoLintMessage::Diagnostic(
-                                            tsgolint_diagnostic,
-                                        ))) => {
-                                            processed_up_to = cursor.position();
-
-                                            let path = tsgolint_diagnostic.file_path.clone();
-                                            let Some(resolved_config) = resolved_configs.get(&path)
-                                            else {
-                                                // If we don't have a resolved config for this path, skip it. We should always
-                                                // have a resolved config though, since we processed them already above.
-                                                continue;
-                                            };
-
-                                            let severity = resolved_config.rules.iter().find_map(
-                                                |(rule, status)| {
-                                                    if rule.name() == tsgolint_diagnostic.rule {
-                                                        Some(*status)
-                                                    } else {
-                                                        None
-                                                    }
-                                                },
-                                            );
-                                            let Some(severity) = severity else {
-                                                // If the severity is not found, we should not report the diagnostic
-                                                continue;
-                                            };
-
-                                            let mut message_with_position: MessageWithPosition<'_> =
-                                                message_to_message_with_position(
-                                                    &Message::from_tsgo_lint_diagnostic(
-                                                        tsgolint_diagnostic,
-                                                        &source_text,
-                                                    ),
-                                                    &source_text,
-                                                    &Rope::from_str(&source_text),
-                                                );
-
-                                            message_with_position.severity =
-                                                if severity == AllowWarnDeny::Deny {
-                                                    Severity::Error
-                                                } else {
-                                                    Severity::Warning
-                                                };
-
-                                            result.push(message_with_position);
-                                        }
-                                        Ok(None) => {
-                                            // Successfully parsed but no diagnostic to add
-                                            processed_up_to = cursor.position();
-                                        }
-                                        Err(_) => {
-                                            // Could not parse a complete message, break and keep remaining data
-                                            cursor.set_position(start_pos);
-                                            break;
-                                        }
+                            let severity =
+                                resolved_config.rules.iter().find_map(|(rule, status)| {
+                                    if rule.name() == tsgolint_diagnostic.rule {
+                                        Some(*status)
+                                    } else {
+                                        None
                                     }
-                                }
+                                });
+                            let Some(severity) = severity else {
+                                // If the severity is not found, we should not report the diagnostic
+                                continue;
+                            };
 
-                                // Keep unprocessed data for next iteration
-                                if processed_up_to > 0 {
-                                    #[expect(clippy::cast_possible_truncation)]
-                                    buffer.drain(..processed_up_to as usize);
-                                }
-                            }
-                            Err(e) => {
-                                return Err(format!("Failed to read from tsgolint stdout: {e}"));
-                            }
+                            let mut message = Message::from_tsgo_lint_diagnostic(
+                                tsgolint_diagnostic,
+                                &source_text,
+                            );
+
+                            message.error.severity = if severity == AllowWarnDeny::Deny {
+                                Severity::Error
+                            } else {
+                                Severity::Warning
+                            };
+
+                            result.push(message);
+                        }
+                        Err(e) => {
+                            return Err(e);
                         }
                     }
+                }
 
-                    Ok(result)
-                });
+                Ok(result)
+            });
 
             // Wait for process to complete and stdout processing to finish
             let exit_status = child.wait().expect("Failed to wait for tsgolint process");
@@ -596,18 +554,20 @@ impl From<TsGoLintDiagnostic> for OxcDiagnostic {
 }
 
 #[cfg(feature = "language_server")]
-impl Message<'_> {
+impl Message {
     /// Converts a `TsGoLintDiagnostic` into a `Message` with possible fixes.
-    fn from_tsgo_lint_diagnostic(val: TsGoLintDiagnostic, source_text: &str) -> Self {
+    fn from_tsgo_lint_diagnostic(mut val: TsGoLintDiagnostic, source_text: &str) -> Self {
+        use std::{borrow::Cow, mem};
+
         let mut fixes =
             Vec::with_capacity(usize::from(!val.fixes.is_empty()) + val.suggestions.len());
 
         if !val.fixes.is_empty() {
-            let fix_vec = val
-                .fixes
-                .iter()
+            let fix_vec = mem::take(&mut val.fixes);
+            let fix_vec = fix_vec
+                .into_iter()
                 .map(|fix| crate::fixer::Fix {
-                    content: fix.text.clone().into(),
+                    content: Cow::Owned(fix.text),
                     span: Span::new(fix.range.pos, fix.range.end),
                     message: None,
                 })
@@ -616,19 +576,31 @@ impl Message<'_> {
             fixes.push(CompositeFix::merge_fixes(fix_vec, source_text));
         }
 
-        for suggestion in &val.suggestions {
+        let suggestions = mem::take(&mut val.suggestions);
+        fixes.extend(suggestions.into_iter().map(|mut suggestion| {
+            let last_fix_index = suggestion.fixes.len().wrapping_sub(1);
             let fix_vec = suggestion
                 .fixes
-                .iter()
-                .map(|fix| crate::fixer::Fix {
-                    content: fix.text.clone().into(),
-                    span: Span::new(fix.range.pos, fix.range.end),
-                    message: Some(suggestion.message.description.clone().into()),
+                .into_iter()
+                .enumerate()
+                .map(|(i, fix)| {
+                    // Don't clone the message description on last turn of loop
+                    let message = if i < last_fix_index {
+                        suggestion.message.description.clone()
+                    } else {
+                        mem::take(&mut suggestion.message.description)
+                    };
+
+                    crate::fixer::Fix {
+                        content: Cow::Owned(fix.text),
+                        span: Span::new(fix.range.pos, fix.range.end),
+                        message: Some(Cow::Owned(message)),
+                    }
                 })
                 .collect();
 
-            fixes.push(CompositeFix::merge_fixes(fix_vec, source_text));
-        }
+            CompositeFix::merge_fixes(fix_vec, source_text)
+        }));
 
         let possible_fix = if fixes.is_empty() {
             PossibleFixes::None
@@ -669,17 +641,106 @@ pub struct Suggestion {
 }
 
 #[derive(Eq, PartialEq, Clone, Debug, Serialize, Deserialize)]
+#[repr(u8)]
 pub enum MessageType {
     Error = 0,
     Diagnostic = 1,
 }
 
-impl MessageType {
-    pub fn from_u8(value: u8) -> Option<Self> {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InvalidMessageType(pub u8);
+
+impl std::fmt::Display for InvalidMessageType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "invalid message type: {}", self.0)
+    }
+}
+
+impl std::error::Error for InvalidMessageType {}
+
+impl TryFrom<u8> for MessageType {
+    type Error = InvalidMessageType;
+
+    fn try_from(value: u8) -> Result<Self, InvalidMessageType> {
         match value {
-            0 => Some(MessageType::Error),
-            1 => Some(MessageType::Diagnostic),
-            _ => None,
+            0 => Ok(Self::Error),
+            1 => Ok(Self::Diagnostic),
+            _ => Err(InvalidMessageType(value)),
+        }
+    }
+}
+
+/// Iterator that streams messages from tsgolint stdout.
+struct TsGoLintMessageStream {
+    stdout: std::process::ChildStdout,
+    buffer: Vec<u8>,
+}
+
+impl TsGoLintMessageStream {
+    fn new(stdout: std::process::ChildStdout) -> TsGoLintMessageStream {
+        TsGoLintMessageStream { stdout, buffer: Vec::with_capacity(8192) }
+    }
+}
+
+impl Iterator for TsGoLintMessageStream {
+    type Item = Result<TsGoLintMessage, String>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let mut read_buf = [0u8; 8192];
+
+        loop {
+            // Try to parse a complete message from the existing buffer
+            let mut cursor = std::io::Cursor::new(self.buffer.as_slice());
+
+            if cursor.position() < self.buffer.len() as u64 {
+                match parse_single_message(&mut cursor) {
+                    Ok(message) => {
+                        // Successfully parsed a message, remove it from buffer
+                        #[expect(clippy::cast_possible_truncation)]
+                        self.buffer.drain(..cursor.position() as usize);
+                        return Some(Ok(message));
+                    }
+                    Err(TsGoLintMessageParseError::IncompleteData) => {}
+                    Err(e) => {
+                        return Some(Err(e.to_string()));
+                    }
+                }
+            }
+
+            // Read more data from stdout
+            match self.stdout.read(&mut read_buf) {
+                Ok(0) => {
+                    return None;
+                }
+                Ok(n) => {
+                    self.buffer.extend_from_slice(&read_buf[..n]);
+                }
+                Err(e) => {
+                    return Some(Err(format!("Failed to read from tsgolint stdout: {e}")));
+                }
+            }
+        }
+    }
+}
+
+enum TsGoLintMessageParseError {
+    IncompleteData,
+    InvalidMessageType(InvalidMessageType),
+    InvalidErrorPayload(serde_json::Error),
+    InvalidDiagnosticPayload(serde_json::Error),
+}
+
+impl std::fmt::Display for TsGoLintMessageParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TsGoLintMessageParseError::IncompleteData => write!(f, "Incomplete data"),
+            TsGoLintMessageParseError::InvalidMessageType(e) => write!(f, "{e}"),
+            TsGoLintMessageParseError::InvalidErrorPayload(e) => {
+                write!(f, "Failed to parse tsgolint error payload: {e}")
+            }
+            TsGoLintMessageParseError::InvalidDiagnosticPayload(e) => {
+                write!(f, "Failed to parse tsgolint diagnostic payload: {e}")
+            }
         }
     }
 }
@@ -689,46 +750,47 @@ impl MessageType {
 // | Payload Size (uint32 LE) - 4 bytes | Message Type (uint8) - 1 byte | Payload |
 fn parse_single_message(
     cursor: &mut std::io::Cursor<&[u8]>,
-) -> Result<Option<TsGoLintMessage>, String> {
+) -> Result<TsGoLintMessage, TsGoLintMessageParseError> {
     let mut size_bytes = [0u8; 4];
     if cursor.read_exact(&mut size_bytes).is_err() {
-        return Err("Failed to read size bytes".to_string());
+        return Err(TsGoLintMessageParseError::IncompleteData);
     }
     let size = u32::from_le_bytes(size_bytes) as usize;
 
     let mut message_type_byte = [0u8; 1];
     if cursor.read_exact(&mut message_type_byte).is_err() {
-        return Err("Failed to read message type byte".to_string());
+        return Err(TsGoLintMessageParseError::IncompleteData);
     }
-    let message_type = MessageType::from_u8(message_type_byte[0])
-        .ok_or_else(|| "Invalid message type byte".to_string())?;
+
+    let message_type = MessageType::try_from(message_type_byte[0])
+        .map_err(TsGoLintMessageParseError::InvalidMessageType)?;
 
     let mut payload_bytes = vec![0u8; size];
     if cursor.read_exact(&mut payload_bytes).is_err() {
-        return Err("Failed to read payload bytes".to_string());
+        return Err(TsGoLintMessageParseError::IncompleteData);
     }
     let payload_str = String::from_utf8_lossy(&payload_bytes);
 
     match message_type {
         MessageType::Error => {
             let error_payload = serde_json::from_str::<TsGoLintErrorPayload>(&payload_str)
-                .map_err(|e| format!("Failed to parse tsgolint error payload: {e}"))?;
+                .map_err(TsGoLintMessageParseError::InvalidErrorPayload)?;
 
-            Ok(Some(TsGoLintMessage::Error(TsGoLintError { error: error_payload.error })))
+            Ok(TsGoLintMessage::Error(TsGoLintError { error: error_payload.error }))
         }
         MessageType::Diagnostic => {
             let diagnostic_payload =
                 serde_json::from_str::<TsGoLintDiagnosticPayload>(&payload_str)
-                    .map_err(|e| format!("Failed to parse tsgolint diagnostic payload: {e}"))?;
+                    .map_err(TsGoLintMessageParseError::InvalidDiagnosticPayload)?;
 
-            Ok(Some(TsGoLintMessage::Diagnostic(TsGoLintDiagnostic {
+            Ok(TsGoLintMessage::Diagnostic(TsGoLintDiagnostic {
                 range: diagnostic_payload.range,
                 rule: diagnostic_payload.rule,
                 message: diagnostic_payload.message,
                 fixes: diagnostic_payload.fixes,
                 suggestions: diagnostic_payload.suggestions,
                 file_path: diagnostic_payload.file_path,
-            })))
+            }))
         }
     }
 }
@@ -761,16 +823,23 @@ pub fn try_find_tsgolint_executable(cwd: &Path) -> Result<PathBuf, String> {
         ));
     }
 
-    // executing a sub command in windows, needs a `cmd` or `ps1` extension.
-    // `cmd` is the most compatible one with older systems
-    let file = if cfg!(windows) { "tsgolint.CMD" } else { "tsgolint" };
+    // Executing a sub-command in Windows needs a `cmd` or `ps1` extension.
+    // Since `cmd` is the most compatible one with older systems, we use that one first,
+    // then check for `exe` which is also common. Bun, for example, does not create a `cmd`
+    // file but still produces an `exe` file (https://github.com/oxc-project/oxc/issues/13784).
+    #[cfg(windows)]
+    let files = &["tsgolint.CMD", "tsgolint.exe"];
+    #[cfg(not(windows))]
+    let files = &["tsgolint"];
 
     // Move upwards until we find a `package.json`, then look at `node_modules/.bin/tsgolint`
     let mut current_dir = cwd.to_path_buf();
     loop {
-        let node_modules_bin = current_dir.join("node_modules").join(".bin").join(file);
-        if node_modules_bin.exists() {
-            return Ok(node_modules_bin);
+        for file in files {
+            let node_modules_bin = current_dir.join("node_modules").join(".bin").join(file);
+            if node_modules_bin.exists() {
+                return Ok(node_modules_bin);
+            }
         }
 
         // If we reach the root directory, stop searching
@@ -786,7 +855,7 @@ pub fn try_find_tsgolint_executable(cwd: &Path) -> Result<PathBuf, String> {
 #[cfg(feature = "language_server")]
 mod test {
     use oxc_diagnostics::{LabeledSpan, OxcCode, Severity};
-    use oxc_span::{GetSpan, Span};
+    use oxc_span::Span;
 
     use crate::{
         fixer::{Message, PossibleFixes},
@@ -812,7 +881,7 @@ mod test {
 
         assert_eq!(message.error.message, "Some description");
         assert_eq!(message.error.severity, Severity::Warning);
-        assert_eq!(message.span(), Span::new(0, 10));
+        assert_eq!(message.span, Span::new(0, 10));
         assert_eq!(
             message.error.code,
             OxcCode { scope: Some("typescript-eslint".into()), number: Some("some_rule".into()) }

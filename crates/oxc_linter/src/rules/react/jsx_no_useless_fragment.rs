@@ -159,7 +159,7 @@ fn fix_fragment_element<'a>(
     elem: &JSXElement,
     ctx: &LintContext<'a>,
     fixer: RuleFixer<'_, 'a>,
-) -> RuleFix<'a> {
+) -> RuleFix {
     let replacement = if let Some(closing_elem) = &elem.closing_element {
         trim_like_react(
             Span::new(elem.opening_element.span.end, closing_elem.span.start)
@@ -169,20 +169,21 @@ fn fix_fragment_element<'a>(
         ""
     };
 
-    fixer.replace(elem.span(), trim_like_react(replacement))
+    fixer.replace(elem.span(), trim_like_react(replacement).to_owned())
 }
 
 fn fix_jsx_fragment<'a>(
     elem: &JSXFragment,
     ctx: &LintContext<'a>,
     fixer: RuleFixer<'_, 'a>,
-) -> RuleFix<'a> {
+) -> RuleFix {
     fixer.replace(
         elem.span(),
         trim_like_react(
             Span::new(elem.opening_fragment.span.end, elem.closing_fragment.span.start)
                 .source_text(ctx.source_text()),
-        ),
+        )
+        .to_owned(),
     )
 }
 
@@ -254,16 +255,15 @@ fn can_fix(node: &AstNode, children: &ArenaVec<JSXChild<'_>>, ctx: &LintContext)
     }
 
     // Not safe to fix `<Eeee><>foo</></Eeee>` because `Eeee` might require its children be a ReactElement.
-    if let AstKind::JSXElement(el) = parent {
-        if !el
+    if let AstKind::JSXElement(el) = parent
+        && !el
             .opening_element
             .name
             .get_identifier_name()
             .is_some_and(|ident| ident.chars().all(char::is_lowercase))
-            && !is_jsx_fragment(&el.opening_element)
-        {
-            return false;
-        }
+        && !is_jsx_fragment(&el.opening_element)
+    {
+        return false;
     }
 
     true
@@ -305,10 +305,10 @@ fn is_padding_spaces(v: &JSXChild<'_>) -> bool {
 }
 
 fn is_child_of_html_element(node: &AstNode, ctx: &LintContext) -> bool {
-    if let AstKind::JSXElement(elem) = ctx.nodes().parent_kind(node.id()) {
-        if is_html_element(&elem.opening_element.name) {
-            return true;
-        }
+    if let AstKind::JSXElement(elem) = ctx.nodes().parent_kind(node.id())
+        && is_html_element(&elem.opening_element.name)
+    {
+        return true;
     }
 
     false

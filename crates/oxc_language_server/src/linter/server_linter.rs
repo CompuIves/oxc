@@ -1,27 +1,28 @@
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::Arc;
 
 use ignore::gitignore::Gitignore;
 use log::{debug, warn};
-use oxc_linter::LintIgnoreMatcher;
-use rustc_hash::{FxBuildHasher, FxHashMap};
+use oxc_linter::{AllowWarnDeny, LintIgnoreMatcher};
+use rustc_hash::{FxBuildHasher, FxHashMap, FxHashSet};
 use tokio::sync::Mutex;
-use tower_lsp_server::lsp_types::Uri;
+use tower_lsp_server::lsp_types::{Diagnostic, Pattern, Uri};
 
 use oxc_linter::{
-    AllowWarnDeny, Config, ConfigStore, ConfigStoreBuilder, ExternalPluginStore, LintOptions,
-    Oxlintrc,
+    Config, ConfigStore, ConfigStoreBuilder, ExternalPluginStore, LintOptions, Oxlintrc,
 };
 use tower_lsp_server::UriExt;
 
+use crate::linter::options::UnusedDisableDirectives;
 use crate::linter::{
     error_with_position::DiagnosticReport,
     isolated_lint_handler::{IsolatedLintHandler, IsolatedLintHandlerOptions},
-    options::{LintOptions as LSPLintOptions, Run, UnusedDisableDirectives},
+    options::{LintOptions as LSPLintOptions, Run},
     tsgo_linter::TsgoLinter,
 };
-use crate::{ConcurrentHashMap, OXC_CONFIG_FILE};
+use crate::utils::normalize_path;
+use crate::{ConcurrentHashMap, LINT_CONFIG_FILE};
 
 use super::config_walker::ConfigWalker;
 
@@ -39,7 +40,7 @@ pub struct ServerLinter {
     gitignore_glob: Vec<Gitignore>,
     lint_on_run: Run,
     diagnostics: ServerLinterDiagnostics,
-    pub extended_paths: Vec<PathBuf>,
+    extended_paths: FxHashSet<PathBuf>,
 }
 
 #[derive(Debug, Default)]
@@ -52,13 +53,17 @@ impl ServerLinterDiagnostics {
     pub fn get_diagnostics(&self, path: &str) -> Option<Vec<DiagnosticReport>> {
         let mut reports = Vec::new();
         let mut found = false;
-        if let Some(Some(diagnostics)) = self.isolated_linter.pin().get(path) {
-            reports.extend(diagnostics.clone());
+        if let Some(entry) = self.isolated_linter.pin().get(path) {
             found = true;
+            if let Some(diagnostics) = entry {
+                reports.extend(diagnostics.clone());
+            }
         }
-        if let Some(Some(diagnostics)) = self.tsgo_linter.pin().get(path) {
-            reports.extend(diagnostics.clone());
+        if let Some(entry) = self.tsgo_linter.pin().get(path) {
             found = true;
+            if let Some(diagnostics) = entry {
+                reports.extend(diagnostics.clone());
+            }
         }
         if found { Some(reports) } else { None }
     }
@@ -69,9 +74,10 @@ impl ServerLinterDiagnostics {
     }
 
     pub fn get_cached_files_of_diagnostics(&self) -> Vec<String> {
-        let mut files = Vec::new();
         let isolated_files = self.isolated_linter.pin().keys().cloned().collect::<Vec<_>>();
         let tsgo_files = self.tsgo_linter.pin().keys().cloned().collect::<Vec<_>>();
+
+        let mut files = Vec::with_capacity(isolated_files.len() + tsgo_files.len());
         files.extend(isolated_files);
         files.extend(tsgo_files);
         files.dedup();
@@ -85,7 +91,7 @@ impl ServerLinter {
         let mut nested_ignore_patterns = Vec::new();
         let (nested_configs, mut extended_paths) =
             Self::create_nested_configs(&root_path, options, &mut nested_ignore_patterns);
-        let config_path = options.config_path.as_ref().map_or(OXC_CONFIG_FILE, |v| v);
+        let config_path = options.config_path.as_ref().map_or(LINT_CONFIG_FILE, |v| v);
         let config = normalize_path(root_path.join(config_path));
         let oxlintrc = if config.try_exists().is_ok_and(|exists| exists) {
             if let Ok(oxlintrc) = Oxlintrc::from_file(&config) {
@@ -104,13 +110,10 @@ impl ServerLinter {
 
         let base_patterns = oxlintrc.ignore_patterns.clone();
 
-        let config_builder = ConfigStoreBuilder::from_oxlintrc(
-            false,
-            oxlintrc,
-            None,
-            &mut ExternalPluginStore::default(),
-        )
-        .unwrap_or_default();
+        let mut external_plugin_store = ExternalPluginStore::new(false);
+        let config_builder =
+            ConfigStoreBuilder::from_oxlintrc(false, oxlintrc, None, &mut external_plugin_store)
+                .unwrap_or_default();
 
         // TODO(refactor): pull this into a shared function, because in oxlint we have the same functionality.
         let use_nested_config = options.use_nested_configs();
@@ -120,7 +123,6 @@ impl ServerLinter {
                 && nested_configs.pin().values().any(|config| config.plugins().has_import()));
 
         extended_paths.extend(config_builder.extended_paths.clone());
-        let external_plugin_store = ExternalPluginStore::default();
         let base_config = config_builder.build(&external_plugin_store).unwrap_or_else(|err| {
             warn!("Failed to build config: {err}");
             ConfigStoreBuilder::empty().build(&external_plugin_store).unwrap()
@@ -135,7 +137,6 @@ impl ServerLinter {
             },
             ..Default::default()
         };
-
         let config_store = ConfigStore::new(
             base_config,
             if use_nested_config {
@@ -147,7 +148,7 @@ impl ServerLinter {
             } else {
                 FxHashMap::default()
             },
-            ExternalPluginStore::default(),
+            external_plugin_store,
         );
 
         let isolated_linter = IsolatedLintHandler::new(
@@ -156,10 +157,10 @@ impl ServerLinter {
             &IsolatedLintHandlerOptions {
                 use_cross_module,
                 root_path: root_path.to_path_buf(),
-                tsconfig_path: options
-                    .ts_config_path
-                    .as_ref()
-                    .map(|path| Path::new(path).to_path_buf()),
+                tsconfig_path: options.ts_config_path.as_ref().map(|path| {
+                    let path = Path::new(path).to_path_buf();
+                    if path.is_relative() { root_path.join(path) } else { path }
+                }),
             },
         );
 
@@ -188,8 +189,8 @@ impl ServerLinter {
         root_path: &Path,
         options: &LSPLintOptions,
         nested_ignore_patterns: &mut Vec<(Vec<String>, PathBuf)>,
-    ) -> (ConcurrentHashMap<PathBuf, Config>, Vec<PathBuf>) {
-        let mut extended_paths = Vec::new();
+    ) -> (ConcurrentHashMap<PathBuf, Config>, FxHashSet<PathBuf>) {
+        let mut extended_paths = FxHashSet::default();
         // nested config is disabled, no need to search for configs
         if !options.use_nested_configs() {
             return (ConcurrentHashMap::default(), extended_paths);
@@ -211,17 +212,17 @@ impl ServerLinter {
             };
             // Collect ignore patterns and their root
             nested_ignore_patterns.push((oxlintrc.ignore_patterns.clone(), dir_path.to_path_buf()));
+            let mut external_plugin_store = ExternalPluginStore::new(false);
             let Ok(config_store_builder) = ConfigStoreBuilder::from_oxlintrc(
                 false,
                 oxlintrc,
                 None,
-                &mut ExternalPluginStore::default(),
+                &mut external_plugin_store,
             ) else {
                 warn!("Skipping config (builder failed): {}", file_path.display());
                 continue;
             };
             extended_paths.extend(config_store_builder.extended_paths.clone());
-            let external_plugin_store = ExternalPluginStore::default();
             let config = config_store_builder.build(&external_plugin_store).unwrap_or_else(|err| {
                 warn!("Failed to build nested config for {}: {:?}", dir_path.display(), err);
                 ConfigStoreBuilder::empty().build(&external_plugin_store).unwrap()
@@ -282,17 +283,19 @@ impl ServerLinter {
             .collect()
     }
 
-    pub async fn revalidate_diagnostics(
-        &self,
-        uris: Vec<Uri>,
-    ) -> ConcurrentHashMap<String, Vec<DiagnosticReport>> {
-        let map = ConcurrentHashMap::default();
+    pub async fn revalidate_diagnostics(&self, uris: Vec<Uri>) -> Vec<(String, Vec<Diagnostic>)> {
+        let mut diagnostics = Vec::with_capacity(uris.len());
         for uri in uris {
-            if let Some(diagnostics) = self.run_single(&uri, None, ServerLinterRun::Always).await {
-                map.pin().insert(uri.to_string(), diagnostics);
+            if let Some(file_diagnostic) =
+                self.run_single(&uri, None, ServerLinterRun::Always).await
+            {
+                diagnostics.push((
+                    uri.to_string(),
+                    file_diagnostic.into_iter().map(|d| d.diagnostic).collect(),
+                ));
             }
         }
-        map
+        diagnostics
     }
 
     fn is_ignored(&self, uri: &Uri) -> bool {
@@ -375,31 +378,39 @@ impl ServerLinter {
             // TODO: only the TsgoLinter needs to be dropped or created
             || old_options.type_aware != new_options.type_aware
     }
-}
 
-/// Normalize a path by removing `.` and resolving `..` components,
-/// without touching the filesystem.
-pub fn normalize_path<P: AsRef<Path>>(path: P) -> PathBuf {
-    let mut result = PathBuf::new();
+    pub fn get_watch_patterns(&self, options: &LSPLintOptions, root_path: &Path) -> Vec<Pattern> {
+        let mut watchers = vec![
+            options.config_path.as_ref().unwrap_or(&"**/.oxlintrc.json".to_string()).to_owned(),
+        ];
 
-    for component in path.as_ref().components() {
-        match component {
-            Component::ParentDir => {
-                result.pop();
+        for path in &self.extended_paths {
+            // ignore .oxlintrc.json files when using nested configs
+            if path.ends_with(".oxlintrc.json") && options.use_nested_configs() {
+                continue;
             }
-            Component::CurDir => {
-                // Skip current directory component
-            }
-            Component::Normal(c) => {
-                result.push(c);
-            }
-            Component::RootDir | Component::Prefix(_) => {
-                result.push(component.as_os_str());
-            }
+
+            let pattern = path.strip_prefix(root_path).unwrap_or(path);
+
+            watchers.push(normalize_path(pattern).to_string_lossy().to_string());
         }
+        watchers
     }
 
-    result
+    pub fn get_changed_watch_patterns(
+        &self,
+        old_options: &LSPLintOptions,
+        new_options: &LSPLintOptions,
+        root_path: &Path,
+    ) -> Option<Vec<Pattern>> {
+        if old_options.config_path == new_options.config_path
+            && old_options.use_nested_configs() == new_options.use_nested_configs()
+        {
+            return None;
+        }
+
+        Some(self.get_watch_patterns(new_options, root_path))
+    }
 }
 
 #[cfg(test)]
@@ -407,21 +418,15 @@ mod test {
     use std::path::{Path, PathBuf};
 
     use crate::{
+        ConcurrentHashMap,
         linter::{
+            error_with_position::DiagnosticReport,
             options::{LintOptions, Run, UnusedDisableDirectives},
-            server_linter::{ServerLinter, normalize_path},
+            server_linter::{ServerLinter, ServerLinterDiagnostics},
         },
         tester::{Tester, get_file_path},
     };
     use rustc_hash::FxHashMap;
-
-    #[test]
-    fn test_normalize_path() {
-        assert_eq!(
-            normalize_path(Path::new("/root/directory/./.oxlintrc.json")),
-            Path::new("/root/directory/.oxlintrc.json")
-        );
-    }
 
     #[test]
     fn test_create_nested_configs_with_disabled_nested_configs() {
@@ -455,6 +460,45 @@ mod test {
         assert!(configs_dirs[2].ends_with("deep2"));
         assert!(configs_dirs[1].ends_with("deep1"));
         assert!(configs_dirs[0].ends_with("init_nested_configs"));
+    }
+
+    #[test]
+    fn test_get_diagnostics_found_and_none_entries() {
+        let key = "file:///test.js".to_string();
+
+        // Case 1: Both entries present, Some diagnostics
+        let diag = DiagnosticReport::default();
+        let diag_map = ConcurrentHashMap::default();
+        diag_map.pin().insert(key.clone(), Some(vec![diag.clone()]));
+        let tsgo_map = ConcurrentHashMap::default();
+        tsgo_map.pin().insert(key.clone(), Some(vec![diag]));
+
+        let server_diag = super::ServerLinterDiagnostics {
+            isolated_linter: std::sync::Arc::new(diag_map),
+            tsgo_linter: std::sync::Arc::new(tsgo_map),
+        };
+        let result = server_diag.get_diagnostics(&key);
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().len(), 2);
+
+        // Case 2: Entry present, but value is None
+        let diag_map_none = ConcurrentHashMap::default();
+        diag_map_none.pin().insert(key.clone(), None);
+        let tsgo_map_none = ConcurrentHashMap::default();
+        tsgo_map_none.pin().insert(key.clone(), None);
+
+        let server_diag_none = ServerLinterDiagnostics {
+            isolated_linter: std::sync::Arc::new(diag_map_none),
+            tsgo_linter: std::sync::Arc::new(tsgo_map_none),
+        };
+        let result_none = server_diag_none.get_diagnostics(&key);
+        assert!(result_none.is_some());
+        assert_eq!(result_none.unwrap().len(), 0);
+
+        // Case 3: No entry at all
+        let server_diag_empty = ServerLinterDiagnostics::default();
+        let result_empty = server_diag_empty.get_diagnostics(&key);
+        assert!(result_empty.is_none());
     }
 
     #[test]
@@ -562,9 +606,7 @@ mod test {
     #[test]
     fn test_cross_module_no_cycle_nested_config() {
         Tester::new("fixtures/linter/cross_module_nested_config", None)
-            .test_and_snapshot_single_file("dep-a.ts");
-        Tester::new("fixtures/linter/cross_module_nested_config", None)
-            .test_and_snapshot_single_file("folder/folder-dep-a.ts");
+            .test_and_snapshot_multiple_file(&["dep-a.ts", "folder/folder-dep-a.ts"]);
     }
 
     #[test]
@@ -603,8 +645,10 @@ mod test {
     #[test]
     fn test_root_ignore_patterns() {
         let tester = Tester::new("fixtures/linter/ignore_patterns", None);
-        tester.test_and_snapshot_single_file("ignored-file.ts");
-        tester.test_and_snapshot_single_file("another_config/not-ignored-file.ts");
+        tester.test_and_snapshot_multiple_file(&[
+            "ignored-file.ts",
+            "another_config/not-ignored-file.ts",
+        ]);
     }
 
     #[test]
@@ -627,5 +671,24 @@ mod test {
             Some(LintOptions { type_aware: true, run: Run::OnSave, ..Default::default() }),
         );
         tester.test_and_snapshot_single_file("no-floating-promises/index.ts");
+    }
+
+    #[test]
+    fn test_ignore_js_plugins() {
+        let tester = Tester::new(
+            "fixtures/linter/js_plugins",
+            Some(LintOptions { run: Run::OnSave, ..Default::default() }),
+        );
+        tester.test_and_snapshot_single_file("index.js");
+    }
+
+    // https://github.com/oxc-project/oxc/issues/14565
+    #[test]
+    fn test_issue_14565() {
+        let tester = Tester::new(
+            "fixtures/linter/issue_14565",
+            Some(LintOptions { run: Run::OnSave, ..Default::default() }),
+        );
+        tester.test_and_snapshot_single_file("foo-bar.astro");
     }
 }

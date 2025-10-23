@@ -307,6 +307,11 @@ pub fn optional_accessor_property(span: Span) -> OxcDiagnostic {
 }
 
 #[cold]
+pub fn constructor_accessor(span: Span) -> OxcDiagnostic {
+    OxcDiagnostic::error("Classes may not have a field named 'constructor'").with_label(span)
+}
+
+#[cold]
 pub fn optional_definite_property(span: Span) -> OxcDiagnostic {
     // NOTE: could not find an error code when tsc parses this; its parser panics.
     OxcDiagnostic::error("A property cannot be both optional and definite.")
@@ -684,6 +689,33 @@ pub fn index_signature_question_mark(span: Span) -> OxcDiagnostic {
 #[cold]
 pub fn index_signature_type_annotation(span: Span) -> OxcDiagnostic {
     ts_error("1021", "An index signature must have a type annotation.").with_label(span)
+}
+
+#[cold]
+pub fn abstract_method_cannot_have_implementation(name: &str, span: Span) -> OxcDiagnostic {
+    ts_error(
+        "1245",
+        format!("Method '{name}' cannot have an implementation because it is marked abstract."),
+    )
+    .with_label(span)
+}
+
+#[cold]
+pub fn abstract_property_cannot_have_initializer(name: &str, span: Span) -> OxcDiagnostic {
+    ts_error(
+        "1267",
+        format!("Property '{name}' cannot have an initializer because it is marked abstract."),
+    )
+    .with_label(span)
+}
+
+#[cold]
+pub fn abstract_accessor_cannot_have_implementation(name: &str, span: Span) -> OxcDiagnostic {
+    ts_error(
+        "1318",
+        format!("Accessor '{name}' cannot have an implementation because it is marked abstract."),
+    )
+    .with_label(span)
 }
 
 #[cold]

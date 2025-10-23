@@ -4,6 +4,312 @@ All notable changes to this package will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0).
 
+## [1.24.0] - 2025-10-22
+
+### 🚀 Features
+
+- dd1fdd4 linter: Add react/forbid-dom-props rule (#14365) (Mikhail Baev)
+- 8b02074 linter: Merge vitest/prefer-to-be rule into existing jest/prefer-to-be rule implementation (#14738) (Tyler Earls)
+- ba6517b linter: Add `no-warning-comments` rule (#14734) (Iván Ovejero)
+- 5858641 linter: Implement constructor-super rule (#14506) (Tyler Earls)
+- ae2003c semantic: Add `symbol_id` to ts function type binding idents (#14673) (camc314)
+- 9cd7a67 linter/no-unused-vars: Support `ignoreUsingDeclarations` option (#14632) (camc314)
+
+### 🐛 Bug Fixes
+
+- 831974f linter: Postmessage is not called on window (#14192) (Kenzo Wada)
+- 801e1d1 linter: Error on unexpected tokens when declaring lint rule (#14881) (howen)
+- dc03c3a linter/no-invalid-fetch-options: Ignore non static method (#14806) (camc314)
+- 28e76ec oxlint: Resolving JS plugin failing when `extends` is used (#14556) (camc314)
+- aa562f7 linter/no-unused-private-class-members: Fix false positive in default param (#14801) (camc314)
+- ad12974 linter: `no-unused-vars`: allow updates in for loop test/update (#14766) (camchenry)
+- 78ee7b8 linter/plugins: Handle utf16 characters within comment spans (#14768) (Arsh)
+- c69201c linter: Copy over js plugins when applying overrides (#14542) (Arsh)
+- 6bb9902 linter: Improve `jest/no_export` heuristic (#14620) (Arsh)
+- c8ea37d linter: `unicorn/filename-case` report only on the first js block for `astro`, `vue` and `svelte` files (#14599) (Sysix)
+- baab7eb semantic: Fix quote handling in jsdoc parser(#13776) (#14561) (Li Wei)
+
+### 🚜 Refactor
+
+- 1e93ceb linter/no-unwanted-polyfillio: Move `NEXT_POLYFILLED_FEATURES` to shared utils (#14793) (shulaoda)
+- 3bfb8e1 linter: Make `Message.span` public (#14601) (Sysix)
+- 544c092 linter/no-process-env: Restructure match to improve generated node types (#14643) (camc314)
+- 90f5f89 linter: Remove `run_on_symbol` (#14610) (camchenry)
+- b301795 linter: Remove unused allocator param in `Runtime` for LSP & tests (#14489) (Sysix)
+
+### 📚 Documentation
+
+- 3f1c3c7 linter: Add documentation on `ignoreRestSiblings` option for `no-unused-vars` rule (#14807) (howen)
+- 9cd4160 linter: Fix documentation formatting for max_params options (#14744) (Connor Shea)
+- cbdf261 linter: Document no-shadow-restricted-names rule config options. (#14843) (Connor Shea)
+- a6f720b linter: Expose use-isnan rule config options. (#14844) (Connor Shea)
+- 7dc609b linter: Add docs for no-param-reassign config options. (#14849) (Connor Shea)
+- 983c31c linter: Improve the Options documentation for no-empty-function rule (#14789) (Connor Shea)
+- 77e4b30 linter: Add autogen doc support for max_nested_describe in jest plugin. (#14797) (Connor Shea)
+- b6402dd linter: Move documentation comments for the valid-typeof rule to the struct (#14841) (Connor Shea)
+- a02567f linter: Update no-invalid-regexp rule to expose documentation for config options (#14838) (Connor Shea)
+- ebca4a6 linter: Update no-plusplus rule to expose documentation for config options (#14837) (Connor Shea)
+- 1665ab4 linter: Add doc comments for func_style options. (#14847) (Connor Shea)
+- b1fb269 linter: Add configuration docs info for import/namespace rule (#14799) (Connor Shea)
+- c80da95 linter: Add configuration docs to no-useless-escape lint rule. (#14791) (Connor Shea)
+- 7b64f27 linter: Improve `no-plusplus` and `no-irregular-whitespace` rule docs (#14790) (Connor Shea)
+
+### ⚡ Performance
+
+- 11b055e linter: `no-unused-private-class-members`: only run when there are any classes (#14869) (camchenry)
+- 5493278 linter: `no-dupe-class-members`: only run when there are any classes (#14867) (camchenry)
+- ef53462 linter: `no-this-before-super`: only run when file contains super or this (#14866) (camchenry)
+- 19d168a linter: `max-classes-per-file`: skip when no classes (#14865) (camchenry)
+- b8f8ce5 linter: `id-length`: reduce allocations and add more ASCII checks (#14821) (camchenry)
+- bb4347c linter: Use precomputed extension (#14819) (camchenry)
+- 92b4302 linter: `id-length`: check if ident is ASCII before segmenting (#14767) (camchenry)
+- 7be9489 linter: Cache file extension (#14794) (camchenry)
+- 86ecae1 linter: Remove simple `phf_map!` calls (#14701) (camchenry)
+- 2fe9dfa linter: Update `prefer-node-protocol` to use diverging match (#14699) (camchenry)
+- 07db921 linter: Update `catch-error-name` to use top-level match (#14698) (camchenry)
+- 2582a50 linter: Update `no-extra-non-null-assertion` to use diverging match (#14697) (camchenry)
+- 231bac0 linter: Update `typescript/array-type` to only have top-level match (#14696) (camchenry)
+- 6b9b972 linter: Refactor `jsdoc/require-yields` to deref instead of `self.0` (#14695) (camchenry)
+- 9ac561c linter: Inline `is_function_node` calls for some jsdoc rules (#14694) (camchenry)
+- 5e014cb linter: Refactor `jest/require-hook` to use top-level match (#14693) (camchenry)
+- c8d775c linter: Refactor `jest/no-conditional-in-test` to use diverging match (#14692) (camchenry)
+- b666c26 linter: Move root scope check into match arms in `import/no-webpack-loader-syntax` (#14691) (camchenry)
+- be33a15 linter: Refactor `no-amd` to do scope check after node type check (#14690) (camchenry)
+- 71cfeaa linter: Refactor `no-unsafe-finally` to have a diverging match as first statement (#14689) (camchenry)
+- 801bb10 linter: Refactor `no-labels` to use top-level match on node kind (#14688) (camchenry)
+- 1217411 linter: Refactor class-methods-use-this to be analyzed (#14687) (camchenry)
+- f830bea linter: Add codegen support for `is_member_expression_kind` in match (#14677) (camchenry)
+- 400a99a linter: Switch `if !matches!(node.kind(), ...)` to match block (#14650) (camchenry)
+- f2c33f5 linter: Rearrange rules for node type analysis (#14648) (camchenry)
+- 73f2cbb linter: Support getting `as_member_expression_kind()` variants (#14642) (camchenry)
+- 58e17ae linter: Only check for call expr once in `unicorn/no-array-method-this` (#14641) (camchenry)
+- 12a9934 linter: Detect diverging match blocks for node type skipping (#14631) (camchenry)
+- 82196e7 linter: Update `react/prefer-es6-class` to use top-level match (#14630) (camchenry)
+- 48e3348 linter: Update linter codegen to support wildcard with empty tuple (#14611) (camchenry)
+- 0485859 linter: Update `no-const-assign` to run on nodes instead of symbols (#14609) (camchenry)
+- 976bde0 linter: Run `next/no-duplicate-head` on nodes instead of symbols (#14607) (camchenry)
+- c821c50 linter: Switch `no-param-reassign` to run on nodes (#14604) (camchenry)
+- 676ee99 linter: Run `no-class-assign` on class nodes instead of symbols (#14578) (camchenry)
+- 463be73 linter: Support `as_*` for node type codegen (#14582) (camchenry)
+- 8df1e24 linter: Use top-level match for `const-comparisons` (#14581) (camchenry)
+
+### 🧪 Testing
+
+- a64180e linter/no-fallthrough: Add another test case with logical expr (#14832) (camc314)
+- 1fcf56c linter/no-fallthrough: Add test for switch with logical operators + break (#14811) (camc314)
+- cd9ef3e linter: Add test case with function params in no-const-assign (#14674) (camc314)
+
+
+## [1.23.0] - 2025-10-13
+
+### 🚀 Features
+
+- 452d128 linter: Node/no_process_env (#14536) (Kenneth Skovhus)
+- a9e1261 linter: Implement react-refresh/only-export-components (#14122) (Rintaro Itokawa)
+- a8d542b linter/no-duplicate-imports: Support `allowSeparateTypeImports` option (#14527) (camc314)
+- 75a529c linter: Add run info about what functions rules implement (#13839) (camchenry)
+
+### 🐛 Bug Fixes
+
+- 74e52f3 linter/plugins: Resolve JS plugins with ESM condition names (#14541) (magic-akari)
+- 9965676 linter/exhaustive-deps: Ignore empty strings passed to `additionalHooks` option (#14464) (Redas)
+- d0a8e3e linter: `vue/no_required_prop_with_default` called `Option::unwrap()` on a `None` value (#14491) (Sysix)
+- 1192ea2 linter: Correct `nextjs/no-typos` path handling (#14480) (shulaoda)
+- 2796b16 tsgolint: Pipe tsgolints stderr (#14477) (camc314)
+
+### 🚜 Refactor
+
+- 6440cde linter: Remove lifetime of `Message` (#14481) (Sysix)
+- 20e884e linter: Store `LintService` in `LintRunner` (#14471) (Sysix)
+- 9e9c5ba linter: Simplify built-in lint plugin checks (#14518) (camchenry)
+- 1986e0f linter/no-ex-assign: Use let-else chain (#14526) (camc314)
+- ce9bcf0 linter/no-func-assign: Use let-else chain (#14525) (camc314)
+- ea5838e linter/no-import-assign: Use let-else chain (#14524) (camc314)
+- 54b001f linter/no-new-require: Improve diagnostic message clarity (#14511) (shulaoda)
+- 650ea68 linter: Improve nextjs/no-typos rule (#14476) (shulaoda)
+
+### 📚 Documentation
+
+- 198f2e9 linter: Fix code example for `branches-sharing-code` (#14514) (camc314)
+- d776a17 linter: Improve `nextjs/no-typos` rule documentation (#14470) (shulaoda)
+
+### ⚡ Performance
+
+- aec0c08 linter: Allow analyzing node types in match blocks with guards (#14459) (camchenry)
+- 9044187 linter: Skip running node-specific rule if file contains no relevant nodes (#14457) (camchenry)
+- 422f54e linter: Only run rule run functions if implemented (#14454) (camchenry)
+- 2c228ae liner: Use top-level match for `no_obj_calls` (#14523) (camchenry)
+- c49d891 linter: Use match for `no_negated_condition` (#14522) (camchenry)
+- e222fc2 linter: Use match for `no_multi_assign` (#14521) (camchenry)
+- 4440516 linter: Refactor rules to take advantage of node type skipping (#14519) (camchenry)
+- 78261d6 linter: Refactor `no-invalid-fetch-options` to be more easily analyzed (#14458) (camchenry)
+
+
+## [1.22.0] - 2025-10-08
+
+### 🚀 Features
+
+- 9f9d25f linter/oxc: Implement `branches-sharing-code` (#14440) (camc314)
+
+
+## [1.21.0] - 2025-10-08
+
+### 🚀 Features
+
+- 83e7824 linter: Add `vue/require-default-export` rule (#14351) (Sysix)
+- ff98536 linter: Add `vue/no-import-compiler-macros` rule (#14335) (Sysix)
+
+### 🐛 Bug Fixes
+
+- 11e0440 linter/jsx-handler-name: Improve handler name position in error messages (#14174) (Takuji Shimokawa)
+- 493082c language_server: Use the first Span of the message as the primary Diagnostic range (#14057) (Sysix)
+- 6e8d2f6 language_server: Ignore JS plugins (#14379) (overlookmotel)
+- bb679b5 linter: Promise/prefer-await-to-then strict option not reading from config (#14382) (camc314)
+
+### 🚜 Refactor
+
+- 3374b8e linter/language_server: Move all lsp relevant code to `oxc_language_server` crate (#14430) (Sysix)
+- d24b74e linter/language_server: `oxc_linter::TsgoLinter::run_source` returns `Message` (#14429) (Sysix)
+- e5b7fb2 linter/language_server: `oxc_linter::Runtime::run_source` returns `Message` (#14428) (Sysix)
+
+
+## [1.20.0] - 2025-10-06
+
+### 🚀 Features
+
+- d16df93 linter: Support disable directives for type aware rules (#14052) (camc314)
+- f5c6acc linter: Add `vue/no-export-in-script-setup` rule (#14307) (Sysix)
+- 353b153 linter: Implement eslint/no-param-reassign rule (#14341) (Matthew Davis)
+- 3656908 rust: Oxc-index-vec v4.0 (#14254) (Boshen)
+- d8d3d18 linter: Add `vue/prefer-import-from-vue` rule (#14284) (Sysix)
+- f0e760b linter: Add `vue/define-props-destructuring` rule (#14272) (Sysix)
+- 7f450fc linter/unicorn: Implement require-module-specifiers (#13089) (keita hino)
+- a1e7154 linter/unicorn: Implement prefer-classlist-toggle (#14262) (camc314)
+- 8217dce linter/unicorn: Implement no-unnecessary-array-splice-count (#14255) (camc314)
+- 3d5db4a linter/unicorn: Implement no-useless-error-capture-stack-trace (#14222) (camc314)
+- b3b482a linter/unicorn: Implement prefer-top-level-await (#14247) (camc314)
+- 7931be8 linter/unicorn: Implement prefer-class-fields (#14245) (camc314)
+- a39434a linter/unicorn: Implement prefer-at (#14232) (camc314)
+
+### 🐛 Bug Fixes
+
+- e605222 linter/no-useless-undefined: Correctly respect `checkArguments` option (#14369) (camc314)
+- f1bc608 linter: Fix flaky import/no_cycle test (#14328) (Boshen)
+- 0a42d7f tsgolint: Report errors if we fail to parse tsgolint diagnostic messages (#14301) (camc314)
+- 42f8d7e linter/react-hooks: Fix diagnostic message for literal in dependency array (#14266) (camc314)
+- ece91c5 linter/react-hooks: Fix diagnostic message for duplicate dependency in array (#14265) (camc314)
+- 864fa0e linter/no-unused-expression: False positive with satisfies expressions (#14259) (camc314)
+- 46cceb8 linter/rules-of-hooks: Correctly place primary span to fix disable directive (#14237) (camc314)
+
+### 🚜 Refactor
+
+- 00dde41 tsgolint: Make parsing `TsGoLintMessage` parsing errors an enum (#14300) (camc314)
+- fc314f5 tsgolint: Make `MessageType` parsing more idomatic (#14299) (camc314)
+- a24c36e language-server/tsgolint: Use an iterator for tsgolint message parsing (#14298) (camc314)
+- 8be432a tsgolint: Use an iterator for tsgolint message parsing (#14297) (camc314)
+- 57daa54 tsgolint: Remove always `Some` option wrapper (#14296) (camc314)
+- 79eadf8 linter: Introduce `LintRunner` (#14051) (camc314)
+
+### 🧪 Testing
+
+- 55ebb8b linter: Add test for `disable_for_this_section` fix (#14240) (Sysix)
+- a7e8662 linter: Port unicorn test cases to no-named-default (#14239) (camc314)
+
+
+## [1.19.0] - 2025-09-29
+
+### 🚀 Features
+
+- eb6345f linter/unicorn: Implement no-array-callback-reference (#14230) (camc314)
+- c64fa61 linter: Add `import/no-named-export` rule (#14229) (yefan)
+- d30159b linter: Fix for unsorted keys (#14225) (Hamir Mahal)
+- c0e461f linter: Add `unicorn/no-array-sort` rule (#14117) (Cason Kervis)
+- 00954de linter/plugins: Remove `--js-plugins` CLI option (#14134) (overlookmotel)
+- b4d716f linter/plugins: Move custom JS plugin config to `jsPlugins` (#14133) (overlookmotel)
+- 60f0b3f linter: Add fix for `preserve-caught-error` (#14104) (Cam McHenry)
+- 2d74c17 linter/no-multiple-resolved: Implement promise rule no-multiple-resolved (#13420) (Li Wei)
+- 5e05d1b semantic: Put jsdoc behind linter feature, remove runtime flag (#14140) (Boshen)
+- 71af1aa semantic: Add "linter" feature (#14139) (Boshen)
+- 1a6d7ae linter: Add `vue/max-props` rule (#14039) (yefan)
+- 9c3afea linter/plugins: Support fixes (#14094) (overlookmotel)
+- 1472147 linter: Move `no-unused-expressions` to correctness (#14099) (camchenry)
+- 8b7c784 linter: Add react/jsx-pascal-case rule (#12165) (Mikhail Baev)
+
+### 🐛 Bug Fixes
+
+- e045391 linter/plugins: Error on JS plugin with reserved name (#14226) (overlookmotel)
+- 6005015 linter: Correctly handle CRLF when inserting disable comments in framework files (#14228) (shulaoda)
+- e37c435 language_server: Correct position for "ignore this rule for this file" in vue/astro/svelte files (#14187) (Sysix)
+- 03d1684 linter/plugins: Output warning on first JS plugin load (#14165) (overlookmotel)
+- fc7026d linter: Add missing `NODE_TYPES`, `cfg_id` method for no-multiple-resolved (#14147) (camc314)
+- 180c790 linter: Fix false positive in `no-restricted-globals` (#14135) (yefan)
+- 9f3e2bc linter/plugins: Output errors thrown in JS plugins (#14096) (overlookmotel)
+- 357a2d3 linter: Add support for `tsgolint.exe` on Windows (#14101) (camchenry)
+- 2604b28 linter: Fix lint errors building `oxlint` (#14095) (overlookmotel)
+
+### 🚜 Refactor
+
+- 4c3f1ac linter: Move `BUILT_IN_ERRORS` to utils file (#14221) (camc314)
+- 7a0eb57 language_server: Refactor ignore code action logic as a linter fix (#14183) (Sysix)
+- 497236e semantic: Move AstNode::cfg_id to struct of arrays in AstNodes (#14137) (Boshen)
+- 5ba765c semantic: Move AstNode::flags to struct of arrays in AstNodes (#14136) (Boshen)
+- ffc810d linter: `preserve-caught-errors`: rename config and add docs (#14103) (camchenry)
+- f91db73 linter: Add `CompositeFix::merge_fixes_fallible` method (#14093) (overlookmotel)
+- e55ffe0 curly: Enhance curly brace rule configuration and handling (#13498) (Antoine Zanardi)
+- 2fb69fd eslint/eqeqeq: Clean up implementation and improve documentation (#13527) (Antoine Zanardi)
+
+### ⚡ Performance
+
+- b6d2546 linter: Reduce string cloning in tsgo fixes (#14092) (overlookmotel)
+- c94c5dc linter: Remove allocation in `CompositeFix::merge_fixes` (#14090) (overlookmotel)
+
+
+## [1.18.0] - 2025-09-24
+
+### 🐛 Bug Fixes
+
+- 444fcf0 linter: Fix false positive in `vue/no-required-prop-with-default` (#14066) (yefan)
+- 2186b28 linter: Fix Arc<ModuleRecord> memory leak and lifecycle issues (#14049) (Boshen)
+
+### ⚡ Performance
+
+- c2f7459 language_server: Avoid cloning on message conversion (#14058) (Sysix)
+
+
+## [1.17.0] - 2025-09-23
+
+### 🚀 Features
+
+- 15eb326 linter: Add `vue/no-required-prop-with-default` rule (#13613) (yefan)
+- 5d3ba00 linter: Add `vue/require-typed-ref` rule (#13857) (yefan)
+- 8221a01 linter: Add `eslint/no-misleading-character-class` (#13365) (Sysix)
+
+### 🐛 Bug Fixes
+
+- b8790c2 language_server: Output correct position for parser & semantic errors (#14010) (Sysix)
+- 4d3c6e1 linter: Support let-chains in codegen node type detection (#14006) (camc314)
+- 27022ab linter/switch-case-braces: Add support for string including colon on case expression (#13687) (Lukinoh)
+- fa866b3 linter: Sort optimized/unoptimized diagnostics before comparison (#13850) (camc314)
+- fac7624 linter/plugins: Improve error for no JS plugins (#13858) (overlookmotel)
+
+### 🚜 Refactor
+
+- b353750 linter/plugins: Remove unnecessary `Serialize` derives (#14031) (overlookmotel)
+- 36ac0fb language_server: Don't create `mpsc` channel (#14011) (Sysix)
+- 2e9ae3f linter: Make disable directives own the rule name (#13987) (camc314)
+- 42e2c1d linter: Remove `Rc` from `DisableDirectives` (#13924) (camc314)
+- e90bfe3 linter: Remove double reference in unicorn/error-message (#13916) (camc314)
+- 83791a0 linter: Remove double reference in vue/jsx-no-undef (#13915) (camc314)
+- ebd22de linter: Remove double reference in vue/require-typed-ref (#13914) (camc314)
+- 7e0d736 linter/plugins: Rename `--experimental-js-plugins` to `--js-plugins` (#13860) (overlookmotel)
+
+### ⚡ Performance
+
+- 4d04c6e linter/plugins: Flatten `LintFileResult` fields (#14033) (overlookmotel)
+- 06363e0 linter: Add node type codegen support for `match node.kind()` (#13736) (camchenry)
+- b53292d linter: Use unstable sort where possible (#13818) (sapphi-red)
+
+
 ## [1.16.0] - 2025-09-16
 
 ### 🚀 Features

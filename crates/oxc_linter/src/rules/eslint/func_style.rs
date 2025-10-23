@@ -57,9 +57,13 @@ impl From<&str> for NamedExports {
 #[derive(Debug, Default, Clone, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase", default)]
 pub struct FuncStyle {
+    /// The style to enforce. Either "expression" (default) or "declaration".
     style: Style,
+    /// When true, arrow functions are allowed regardless of the style setting.
     allow_arrow_functions: bool,
+    /// When true, functions with type annotations are allowed regardless of the style setting.
     allow_type_annotation: bool,
+    /// Override the style specifically for named exports. Can be "expression", "declaration", or "ignore" (default).
     named_exports: Option<NamedExports>,
 }
 
@@ -191,10 +195,10 @@ declare_oxc_lint!(
 );
 
 fn is_ancestor_export_name_decl<'a>(node: &AstNode<'a>, ctx: &LintContext<'a>) -> bool {
-    if let Some(export_decl_ancestor) = nth_outermost_paren_parent(node, ctx, 2) {
-        if let AstKind::ExportNamedDeclaration(_) = export_decl_ancestor.kind() {
-            return true;
-        }
+    if let Some(export_decl_ancestor) = nth_outermost_paren_parent(node, ctx, 2)
+        && let AstKind::ExportNamedDeclaration(_) = export_decl_ancestor.kind()
+    {
+        return true;
     }
     false
 }

@@ -141,36 +141,34 @@ impl Rule for NoLabels {
     }
 
     fn run<'a>(&self, node: &AstNode<'a>, ctx: &LintContext<'a>) {
-        if let AstKind::LabeledStatement(labeled_stmt) = node.kind() {
-            if !self.is_allowed(&labeled_stmt.body) {
-                let label_span = labeled_stmt.label.span;
+        match node.kind() {
+            AstKind::LabeledStatement(labeled_stmt) if !self.is_allowed(&labeled_stmt.body) => {
                 ctx.diagnostic(no_labels_diagnostic(
                     "Labeled statement is not allowed",
-                    label_span,
+                    labeled_stmt.label.span,
                 ));
             }
-        }
-
-        if let AstKind::BreakStatement(break_stmt) = node.kind() {
-            let Some(label) = &break_stmt.label else { return };
-
-            if !self.is_allowed_in_break_or_continue(label, node.id(), ctx) {
-                ctx.diagnostic(no_labels_diagnostic(
-                    "Label in break statement is not allowed",
-                    label.span,
-                ));
+            AstKind::BreakStatement(break_stmt) => {
+                if let Some(label) = &break_stmt.label
+                    && !self.is_allowed_in_break_or_continue(label, node.id(), ctx)
+                {
+                    ctx.diagnostic(no_labels_diagnostic(
+                        "Label in break statement is not allowed",
+                        label.span,
+                    ));
+                }
             }
-        }
-
-        if let AstKind::ContinueStatement(cont_stmt) = node.kind() {
-            let Some(label) = &cont_stmt.label else { return };
-
-            if !self.is_allowed_in_break_or_continue(label, node.id(), ctx) {
-                ctx.diagnostic(no_labels_diagnostic(
-                    "Label in continue statement is not allowed",
-                    label.span,
-                ));
+            AstKind::ContinueStatement(cont_stmt) => {
+                if let Some(label) = &cont_stmt.label
+                    && !self.is_allowed_in_break_or_continue(label, node.id(), ctx)
+                {
+                    ctx.diagnostic(no_labels_diagnostic(
+                        "Label in continue statement is not allowed",
+                        label.span,
+                    ));
+                }
             }
+            _ => {}
         }
     }
 }
@@ -192,10 +190,10 @@ impl NoLabels {
         ctx: &LintContext<'a>,
     ) -> bool {
         for ancestor_kind in ctx.nodes().ancestor_kinds(stmt_node_id) {
-            if let AstKind::LabeledStatement(labeled_stmt) = ancestor_kind {
-                if label.name == labeled_stmt.label.name {
-                    return self.is_allowed(&labeled_stmt.body);
-                }
+            if let AstKind::LabeledStatement(labeled_stmt) = ancestor_kind
+                && label.name == labeled_stmt.label.name
+            {
+                return self.is_allowed(&labeled_stmt.body);
             }
         }
         false

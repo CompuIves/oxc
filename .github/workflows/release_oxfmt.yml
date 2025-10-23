@@ -88,14 +88,13 @@ jobs:
       - uses: taiki-e/checkout-action@b13d20b7cda4e2f325ef19895128f7ff735c0b3d # v1.3.1
 
       - name: Install cross
-        uses: taiki-e/install-action@2fdc5fd6ac805b0f8256893bd4c807bcb666af00 # v2.61.8
+        uses: taiki-e/install-action@e43a5023a747770bfcb71ae048541a681714b951 # v2.62.33
         with:
           tool: cross
 
       - name: Rust Cache
-        uses: Swatinem/rust-cache@98c8021b550208e191a6a3145459bfc9fb29c4c0 # v2.8.0
-        with:
-          shared-key: release-${{ matrix.target }}
+        uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # v2.8.1
+      # Please do not set a cache for release builds; they are evicted before they can be re-used, yet they consume significant cache storage before eviction.
 
       - name: Add Rust Target
         run: rustup target add ${{ matrix.target }}
@@ -145,7 +144,7 @@ jobs:
           fetch-depth: 0 # for changelog
           persist-credentials: false
 
-      - uses: oxc-project/setup-rust@d286d43bc1f606abbd98096666ff8be68c8d5f57 # v1.0.2
+      - uses: oxc-project/setup-rust@1ff88fdaffd6ae35c0fb32ccc159340b37d0beac # v1.0.7
         with:
           restore-cache: false
           tools: cargo-release-oxc
@@ -177,7 +176,7 @@ jobs:
 
       - name: Generate npm packages
         run: |
-          node npm/oxfmt/scripts/generate-packages.mjs
+          node npm/oxfmt/scripts/generate-packages.js
           cat npm/oxfmt/package.json
           for package in npm/oxfmt*; do cat $package/package.json ; echo ; done
 
@@ -193,15 +192,13 @@ jobs:
           done
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@6cbd405e2c4e67a21c47fa9e383d020e4e28b836 # v2.3.3
+        uses: softprops/action-gh-release@6da8fa9354ddfdc4aeace5fc48d7f679b5214090 # v2.4.1
         with:
           body: ${{ steps.run.outputs.CHANGELOG }}
           prerelease: true
           draft: false
-          files: oxfmt-*
           name: oxfmt v${{ needs.check.outputs.version }}
           tag_name: oxfmt_v${{ needs.check.outputs.version }}
-          fail_on_unmatched_files: true
           target_commitish: ${{ github.sha }}
 
       - name: wait 3 minutes for smoke test

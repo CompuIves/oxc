@@ -1,17 +1,20 @@
 #![expect(clippy::self_named_module_files)] // for rules.rs
-#![allow(clippy::literal_string_with_formatting_args)]
 
-use std::{path::Path, rc::Rc};
+use std::{
+    mem,
+    path::Path,
+    ptr::{self, NonNull},
+    rc::Rc,
+};
 
 use oxc_allocator::Allocator;
-use oxc_ast::ast_kind::AST_TYPE_MAX;
+use oxc_ast::{ast::Program, ast_kind::AST_TYPE_MAX};
 use oxc_ast_macros::ast;
 use oxc_ast_visit::utf8_to_utf16::Utf8ToUtf16;
 use oxc_data_structures::box_macros::boxed_array;
+use oxc_diagnostics::OxcDiagnostic;
 use oxc_semantic::AstNode;
-
-#[cfg(test)]
-mod tester;
+use oxc_span::Span;
 
 mod ast_util;
 mod config;
@@ -21,8 +24,6 @@ mod external_linter;
 mod external_plugin_store;
 mod frameworks;
 mod globals;
-#[cfg(feature = "language_server")]
-mod lsp;
 mod module_graph_visitor;
 mod module_record;
 mod options;
@@ -42,24 +43,34 @@ mod generated {
     mod rule_runner_impls;
 }
 
+#[cfg(test)]
+mod tester;
+
+mod lint_runner;
+
+pub use crate::disable_directives::{
+    DisableDirectives, DisableRuleComment, RuleCommentRule, RuleCommentType,
+    create_unused_directives_diagnostics,
+};
 pub use crate::{
     config::{
-        BuiltinLintPlugins, Config, ConfigBuilderError, ConfigStore, ConfigStoreBuilder,
-        ESLintRule, LintIgnoreMatcher, LintPlugins, Oxlintrc, ResolvedLinterState,
+        Config, ConfigBuilderError, ConfigStore, ConfigStoreBuilder, ESLintRule, LintIgnoreMatcher,
+        LintPlugins, Oxlintrc, ResolvedLinterState,
     },
     context::{ContextSubHost, LintContext},
     external_linter::{
-        ExternalLinter, ExternalLinterLintFileCb, ExternalLinterLoadPluginCb, LintFileResult,
-        PluginLoadResult,
+        ExternalLinter, ExternalLinterLintFileCb, ExternalLinterLoadPluginCb, JsFix,
+        LintFileResult, PluginLoadResult,
     },
     external_plugin_store::{ExternalPluginStore, ExternalRuleId},
-    fixer::FixKind,
+    fixer::{Fix, FixKind, Message, PossibleFixes},
     frameworks::FrameworkFlags,
+    lint_runner::{DirectivesStore, LintRunner, LintRunnerBuilder},
     loader::LINTABLE_EXTENSIONS,
     module_record::ModuleRecord,
     options::LintOptions,
     options::{AllowWarnDeny, InvalidFilterKind, LintFilter, LintFilterKind},
-    rule::{RuleCategory, RuleFixMeta, RuleMeta, RuleRunner},
+    rule::{RuleCategory, RuleFixMeta, RuleMeta, RuleRunFunctionsImplemented, RuleRunner},
     service::{LintService, LintServiceOptions, RuntimeFileSystem},
     tsgolint::TsGoLintState,
     utils::{read_to_arena_str, read_to_string},
@@ -67,13 +78,11 @@ pub use crate::{
 use crate::{
     config::{LintConfig, OxlintEnv, OxlintGlobals, OxlintSettings},
     context::ContextHost,
-    fixer::{Fixer, Message},
+    fixer::{CompositeFix, Fixer},
+    loader::LINT_PARTIAL_LOADER_EXTENSIONS,
     rules::RuleEnum,
     utils::iter_possible_jest_call_node,
 };
-
-#[cfg(feature = "language_server")]
-pub use crate::lsp::{FixWithPosition, MessageWithPosition, PossibleFixesWithPosition};
 
 #[cfg(target_pointer_width = "64")]
 #[test]
@@ -137,7 +146,20 @@ impl Linter {
         path: &Path,
         context_sub_hosts: Vec<ContextSubHost<'a>>,
         allocator: &'a Allocator,
-    ) -> Vec<Message<'a>> {
+    ) -> Vec<Message> {
+        self.run_with_disable_directives(path, context_sub_hosts, allocator).0
+    }
+
+    /// Same as `run` but also returns the disable directives for the file
+    ///
+    /// # Panics
+    /// Panics in debug mode if running with and without optimizations produces different diagnostic counts.
+    pub fn run_with_disable_directives<'a>(
+        &self,
+        path: &Path,
+        context_sub_hosts: Vec<ContextSubHost<'a>>,
+        allocator: &'a Allocator,
+    ) -> (Vec<Message>, Option<DisableDirectives>) {
         let ResolvedLinterState { rules, config, external_rules } = self.config.resolve(path);
 
         let mut ctx_host = Rc::new(ContextHost::new(path, context_sub_hosts, self.options, config));
@@ -145,8 +167,12 @@ impl Linter {
         #[cfg(debug_assertions)]
         let mut current_diagnostic_index = 0;
 
+        let is_partial_loader_file = ctx_host
+            .file_extension()
+            .is_some_and(|ext| LINT_PARTIAL_LOADER_EXTENSIONS.iter().any(|e| e == &ext));
+
         loop {
-            let rules = rules
+            let mut rules = rules
                 .iter()
                 .filter(|(rule, _)| rule.should_run(&ctx_host) && !rule.is_tsgolint_rule())
                 .map(|(rule, severity)| (rule, Rc::clone(&ctx_host).spawn(rule, *severity)))
@@ -157,7 +183,21 @@ impl Linter {
             let should_run_on_jest_node =
                 ctx_host.plugins().has_test() && ctx_host.frameworks().is_test();
 
-            let execute_rules = |with_ast_kind_filtering: bool| {
+            let mut execute_rules = |with_runtime_optimization: bool| {
+                // If only the `run` function is implemented, we can skip running the file entirely if the current
+                // file does not contain any of the relevant AST node types.
+                if with_runtime_optimization {
+                    rules.retain(|(rule, _)| {
+                        let run_info = rule.run_info();
+                        if run_info == RuleRunFunctionsImplemented::Run
+                            && let Some(ast_types) = rule.types_info()
+                        {
+                            semantic.nodes().contains_any(ast_types)
+                        } else {
+                            true
+                        }
+                    });
+                }
                 // IMPORTANT: We have two branches here for performance reasons:
                 //
                 // 1) Branch where we iterate over each node, then each rule
@@ -190,9 +230,13 @@ impl Linter {
 
                     for (rule, ctx) in &rules {
                         let rule = *rule;
+                        let run_info = rule.run_info();
                         // Collect node type information for rules. In large files, benchmarking showed it was worth
                         // collecting rules into buckets by AST node type to avoid iterating over all rules for each node.
-                        if with_ast_kind_filtering && let Some(ast_types) = rule.types_info() {
+                        if with_runtime_optimization
+                            && let Some(ast_types) = rule.types_info()
+                            && run_info.is_run_implemented()
+                        {
                             for ty in ast_types {
                                 rules_by_ast_type[ty as usize].push((rule, ctx));
                             }
@@ -200,12 +244,8 @@ impl Linter {
                             rules_any_ast_type.push((rule, ctx));
                         }
 
-                        rule.run_once(ctx);
-                    }
-
-                    for symbol in semantic.scoping().symbol_ids() {
-                        for (rule, ctx) in &rules {
-                            rule.run_on_symbol(symbol, ctx);
+                        if !with_runtime_optimization || run_info.is_run_once_implemented() {
+                            rule.run_once(ctx);
                         }
                     }
 
@@ -222,33 +262,42 @@ impl Linter {
                     if should_run_on_jest_node {
                         for jest_node in iter_possible_jest_call_node(semantic) {
                             for (rule, ctx) in &rules {
-                                rule.run_on_jest_node(&jest_node, ctx);
+                                if !with_runtime_optimization
+                                    || rule.run_info().is_run_on_jest_node_implemented()
+                                {
+                                    rule.run_on_jest_node(&jest_node, ctx);
+                                }
                             }
                         }
                     }
                 } else {
                     for (rule, ctx) in &rules {
-                        rule.run_once(ctx);
-
-                        for symbol in semantic.scoping().symbol_ids() {
-                            rule.run_on_symbol(symbol, ctx);
+                        let run_info = rule.run_info();
+                        if !with_runtime_optimization || run_info.is_run_once_implemented() {
+                            rule.run_once(ctx);
                         }
 
-                        // For smaller files, benchmarking showed it was faster to iterate over all rules and just check the
-                        // node types as we go, rather than pre-bucketing rules by AST node type and doing extra allocations.
-                        if with_ast_kind_filtering && let Some(ast_types) = rule.types_info() {
-                            for node in semantic.nodes() {
-                                if ast_types.has(node.kind().ty()) {
+                        if !with_runtime_optimization || run_info.is_run_implemented() {
+                            // For smaller files, benchmarking showed it was faster to iterate over all rules and just check the
+                            // node types as we go, rather than pre-bucketing rules by AST node type and doing extra allocations.
+                            if with_runtime_optimization && let Some(ast_types) = rule.types_info()
+                            {
+                                for node in semantic.nodes() {
+                                    if ast_types.has(node.kind().ty()) {
+                                        rule.run(node, ctx);
+                                    }
+                                }
+                            } else {
+                                for node in semantic.nodes() {
                                     rule.run(node, ctx);
                                 }
                             }
-                        } else {
-                            for node in semantic.nodes() {
-                                rule.run(node, ctx);
-                            }
                         }
 
-                        if should_run_on_jest_node {
+                        if should_run_on_jest_node
+                            && (!with_runtime_optimization
+                                || run_info.is_run_on_jest_node_implemented())
+                        {
                             for jest_node in iter_possible_jest_call_node(semantic) {
                                 rule.run_on_jest_node(&jest_node, ctx);
                             }
@@ -302,10 +351,13 @@ impl Linter {
 
             self.run_external_rules(&external_rules, path, &mut ctx_host, allocator);
 
-            if let Some(severity) = self.options.report_unused_directive {
-                if severity.is_warn_deny() {
-                    ctx_host.report_unused_directives(severity.into());
-                }
+            // Report unused directives is now handled differently with type-aware linting
+
+            if let Some(severity) = self.options.report_unused_directive
+                && severity.is_warn_deny()
+                && is_partial_loader_file
+            {
+                ctx_host.report_unused_directives(severity.into());
             }
 
             // no next `<script>` block found, the complete file is finished linting
@@ -319,7 +371,14 @@ impl Linter {
             }
         }
 
-        ctx_host.take_diagnostics()
+        let diagnostics = ctx_host.take_diagnostics();
+        let disable_directives = if is_partial_loader_file {
+            None
+        } else {
+            Rc::try_unwrap(ctx_host).unwrap().into_disable_directives()
+        };
+
+        (diagnostics, disable_directives)
     }
 
     fn run_external_rules<'a>(
@@ -329,17 +388,6 @@ impl Linter {
         ctx_host: &mut Rc<ContextHost<'a>>,
         allocator: &'a Allocator,
     ) {
-        use std::{
-            mem,
-            ptr::{self, NonNull},
-        };
-
-        use oxc_ast::ast::Program;
-        use oxc_diagnostics::OxcDiagnostic;
-        use oxc_span::Span;
-
-        use crate::fixer::PossibleFixes;
-
         if external_rules.is_empty() {
             return;
         }
@@ -347,7 +395,7 @@ impl Linter {
         // `external_linter` always exists when `external_rules` is not empty
         let external_linter = self.external_linter.as_ref().unwrap();
 
-        let (program_offset, span_converter) = {
+        let (program_offset, source_text, span_converter) = {
             // Extract `Semantic` from `ContextHost`, and get a mutable reference to `Program`.
             //
             // It's not possible to obtain a `&mut Program` while `Semantic` exists, because `Semantic`
@@ -375,7 +423,7 @@ impl Linter {
             let semantic = mem::take(ctx_host.semantic_mut());
             let program_addr = NonNull::from(semantic.nodes().program()).addr();
             let mut program_ptr =
-                allocator.data_end_ptr().cast::<Program>().with_addr(program_addr);
+                allocator.data_end_ptr().cast::<Program<'a>>().with_addr(program_addr);
             drop(semantic);
             // SAFETY: Now that we've dropped `Semantic`, no references to any AST nodes remain,
             // so can get a mutable reference to `Program` without aliasing violations.
@@ -384,11 +432,12 @@ impl Linter {
             // Convert spans to UTF-16
             let span_converter = Utf8ToUtf16::new(program.source_text);
             span_converter.convert_program(program);
+            span_converter.convert_comments(&mut program.comments);
 
             // Get offset of `Program` within buffer (bottom 32 bits of pointer)
             let program_offset = ptr::from_ref(program) as u32;
 
-            (program_offset, span_converter)
+            (program_offset, program.source_text, span_converter)
         };
 
         // Write offset of `Program` in metadata at end of buffer
@@ -407,8 +456,11 @@ impl Linter {
         match result {
             Ok(diagnostics) => {
                 for diagnostic in diagnostics {
-                    // Convert UTF-16 offsets back to UTF-8
-                    let mut span = Span::new(diagnostic.loc.start, diagnostic.loc.end);
+                    // Convert UTF-16 offsets back to UTF-8.
+                    // TODO: Validate span offsets are within bounds and `start <= end`.
+                    // Also make sure offsets do not fall in middle of a multi-byte UTF-8 character.
+                    // That's possible if UTF-16 offset points to middle of a surrogate pair.
+                    let mut span = Span::new(diagnostic.start, diagnostic.end);
                     span_converter.convert_span_back(&mut span);
 
                     let (external_rule_id, severity) =
@@ -423,17 +475,60 @@ impl Linter {
                         continue;
                     }
 
+                    // Convert `JSFix`s fixes to `PossibleFixes`, including converting spans back to UTF-8
+                    let fix = if let Some(fixes) = diagnostic.fixes {
+                        debug_assert!(!fixes.is_empty()); // JS should send `None` instead of `Some([])`
+
+                        let is_single = fixes.len() == 1;
+
+                        let fixes = fixes.into_iter().map(|fix| {
+                            // TODO: Validate span offsets are within bounds and `start <= end`.
+                            // Also make sure offsets do not fall in middle of a multi-byte UTF-8 character.
+                            // That's possible if UTF-16 offset points to middle of a surrogate pair.
+                            let mut span = Span::new(fix.range[0], fix.range[1]);
+                            span_converter.convert_span_back(&mut span);
+                            Fix::new(fix.text, span)
+                        });
+
+                        if is_single {
+                            PossibleFixes::Single(fixes.into_iter().next().unwrap())
+                        } else {
+                            let fixes = fixes.collect::<Vec<_>>();
+                            match CompositeFix::merge_fixes_fallible(fixes, source_text) {
+                                Ok(fix) => PossibleFixes::Single(fix),
+                                Err(err) => {
+                                    let path = path.to_string_lossy();
+                                    let message = format!(
+                                        "Plugin `{plugin_name}/{rule_name}` returned invalid fixes.\nFile path: {path}\n{err}"
+                                    );
+                                    ctx_host.push_diagnostic(Message::new(
+                                        OxcDiagnostic::error(message),
+                                        PossibleFixes::None,
+                                    ));
+                                    PossibleFixes::None
+                                }
+                            }
+                        }
+                    } else {
+                        PossibleFixes::None
+                    };
+
                     ctx_host.push_diagnostic(Message::new(
                         OxcDiagnostic::error(diagnostic.message)
                             .with_label(span)
                             .with_error_code(plugin_name.to_string(), rule_name.to_string())
                             .with_severity(severity.into()),
-                        PossibleFixes::None,
+                        fix,
                     ));
                 }
             }
-            Err(_err) => {
-                // TODO: report diagnostic
+            Err(err) => {
+                let path = path.to_string_lossy();
+                let message = format!("Error running JS plugin.\nFile path: {path}\n{err}");
+                ctx_host.push_diagnostic(Message::new(
+                    OxcDiagnostic::error(message),
+                    PossibleFixes::None,
+                ));
             }
         }
     }
@@ -466,13 +561,14 @@ impl RawTransferMetadata {
 
 #[cfg(test)]
 mod test {
+    use std::fs;
+
+    use project_root::get_project_root;
+
     use super::Oxlintrc;
 
     #[test]
     fn test_schema_json() {
-        use std::fs;
-
-        use project_root::get_project_root;
         let path = get_project_root().unwrap().join("npm/oxlint/configuration_schema.json");
         let schema = schemars::schema_for!(Oxlintrc);
         let json = serde_json::to_string_pretty(&schema).unwrap();

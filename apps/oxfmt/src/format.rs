@@ -1,8 +1,13 @@
-use std::{env, io::Write, path::PathBuf, sync::mpsc, time::Instant};
-
-use ignore::overrides::OverrideBuilder;
+use std::{
+    env,
+    io::Write,
+    path::{Path, PathBuf},
+    sync::mpsc,
+    time::Instant,
+};
 
 use oxc_diagnostics::DiagnosticService;
+use oxc_formatter::Oxfmtrc;
 
 use crate::{
     cli::{CliRunResult, FormatCommand},
@@ -37,34 +42,49 @@ impl FormatRunner {
         let start_time = Instant::now();
 
         let cwd = self.cwd;
-        let FormatCommand { paths, output_options, misc_options } = self.options;
+        let FormatCommand { paths, output_options, basic_options, ignore_options, misc_options } =
+            self.options;
 
-        // Default to current working directory if no paths are provided
-        let paths = if paths.is_empty() { vec![cwd.clone()] } else { paths };
+        // Find and load config
+        // NOTE: Currently, we only load single config file.
+        // - from `--config` if specified
+        // - else, search nearest for the nearest `.oxfmtrc.json` from cwd upwards
+        let config = match load_config(&cwd, basic_options.config.as_ref()) {
+            Ok(config) => config,
+            Err(err) => {
+                print_and_flush_stdout(
+                    stdout,
+                    &format!("Failed to load configuration file.\n{err}\n"),
+                );
+                return CliRunResult::InvalidOptionConfig;
+            }
+        };
 
-        // Instead of `--ignore-pattern=PAT`, we support `!` prefix in paths
-        let (exclude_patterns, target_paths): (Vec<_>, Vec<_>) =
-            paths.into_iter().partition(|p| p.to_string_lossy().starts_with('!'));
+        let ignore_patterns = config.ignore_patterns.clone().unwrap_or_default();
+        let format_options = match config.into_format_options() {
+            Ok(options) => options,
+            Err(err) => {
+                print_and_flush_stdout(stdout, &format!("Failed to parse configuration.\n{err}\n"));
+                return CliRunResult::InvalidOptionConfig;
+            }
+        };
 
-        // Resolve relative paths against the current working directory
-        let target_paths: Vec<PathBuf> = target_paths
-            .into_iter()
-            .map(|path| if path.is_relative() { cwd.join(path) } else { path })
-            .collect();
-
-        // Build exclude patterns if any exist
-        let override_builder = (!exclude_patterns.is_empty())
-            .then(|| {
-                let mut builder = OverrideBuilder::new(&cwd);
-                for pattern in exclude_patterns {
-                    builder.add(&pattern.to_string_lossy()).ok()?;
-                }
-                builder.build().ok()
-            })
-            .flatten();
-
-        // TODO: Support ignoring files
-        let walker = Walk::new(&target_paths, override_builder);
+        let walker = match Walk::build(
+            &cwd,
+            &paths,
+            &ignore_options.ignore_path,
+            ignore_options.with_node_modules,
+            &ignore_patterns,
+        ) {
+            Ok(walker) => walker,
+            Err(err) => {
+                print_and_flush_stdout(
+                    stdout,
+                    &format!("Failed to parse target paths or ignore settings.\n{err}\n"),
+                );
+                return CliRunResult::InvalidOptionConfig;
+            }
+        };
 
         // Get the receiver for streaming entries
         let rx_entry = walker.stream_entries();
@@ -82,7 +102,7 @@ impl FormatRunner {
         let output_options_clone = output_options.clone();
         // Spawn a thread to run formatting service with streaming entries
         rayon::spawn(move || {
-            let format_service = FormatService::new(cwd, output_options_clone);
+            let format_service = FormatService::new(cwd, output_options_clone, format_options);
             format_service.run_streaming(rx_entry, &tx_error, tx_count);
         });
 
@@ -153,6 +173,40 @@ impl FormatRunner {
                 CliRunResult::FormatSucceeded
             }
         }
+    }
+}
+
+/// # Errors
+///
+/// Returns error if:
+/// - Config file is specified but not found or invalid
+/// - Config file parsing fails
+fn load_config(cwd: &Path, config_path: Option<&PathBuf>) -> Result<Oxfmtrc, String> {
+    let config_path = if let Some(config_path) = config_path {
+        // If `--config` is explicitly specified, use that path
+        Some(if config_path.is_absolute() {
+            PathBuf::from(config_path)
+        } else {
+            cwd.join(config_path)
+        })
+    } else {
+        // If `--config` is not specified, search the nearest config file from cwd upwards
+        // Support both `.json` and `.jsonc`, but prefer `.json` if both exist
+        cwd.ancestors().find_map(|dir| {
+            for filename in [".oxfmtrc.json", ".oxfmtrc.jsonc"] {
+                let config_path = dir.join(filename);
+                if config_path.exists() {
+                    return Some(config_path);
+                }
+            }
+            None
+        })
+    };
+
+    match config_path {
+        Some(ref path) => Oxfmtrc::from_file(path),
+        // Default if not specified and not found
+        None => Ok(Oxfmtrc::default()),
     }
 }
 

@@ -4,6 +4,73 @@ All notable changes to this package will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0).
 
+## [0.95.0] - 2025-10-15
+
+### 🚜 Refactor
+
+- 496dd62 parser: Introduce `context_add` and `context_remove` functions (#14567) (Ulrich Stark)
+
+### ⚡ Performance
+
+- 8f056ad parser: Cache cur_kind() to eliminate redundant calls (#14411) (Boshen)
+- 2b6a3b4 parser: Use range checks for is_any_keyword() and is_number() (#14410) (Boshen)
+- 1f5167a parser: Inline escaped keyword check in advance() (#14408) (Boshen)
+- 791c72a parser: Add separate token kinds for BigInt literals (#14405) (Boshen)
+- 266b982 parser: Cache `has_separator()` result in literal parsing (#14403) (Boshen)
+- beeb129 parser: Optimize comment annotation parsing (#14397) (Boshen)
+
+
+## [0.94.0] - 2025-10-06
+
+### 🐛 Bug Fixes
+
+- 81a28d4 parser: Forbid abstract class members with implementation in parser instead of semantic (#14325) (Ulrich Stark)
+
+### 🚜 Refactor
+
+- feca94e parser: Split `check_method_definition` by method kind (#14364) (Ulrich Stark)
+
+### ⚡ Performance
+
+- 653aa8a parser: Cleanup and optimize re-lexing angle tokens (#14208) (Ulrich Stark)
+- ff3c240 parser: Cleanup and optimize parsing jsx (#14234) (Ulrich Stark)
+- e6118fa parser: Optimize expect() to reduce branch misprediction (#14242) (Boshen)
+
+
+## [0.93.0] - 2025-09-28
+
+### ⚡ Performance
+
+- 5b74a81 parser: Apply #[cold] attribute to error handling functions (#14188) (Boshen)
+- af88e94 parser: Cleanup and optimize various parsing functions (#14160) (Ulrich Stark)
+
+
+## [0.92.0] - 2025-09-24
+
+### 🐛 Bug Fixes
+
+- f4d6790 parser: Forbid accessors named `constructor` (#14017) (Don Isaac)
+
+
+## [0.91.0] - 2025-09-22
+
+### 🚀 Features
+
+- a14aa79 npm/oxlint: Convert to ES modules (#13876) (Boshen)
+
+### 🐛 Bug Fixes
+
+- f067159 parser: Forbid readonly in parser instead of semantic (#13905) (Ulrich Stark)
+
+### ⚡ Performance
+
+- 035ea19 parser: Optimize `parse_simple_arrow_function_expression` (#13965) (Ulrich Stark)
+
+### 💼 Other
+
+- fb347da crates: V0.91.0 (#13961) (Boshen)
+
+
 ## [0.91.0] - 2025-09-21
 
 ### 🚀 Features

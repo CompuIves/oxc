@@ -3,9 +3,14 @@ use oxc_ast::ast::*;
 use oxc_span::GetSpan;
 
 use crate::{
-    Format, FormatResult, format_args,
-    formatter::{Formatter, prelude::*},
-    generated::ast_nodes::{AstNode, AstNodes},
+    Format, FormatResult,
+    ast_nodes::{AstNode, AstNodes},
+    format_args,
+    formatter::{
+        Formatter,
+        prelude::*,
+        trivia::{FormatLeadingComments, FormatTrailingComments},
+    },
     write,
 };
 
@@ -13,9 +18,9 @@ use super::FormatWrite;
 
 impl<'a> Format<'a> for AstNode<'a, Vec<'a, Decorator<'a>>> {
     fn fmt(&self, f: &mut Formatter<'_, 'a>) -> FormatResult<()> {
-        if self.is_empty() {
+        let Some(last) = self.last() else {
             return Ok(());
-        }
+        };
 
         // Check parent to determine formatting context
         match self.parent {
@@ -46,6 +51,7 @@ impl<'a> Format<'a> for AstNode<'a, Vec<'a, Decorator<'a>>> {
         }
 
         f.join_with(&soft_line_break_or_space()).entries(self.iter()).finish()?;
+
         write!(f, [soft_line_break_or_space()])
     }
 }

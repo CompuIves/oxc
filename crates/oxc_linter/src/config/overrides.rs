@@ -1,10 +1,12 @@
 use std::{
     borrow::Cow,
     ops::{Deref, DerefMut},
+    path::PathBuf,
 };
 
+use rustc_hash::FxHashSet;
 use schemars::{JsonSchema, r#gen, schema::Schema};
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::{LintPlugins, OxlintEnv, OxlintGlobals, config::OxlintRules};
 
@@ -92,6 +94,22 @@ pub struct OxlintOverride {
     #[serde(default)]
     pub plugins: Option<LintPlugins>,
 
+    /// JS plugins for this override.
+    ///
+    /// Note: JS plugins are experimental and not subject to semver.
+    /// They are not supported in language server at present.
+    #[serde(
+        rename = "jsPlugins",
+        deserialize_with = "deserialize_external_plugins_override",
+        serialize_with = "serialize_external_plugins_override",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(with = "Option<FxHashSet<String>>")]
+    pub external_plugins: Option<
+        FxHashSet<(PathBuf /* config file directory */, String /* plugin specifier */)>,
+    >,
+
     #[serde(default)]
     pub rules: OxlintRules,
 }
@@ -131,12 +149,37 @@ impl GlobSet {
     }
 }
 
+fn deserialize_external_plugins_override<'de, D>(
+    deserializer: D,
+) -> Result<Option<FxHashSet<(PathBuf, String)>>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let opt_set: Option<FxHashSet<String>> = Option::deserialize(deserializer)?;
+    Ok(opt_set
+        .map(|set| set.into_iter().map(|specifier| (PathBuf::default(), specifier)).collect()))
+}
+
+#[expect(clippy::ref_option)]
+fn serialize_external_plugins_override<S>(
+    plugins: &Option<FxHashSet<(PathBuf, String)>>,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    // Serialize as an array of original specifiers (the values in the map)
+    match plugins {
+        Some(set) => serializer.collect_seq(set.iter().map(|(_, specifier)| specifier)),
+        None => serializer.serialize_none(),
+    }
+}
+
 #[cfg(test)]
 mod test {
-    use crate::config::{globals::GlobalValue, plugins::BuiltinLintPlugins};
+    use crate::config::{globals::GlobalValue, plugins::LintPlugins};
 
     use super::*;
-    use rustc_hash::FxHashSet;
     use serde_json::{from_value, json};
 
     #[test]
@@ -169,23 +212,14 @@ mod test {
             "plugins": [],
         }))
         .unwrap();
-        assert_eq!(
-            config.plugins,
-            Some(LintPlugins::new(BuiltinLintPlugins::empty(), FxHashSet::default()))
-        );
+        assert_eq!(config.plugins, Some(LintPlugins::empty()));
 
         let config: OxlintOverride = from_value(json!({
             "files": ["*.tsx"],
             "plugins": ["typescript", "react"],
         }))
         .unwrap();
-        assert_eq!(
-            config.plugins,
-            Some(LintPlugins::new(
-                BuiltinLintPlugins::REACT | BuiltinLintPlugins::TYPESCRIPT,
-                FxHashSet::default()
-            ))
-        );
+        assert_eq!(config.plugins, Some(LintPlugins::REACT | LintPlugins::TYPESCRIPT));
     }
 
     #[test]

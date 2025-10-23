@@ -1,8 +1,10 @@
 use std::{
     ffi::OsStr,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, Mutex},
 };
+
+use rustc_hash::FxHashMap;
 
 use oxc_diagnostics::DiagnosticSender;
 
@@ -11,6 +13,7 @@ use crate::Linter;
 mod runtime;
 use runtime::Runtime;
 pub use runtime::RuntimeFileSystem;
+#[derive(Clone)]
 pub struct LintServiceOptions {
     /// Current working directory
     cwd: Box<Path>,
@@ -85,22 +88,25 @@ impl LintService {
         self.runtime.run(tx_error);
     }
 
-    #[cfg(feature = "language_server")]
-    pub fn run_source<'a>(
+    pub fn set_disable_directives_map(
         &mut self,
-        allocator: &'a mut oxc_allocator::Allocator,
-    ) -> Vec<crate::MessageWithPosition<'a>> {
-        self.runtime.run_source(allocator)
+        map: Arc<Mutex<FxHashMap<PathBuf, crate::disable_directives::DisableDirectives>>>,
+    ) {
+        self.runtime.set_disable_directives_map(map);
+    }
+
+    #[cfg(feature = "language_server")]
+    pub fn run_source(&mut self) -> Vec<crate::Message> {
+        self.runtime.run_source()
     }
 
     /// For tests
     #[cfg(test)]
-    pub(crate) fn run_test_source<'a>(
+    pub(crate) fn run_test_source(
         &mut self,
-        allocator: &'a mut oxc_allocator::Allocator,
         check_syntax_errors: bool,
         tx_error: &DiagnosticSender,
-    ) -> Vec<crate::Message<'a>> {
-        self.runtime.run_test_source(allocator, check_syntax_errors, tx_error)
+    ) -> Vec<crate::Message> {
+        self.runtime.run_test_source(check_syntax_errors, tx_error)
     }
 }

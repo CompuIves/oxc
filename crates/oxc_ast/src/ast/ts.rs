@@ -44,7 +44,7 @@ use super::{inherit_variants, js::*, literal::*};
 #[generate_derive(CloneIn, Dummy, TakeIn, GetSpan, GetSpanMut, ContentEq, ESTree)]
 #[estree(
     rename = "Identifier",
-    add_fields(name = This, decorators = EmptyArray, optional = False),
+    add_fields(decorators = EmptyArray, name = This, optional = False),
     field_order(decorators, name, optional, type_annotation, span),
 )]
 pub struct TSThisParameter<'a> {
@@ -1027,6 +1027,7 @@ pub struct TSIndexSignature<'a> {
 }
 
 #[ast(visit)]
+#[scope]
 #[derive(Debug)]
 #[generate_derive(CloneIn, Dummy, TakeIn, GetSpan, GetSpanMut, ContentEq, ESTree)]
 pub struct TSCallSignatureDeclaration<'a> {
@@ -1037,6 +1038,7 @@ pub struct TSCallSignatureDeclaration<'a> {
     #[estree(via = TSCallSignatureDeclarationParams)]
     pub params: Box<'a, FormalParameters<'a>>,
     pub return_type: Option<Box<'a, TSTypeAnnotation<'a>>>,
+    pub scope_id: Cell<Option<ScopeId>>,
 }
 
 #[ast]
@@ -1444,6 +1446,7 @@ pub struct TSFunctionType<'a> {
 }
 
 #[ast(visit)]
+#[scope]
 #[derive(Debug)]
 #[generate_derive(CloneIn, Dummy, TakeIn, GetSpan, GetSpanMut, ContentEq, ESTree)]
 pub struct TSConstructorType<'a> {
@@ -1452,6 +1455,7 @@ pub struct TSConstructorType<'a> {
     pub type_parameters: Option<Box<'a, TSTypeParameterDeclaration<'a>>>,
     pub params: Box<'a, FormalParameters<'a>>,
     pub return_type: Box<'a, TSTypeAnnotation<'a>>,
+    pub scope_id: Cell<Option<ScopeId>>,
 }
 
 /// TypeScript Mapped Type
@@ -1745,6 +1749,7 @@ pub struct JSDocNonNullableType<'a> {
     pub postfix: bool,
 }
 
+/// `type T = (?)`
 #[ast(visit)]
 #[derive(Debug)]
 #[generate_derive(CloneIn, Dummy, TakeIn, GetSpan, GetSpanMut, ContentEq, ESTree)]

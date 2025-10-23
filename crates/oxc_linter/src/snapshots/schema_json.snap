@@ -51,6 +51,17 @@ expression: json
         "type": "string"
       }
     },
+    "jsPlugins": {
+      "description": "JS plugins.\n\nNote: JS plugins are experimental and not subject to semver.\nThey are not supported in language server at present.",
+      "type": [
+        "array",
+        "null"
+      ],
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true
+    },
     "overrides": {
       "description": "Add, remove, or otherwise reconfigure rules for specific files or groups of files.",
       "allOf": [
@@ -430,6 +441,17 @@ expression: json
               "type": "null"
             }
           ]
+        },
+        "jsPlugins": {
+          "description": "JS plugins for this override.\n\nNote: JS plugins are experimental and not subject to semver.\nThey are not supported in language server at present.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
         },
         "plugins": {
           "description": "Optionally change what plugins are enabled for this override. When\nomitted, the base config's plugins are used.",

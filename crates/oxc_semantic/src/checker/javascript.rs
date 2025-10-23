@@ -16,7 +16,31 @@ use oxc_syntax::{
     symbol::SymbolFlags,
 };
 
-use crate::{builder::SemanticBuilder, diagnostics::redeclaration};
+use crate::{IsGlobalReference, builder::SemanticBuilder, diagnostics::redeclaration};
+
+#[cold]
+fn undefined_export(x0: &str, span1: Span) -> OxcDiagnostic {
+    OxcDiagnostic::error(format!("Export '{x0}' is not defined")).with_label(span1)
+}
+
+/// It is a Syntax Error if any element of the ExportedBindings of ModuleItemList
+/// does not also occur in either the VarDeclaredNames of ModuleItemList, or the LexicallyDeclaredNames of ModuleItemList.
+pub fn check_unresolved_exports(program: &Program<'_>, ctx: &SemanticBuilder<'_>) {
+    if ctx.source_type.is_typescript() || ctx.source_type.is_script() {
+        return;
+    }
+    for stmt in &program.body {
+        if let Statement::ExportNamedDeclaration(decl) = stmt {
+            for specifier in &decl.specifiers {
+                if let ModuleExportName::IdentifierReference(ident) = &specifier.local
+                    && ident.is_global_reference(&ctx.scoping)
+                {
+                    ctx.errors.borrow_mut().push(undefined_export(&ident.name, ident.span));
+                }
+            }
+        }
+    }
+}
 
 pub fn check_duplicate_class_elements(ctx: &SemanticBuilder<'_>) {
     let classes = &ctx.class_table_builder.classes;
@@ -200,11 +224,9 @@ pub fn check_identifier_reference(ident: &IdentifierReference, ctx: &SemanticBui
                     // only throw error if arguments or eval are being assigned to
                     if let AssignmentTarget::AssignmentTargetIdentifier(target_ident) =
                         &assign_expr.left
+                        && target_ident.name == ident.name
                     {
-                        if target_ident.name == ident.name {
-                            return ctx
-                                .error(unexpected_identifier_assign(&ident.name, ident.span));
-                        }
+                        return ctx.error(unexpected_identifier_assign(&ident.name, ident.span));
                     }
                 }
                 m if m.is_member_expression_kind() => {
@@ -287,10 +309,10 @@ pub fn check_number_literal(lit: &NumericLiteral, ctx: &SemanticBuilder<'_>) {
     fn leading_zero(s: Option<Atom>) -> bool {
         if let Some(s) = s {
             let mut chars = s.bytes();
-            if let Some(first) = chars.next() {
-                if let Some(second) = chars.next() {
-                    return first == b'0' && second.is_ascii_digit();
-                }
+            if let Some(first) = chars.next()
+                && let Some(second) = chars.next()
+            {
+                return first == b'0' && second.is_ascii_digit();
             }
         }
         false
@@ -550,15 +572,15 @@ pub fn is_function_part_of_if_statement(function: &Function, builder: &SemanticB
     let AstKind::IfStatement(stmt) = builder.nodes.parent_kind(builder.current_node_id) else {
         return false;
     };
-    if let Statement::FunctionDeclaration(func) = &stmt.consequent {
-        if ptr::eq(func.as_ref(), function) {
-            return true;
-        }
+    if let Statement::FunctionDeclaration(func) = &stmt.consequent
+        && ptr::eq(func.as_ref(), function)
+    {
+        return true;
     }
-    if let Some(Statement::FunctionDeclaration(func)) = &stmt.alternate {
-        if ptr::eq(func.as_ref(), function) {
-            return true;
-        }
+    if let Some(Statement::FunctionDeclaration(func)) = &stmt.alternate
+        && ptr::eq(func.as_ref(), function)
+    {
+        return true;
     }
     false
 }
@@ -1184,13 +1206,13 @@ pub fn check_object_expression(obj_expr: &ObjectExpression, ctx: &SemanticBuilde
             if obj_prop.kind != PropertyKind::Init || obj_prop.method {
                 continue;
             }
-            if let Some((prop_name, span)) = prop.prop_name() {
-                if prop_name == "__proto__" {
-                    if let Some(prev_span) = prev_proto {
-                        ctx.error(redeclaration("__proto__", prev_span, span));
-                    }
-                    prev_proto = Some(span);
+            if let Some((prop_name, span)) = prop.prop_name()
+                && prop_name == "__proto__"
+            {
+                if let Some(prev_span) = prev_proto {
+                    ctx.error(redeclaration("__proto__", prev_span, span));
                 }
+                prev_proto = Some(span);
             }
         }
     }

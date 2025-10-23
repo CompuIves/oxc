@@ -1,7 +1,10 @@
 ---
 source: crates/oxc_language_server/src/tester.rs
-input_file: crates/oxc_language_server/fixtures/linter/regexp_feature/index.ts
 ---
+########## 
+file: fixtures/linter/regexp_feature/index.ts
+----------
+
 code: "eslint(no-control-regex)"
 code_description.href: "https://oxc.rs/docs/guide/usage/linter/rules/eslint/no-control-regex.html"
 message: "Unexpected control character\nhelp: '\\u0000' is a control character."
@@ -12,7 +15,42 @@ related_information[0].location.range: Range { start: Position { line: 1, charac
 severity: Some(Error)
 source: Some("oxc")
 tags: None
-fixed: None
+fixed: Multiple(
+    [
+        FixedContent {
+            message: Some(
+                "Disable no-control-regex for this line",
+            ),
+            code: "// oxlint-disable-next-line no-control-regex\n",
+            range: Range {
+                start: Position {
+                    line: 1,
+                    character: 0,
+                },
+                end: Position {
+                    line: 1,
+                    character: 0,
+                },
+            },
+        },
+        FixedContent {
+            message: Some(
+                "Disable no-control-regex for this file",
+            ),
+            code: "// oxlint-disable no-control-regex\n",
+            range: Range {
+                start: Position {
+                    line: 0,
+                    character: 0,
+                },
+                end: Position {
+                    line: 0,
+                    character: 0,
+                },
+            },
+        },
+    ],
+)
 
 
 code: "eslint(no-useless-escape)"
@@ -25,4 +63,55 @@ related_information[0].location.range: Range { start: Position { line: 0, charac
 severity: Some(Error)
 source: Some("oxc")
 tags: None
-fixed: Single(FixedContent { message: Some("Replace `\\/` with `/`."), code: "/", range: Range { start: Position { line: 0, character: 16 }, end: Position { line: 0, character: 18 } } })
+fixed: Multiple(
+    [
+        FixedContent {
+            message: Some(
+                "Replace `\\/` with `/`.",
+            ),
+            code: "/",
+            range: Range {
+                start: Position {
+                    line: 0,
+                    character: 16,
+                },
+                end: Position {
+                    line: 0,
+                    character: 18,
+                },
+            },
+        },
+        FixedContent {
+            message: Some(
+                "Disable no-useless-escape for this line",
+            ),
+            code: "// oxlint-disable-next-line no-useless-escape\n",
+            range: Range {
+                start: Position {
+                    line: 0,
+                    character: 0,
+                },
+                end: Position {
+                    line: 0,
+                    character: 0,
+                },
+            },
+        },
+        FixedContent {
+            message: Some(
+                "Disable no-useless-escape for this file",
+            ),
+            code: "// oxlint-disable no-useless-escape\n",
+            range: Range {
+                start: Position {
+                    line: 0,
+                    character: 0,
+                },
+                end: Position {
+                    line: 0,
+                    character: 0,
+                },
+            },
+        },
+    ],
+)

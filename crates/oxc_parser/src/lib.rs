@@ -458,11 +458,11 @@ impl<'a> ParserImpl<'a> {
         let mut is_flow_language = false;
         let mut errors = vec![];
         // only check for `@flow` if the file failed to parse.
-        if !self.lexer.errors.is_empty() || !self.errors.is_empty() {
-            if let Some(error) = self.flow_error() {
-                is_flow_language = true;
-                errors.push(error);
-            }
+        if (!self.lexer.errors.is_empty() || !self.errors.is_empty())
+            && let Some(error) = self.flow_error()
+        {
+            is_flow_language = true;
+            errors.push(error);
         }
         let (module_record, module_record_errors) = self.module_record_builder.build();
         if errors.len() != 1 {
@@ -572,6 +572,7 @@ impl<'a> ParserImpl<'a> {
 
     /// Check if source length exceeds MAX_LEN, if the file cannot be parsed.
     /// Original parsing error is not real - `Lexer::new` substituted "\0" as the source text.
+    #[cold]
     fn overlong_error(&self) -> Option<OxcDiagnostic> {
         if self.source_text.len() > MAX_LEN {
             return Some(diagnostics::overlong_source());

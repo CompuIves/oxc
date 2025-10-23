@@ -3,9 +3,10 @@ use oxc_span::GetSpan;
 use oxc_syntax::identifier::is_line_terminator;
 
 use crate::{
-    Format, FormatResult, format_args,
+    Format, FormatResult,
+    ast_nodes::AstNode,
+    format_args,
     formatter::{Formatter, comments::Comments, prelude::*},
-    generated::ast_nodes::AstNode,
     write,
     write::{ExpressionLeftSide, semicolon::OptionalSemicolon},
 };
@@ -60,7 +61,7 @@ impl<'a> Format<'a> for ReturnAndThrowStatement<'a, '_> {
         write!(f, self.keyword())?;
 
         if let Some(argument) = self.argument() {
-            write!(f, [space(), FormatReturnOrThrowArgument(argument)])?;
+            write!(f, [space(), FormatAdjacentArgument(argument)])?;
         }
 
         let dangling_comments = f.context().comments().comments_before(self.span().end);
@@ -84,9 +85,9 @@ impl<'a> Format<'a> for ReturnAndThrowStatement<'a, '_> {
     }
 }
 
-pub struct FormatReturnOrThrowArgument<'a, 'b>(&'b AstNode<'a, Expression<'a>>);
+pub struct FormatAdjacentArgument<'a, 'b>(pub &'b AstNode<'a, Expression<'a>>);
 
-impl<'a> Format<'a> for FormatReturnOrThrowArgument<'a, '_> {
+impl<'a> Format<'a> for FormatAdjacentArgument<'a, '_> {
     fn fmt(&self, f: &mut Formatter<'_, 'a>) -> FormatResult<()> {
         let argument = self.0;
 
@@ -117,23 +118,23 @@ impl<'a> Format<'a> for FormatReturnOrThrowArgument<'a, '_> {
 /// parentheses will be removed (and be re-added by the return statement, but only if the argument breaks)
 fn has_argument_leading_comments(argument: &AstNode<Expression>, f: &Formatter<'_, '_>) -> bool {
     let source_text = f.source_text();
-    let mut current = Some(ExpressionLeftSide::from(argument));
 
-    while let Some(left_side) = current {
+    for left_side in ExpressionLeftSide::from(argument).iter() {
         let start = left_side.span().start;
-        let comments = f.comments().comments_before(start);
+        let comments = f.context().comments();
+        let leading_comments = comments.comments_before(start);
 
-        let is_line_comment_or_multi_line_comment = |comments: &[Comment]| {
-            comments.iter().any(|comment| {
-                comment.is_line()
-                    || source_text.contains_newline(comment.span)
-                    || source_text.is_end_of_line_comment(comment)
-            })
-        };
-
-        if is_line_comment_or_multi_line_comment(comments) {
+        if leading_comments.iter().any(|comment| {
+            source_text.contains_newline(comment.span) || comments.is_end_of_line_comment(comment)
+        }) {
             return true;
         }
+
+        let is_own_line_comment_or_multi_line_comment = |leading_comments: &[Comment]| {
+            leading_comments.iter().any(|comment| {
+                comments.is_own_line_comment(comment) || source_text.contains_newline(comment.span)
+            })
+        };
 
         // This check is based on
         // <https://github.com/prettier/prettier/blob/7584432401a47a26943dd7a9ca9a8e032ead7285/src/language-js/comments/handle-comments.js#L335-L349>
@@ -141,21 +142,19 @@ fn has_argument_leading_comments(argument: &AstNode<Expression>, f: &Formatter<'
             let has_leading_own_line_comment = match left_side.as_ref() {
                 Expression::ChainExpression(chain) => {
                     if let ChainElement::StaticMemberExpression(member) = &chain.expression {
-                        is_line_comment_or_multi_line_comment(
-                            f.comments().comments_in_range(
-                                member.object.span().end,
-                                member.property.span.end,
-                            ),
-                        )
+                        let comments = f
+                            .comments()
+                            .comments_in_range(member.object.span().end, member.property.span.end);
+                        is_own_line_comment_or_multi_line_comment(comments)
                     } else {
                         false
                     }
                 }
                 Expression::StaticMemberExpression(member) => {
-                    is_line_comment_or_multi_line_comment(
-                        f.comments()
-                            .comments_in_range(member.object.span().end, member.property.span.end),
-                    )
+                    let comments = f
+                        .comments()
+                        .comments_in_range(member.object.span().end, member.property.span.end);
+                    is_own_line_comment_or_multi_line_comment(comments)
                 }
                 _ => false,
             };
@@ -164,8 +163,6 @@ fn has_argument_leading_comments(argument: &AstNode<Expression>, f: &Formatter<'
                 return true;
             }
         }
-
-        current = left_side.left_expression();
     }
 
     false

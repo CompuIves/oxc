@@ -270,14 +270,13 @@ impl<'a> ParserImpl<'a> {
                 let lit = self.parse_literal_null();
                 Expression::NullLiteral(self.alloc(lit))
             }
+            Kind::DecimalBigInt | Kind::BinaryBigInt | Kind::OctalBigInt | Kind::HexBigInt => {
+                let lit = self.parse_literal_bigint();
+                Expression::BigIntLiteral(self.alloc(lit))
+            }
             kind if kind.is_number() => {
-                if self.cur_src().ends_with('n') {
-                    let lit = self.parse_literal_bigint();
-                    Expression::BigIntLiteral(self.alloc(lit))
-                } else {
-                    let lit = self.parse_literal_number();
-                    Expression::NumericLiteral(self.alloc(lit))
-                }
+                let lit = self.parse_literal_number();
+                Expression::NumericLiteral(self.alloc(lit))
             }
             _ => self.unexpected(),
         }
@@ -305,12 +304,13 @@ impl<'a> ParserImpl<'a> {
         let span = token.span();
         let kind = token.kind();
         let src = self.cur_src();
+        let has_separator = token.has_separator();
         let value = match kind {
             Kind::Decimal | Kind::Binary | Kind::Octal | Kind::Hex => {
-                parse_int(src, kind, token.has_separator())
+                parse_int(src, kind, has_separator)
             }
             Kind::Float | Kind::PositiveExponential | Kind::NegativeExponential => {
-                parse_float(src, token.has_separator())
+                parse_float(src, has_separator)
             }
             _ => unreachable!(),
         };
@@ -340,17 +340,18 @@ impl<'a> ParserImpl<'a> {
     pub(crate) fn parse_literal_bigint(&mut self) -> BigIntLiteral<'a> {
         let token = self.cur_token();
         let kind = token.kind();
-        let base = match kind {
-            Kind::Decimal => BigintBase::Decimal,
-            Kind::Binary => BigintBase::Binary,
-            Kind::Octal => BigintBase::Octal,
-            Kind::Hex => BigintBase::Hex,
+        let has_separator = token.has_separator();
+        let (base, number_kind) = match kind {
+            Kind::DecimalBigInt => (BigintBase::Decimal, Kind::Decimal),
+            Kind::BinaryBigInt => (BigintBase::Binary, Kind::Binary),
+            Kind::OctalBigInt => (BigintBase::Octal, Kind::Octal),
+            Kind::HexBigInt => (BigintBase::Hex, Kind::Hex),
             _ => return self.unexpected(),
         };
         let span = token.span();
         let raw = self.cur_src();
         let src = raw.strip_suffix('n').unwrap();
-        let value = parse_big_int(src, kind, token.has_separator(), self.ast.allocator);
+        let value = parse_big_int(src, number_kind, has_separator, self.ast.allocator);
 
         self.bump_any();
         self.ast.big_int_literal(span, value, Some(Atom::from(raw)), base)
@@ -436,7 +437,7 @@ impl<'a> ParserImpl<'a> {
     pub(crate) fn parse_array_expression(&mut self) -> Expression<'a> {
         let span = self.start_span();
         self.expect(Kind::LBrack);
-        let (elements, comma_span) = self.context(Context::In, Context::empty(), |p| {
+        let (elements, comma_span) = self.context_add(Context::In, |p| {
             p.parse_delimited_list(Kind::RBrack, Kind::Comma, Self::parse_array_expression_element)
         });
         if let Some(comma_span) = comma_span {
@@ -479,7 +480,7 @@ impl<'a> ParserImpl<'a> {
 
                 quasis.push(self.parse_template_element(tagged));
                 // TemplateHead Expression[+In, ?Yield, ?Await]
-                let expr = self.context(Context::In, Context::empty(), Self::parse_expr);
+                let expr = self.context_add(Context::In, Self::parse_expr);
                 expressions.push(expr);
                 self.re_lex_template_substitution_tail();
                 while self.fatal_error.is_none() {
@@ -491,8 +492,7 @@ impl<'a> ParserImpl<'a> {
                         Kind::TemplateMiddle => {
                             quasis.push(self.parse_template_element(tagged));
                             // TemplateMiddle Expression[+In, ?Yield, ?Await]
-                            let expr =
-                                self.context(Context::In, Context::empty(), Self::parse_expr);
+                            let expr = self.context_add(Context::In, Self::parse_expr);
                             expressions.push(expr);
                             self.re_lex_template_substitution_tail();
                         }
@@ -790,17 +790,16 @@ impl<'a> ParserImpl<'a> {
                     continue;
                 }
 
-                if matches!(self.cur_kind(), Kind::LAngle | Kind::ShiftLeft) {
-                    if let Some(arguments) =
+                if matches!(self.cur_kind(), Kind::LAngle | Kind::ShiftLeft)
+                    && let Some(arguments) =
                         self.try_parse(Self::parse_type_arguments_in_expression)
-                    {
-                        lhs = self.ast.expression_ts_instantiation(
-                            self.end_span(lhs_span),
-                            lhs,
-                            arguments,
-                        );
-                        continue;
-                    }
+                {
+                    lhs = self.ast.expression_ts_instantiation(
+                        self.end_span(lhs_span),
+                        lhs,
+                        arguments,
+                    );
+                    continue;
                 }
             }
 
@@ -840,7 +839,7 @@ impl<'a> ParserImpl<'a> {
         optional: bool,
     ) -> Expression<'a> {
         self.bump_any(); // advance `[`
-        let property = self.context(Context::In, Context::empty(), Self::parse_expr);
+        let property = self.context_add(Context::In, Self::parse_expr);
         self.expect(Kind::RBrack);
         self.ast.member_expression_computed(self.end_span(lhs_span), lhs, property, optional).into()
     }
@@ -889,7 +888,7 @@ impl<'a> ParserImpl<'a> {
         let arguments = if self.eat(Kind::LParen) {
             // ArgumentList[Yield, Await] :
             //   AssignmentExpression[+In, ?Yield, ?Await]
-            let (call_arguments, _) = self.context(Context::In, Context::empty(), |p| {
+            let (call_arguments, _) = self.context_add(Context::In, |p| {
                 p.parse_delimited_list(Kind::RParen, Kind::Comma, Self::parse_call_argument)
             });
             self.expect(Kind::RParen);
@@ -935,10 +934,10 @@ impl<'a> ParserImpl<'a> {
 
             let mut type_arguments = None;
             if question_dot {
-                if self.is_ts {
-                    if let Some(args) = self.try_parse(Self::parse_type_arguments_in_expression) {
-                        type_arguments = Some(args);
-                    }
+                if self.is_ts
+                    && let Some(args) = self.try_parse(Self::parse_type_arguments_in_expression)
+                {
+                    type_arguments = Some(args);
                 }
                 if self.cur_kind().is_template_start_of_tagged_template() {
                     lhs = self.parse_tagged_template(lhs_span, lhs, question_dot, type_arguments);
@@ -947,12 +946,10 @@ impl<'a> ParserImpl<'a> {
             }
 
             if type_arguments.is_some() || self.at(Kind::LParen) {
-                if !question_dot {
-                    if let Expression::TSInstantiationExpression(expr) = lhs {
-                        let expr = expr.unbox();
-                        type_arguments.replace(expr.type_arguments);
-                        lhs = expr.expression;
-                    }
+                if !question_dot && let Expression::TSInstantiationExpression(expr) = lhs {
+                    let expr = expr.unbox();
+                    type_arguments.replace(expr.type_arguments);
+                    lhs = expr.expression;
                 }
 
                 lhs = self.parse_call_arguments(lhs_span, lhs, question_dot, type_arguments.take());
@@ -1168,29 +1165,30 @@ impl<'a> ParserImpl<'a> {
                         if !rhs_parenthesized {
                             maybe_mixed_coalesce_expr = Some(rhs);
                         }
-                    } else if let Expression::LogicalExpression(lhs) = &lhs {
-                        if !lhs_parenthesized {
-                            maybe_mixed_coalesce_expr = Some(lhs);
-                        }
+                    } else if let Expression::LogicalExpression(lhs) = &lhs
+                        && !lhs_parenthesized
+                    {
+                        maybe_mixed_coalesce_expr = Some(lhs);
                     }
-                    if let Some(expr) = maybe_mixed_coalesce_expr {
-                        if matches!(expr.operator, LogicalOperator::And | LogicalOperator::Or) {
-                            self.error(diagnostics::mixed_coalesce(span));
-                        }
+                    if let Some(expr) = maybe_mixed_coalesce_expr
+                        && matches!(expr.operator, LogicalOperator::And | LogicalOperator::Or)
+                    {
+                        self.error(diagnostics::mixed_coalesce(span));
                     }
                 }
                 self.ast.expression_logical(span, lhs, op, rhs)
             } else if kind.is_binary_operator() {
                 let span = self.end_span(lhs_span);
                 let op = map_binary_operator(kind);
-                if op == BinaryOperator::Exponential && !lhs_parenthesized {
-                    if let Some(key) = match lhs {
+                if op == BinaryOperator::Exponential
+                    && !lhs_parenthesized
+                    && let Some(key) = match lhs {
                         Expression::AwaitExpression(_) => Some("await"),
                         Expression::UnaryExpression(_) => Some("unary"),
                         _ => None,
-                    } {
-                        self.error(diagnostics::unexpected_exponential(key, lhs.span()));
                     }
+                {
+                    self.error(diagnostics::unexpected_exponential(key, lhs.span()));
                 }
                 self.ast.expression_binary(span, lhs, op, rhs)
             } else {
@@ -1214,7 +1212,7 @@ impl<'a> ParserImpl<'a> {
         if !self.eat(Kind::Question) {
             return lhs;
         }
-        let consequent = self.context(Context::In, Context::empty(), |p| {
+        let consequent = self.context_add(Context::In, |p| {
             p.parse_assignment_expression_or_higher_impl(
                 /* allow_return_type_in_arrow_function */ false,
             )
@@ -1247,10 +1245,10 @@ impl<'a> ParserImpl<'a> {
         if let Some(mut arrow_expr) = self
             .try_parse_parenthesized_arrow_function_expression(allow_return_type_in_arrow_function)
         {
-            if has_no_side_effects_comment {
-                if let Expression::ArrowFunctionExpression(func) = &mut arrow_expr {
-                    func.pure = true;
-                }
+            if has_no_side_effects_comment
+                && let Expression::ArrowFunctionExpression(func) = &mut arrow_expr
+            {
+                func.pure = true;
             }
             return arrow_expr;
         }
@@ -1258,10 +1256,10 @@ impl<'a> ParserImpl<'a> {
         if let Some(mut arrow_expr) = self
             .try_parse_async_simple_arrow_function_expression(allow_return_type_in_arrow_function)
         {
-            if has_no_side_effects_comment {
-                if let Expression::ArrowFunctionExpression(func) = &mut arrow_expr {
-                    func.pure = true;
-                }
+            if has_no_side_effects_comment
+                && let Expression::ArrowFunctionExpression(func) = &mut arrow_expr
+            {
+                func.pure = true;
             }
             return arrow_expr;
         }
@@ -1273,17 +1271,19 @@ impl<'a> ParserImpl<'a> {
         let kind = self.cur_kind();
 
         // `x => {}`
-        if lhs.is_identifier_reference() && kind == Kind::Arrow {
+        if kind == Kind::Arrow
+            && let Expression::Identifier(ident) = &lhs
+        {
             let mut arrow_expr = self.parse_simple_arrow_function_expression(
                 span,
-                lhs,
+                ident,
                 /* async */ false,
                 allow_return_type_in_arrow_function,
             );
-            if has_no_side_effects_comment {
-                if let Expression::ArrowFunctionExpression(func) = &mut arrow_expr {
-                    func.pure = true;
-                }
+            if has_no_side_effects_comment
+                && let Expression::ArrowFunctionExpression(func) = &mut arrow_expr
+            {
+                func.pure = true;
             }
             return arrow_expr;
         }
@@ -1398,9 +1398,8 @@ impl<'a> ParserImpl<'a> {
             self.error(diagnostics::await_expression(self.cur_token().span()));
         }
         self.bump_any();
-        let argument = self.context(Context::Await, Context::empty(), |p| {
-            p.parse_simple_unary_expression(lhs_span)
-        });
+        let argument =
+            self.context_add(Context::Await, |p| p.parse_simple_unary_expression(lhs_span));
         self.ast.expression_await(self.end_span(span), argument)
     }
 
@@ -1434,11 +1433,7 @@ impl<'a> ParserImpl<'a> {
     pub(crate) fn parse_decorator(&mut self) -> Decorator<'a> {
         let span = self.start_span();
         self.bump_any(); // bump @
-        let expr = self.context(
-            Context::Decorator,
-            Context::empty(),
-            Self::parse_lhs_expression_or_higher,
-        );
+        let expr = self.context_add(Context::Decorator, Self::parse_lhs_expression_or_higher);
         self.ast.decorator(self.end_span(span), expr)
     }
 

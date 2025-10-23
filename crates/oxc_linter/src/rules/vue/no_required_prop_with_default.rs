@@ -73,7 +73,7 @@ declare_oxc_lint!(
 
 impl Rule for NoRequiredPropWithDefault {
     fn run<'a>(&self, node: &AstNode<'a>, ctx: &LintContext<'a>) {
-        let is_vue = ctx.file_path().extension().is_some_and(|ext| ext == "vue");
+        let is_vue = ctx.file_extension().is_some_and(|ext| ext == "vue");
         if is_vue {
             self.run_on_vue(node, ctx);
         } else {
@@ -217,7 +217,13 @@ fn collect_hash_from_variable_declarator(
     let key_hash: FxHashSet<String> = obj_pattern
         .properties
         .iter()
-        .filter_map(|prop| prop.key.static_name())
+        .filter_map(|prop| {
+            if matches!(prop.value.kind, BindingPatternKind::AssignmentPattern(_)) {
+                prop.key.static_name()
+            } else {
+                None
+            }
+        })
         .map(|key| key.to_string())
         .collect();
     Some(key_hash)
@@ -272,7 +278,10 @@ fn handle_type_argument(ctx: &LintContext, ts_type: &TSType, key_hash: &FxHashSe
             if !reference.is_type() {
                 return;
             }
-            let reference_node = ctx.symbol_declaration(reference.symbol_id().unwrap());
+            let Some(symbol_id) = reference.symbol_id() else {
+                return;
+            };
+            let reference_node = ctx.symbol_declaration(symbol_id);
             let AstKind::TSInterfaceDeclaration(interface_decl) = reference_node.kind() else {
                 return;
             };
@@ -407,6 +416,18 @@ fn test() {
     use std::path::PathBuf;
 
     let pass = vec![
+        (
+            r#"
+            <script setup lang="ts">
+                const { laps } = defineProps<{
+                    laps: unknown[];
+                }>();
+            </script>
+                "#,
+            None,
+            None,
+            Some(PathBuf::from("test.vue")),
+        ),
         (
             r#"
                 <script setup lang="ts">
@@ -600,6 +621,20 @@ fn test() {
                         required: false
                     }
                     })
+                </script>
+                ",
+            None,
+            None,
+            Some(PathBuf::from("test.vue")),
+        ),
+        (
+            "   <script lang='ts'>
+                export interface ComponentProps {
+                    name?: string;
+                }
+                </script>
+                <script setup lang='ts'>
+                    const {name='Hello'} = defineProps<ComponentProps>()
                 </script>
                 ",
             None,

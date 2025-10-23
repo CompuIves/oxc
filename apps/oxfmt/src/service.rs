@@ -5,7 +5,7 @@ use rayon::prelude::*;
 
 use oxc_allocator::Allocator;
 use oxc_diagnostics::{DiagnosticSender, DiagnosticService, OxcDiagnostic};
-use oxc_formatter::{FormatOptions, Formatter};
+use oxc_formatter::{FormatOptions, Formatter, enable_jsx_source_type};
 use oxc_parser::{ParseOptions, Parser};
 
 use crate::{command::OutputOptions, walk::WalkEntry};
@@ -13,14 +13,15 @@ use crate::{command::OutputOptions, walk::WalkEntry};
 pub struct FormatService {
     cwd: Box<Path>,
     output_options: OutputOptions,
+    format_options: FormatOptions,
 }
 
 impl FormatService {
-    pub fn new<T>(cwd: T, output_options: OutputOptions) -> Self
+    pub fn new<T>(cwd: T, output_options: OutputOptions, format_options: FormatOptions) -> Self
     where
         T: Into<Box<Path>>,
     {
-        Self { cwd: cwd.into(), output_options }
+        Self { cwd: cwd.into(), output_options, format_options }
     }
 
     /// Process entries as they are received from the channel
@@ -43,8 +44,8 @@ impl FormatService {
     fn process_entry(&self, entry: &WalkEntry, tx_error: &DiagnosticSender) {
         let start_time = Instant::now();
 
-        let path = Path::new(&entry.path);
-        let source_type = entry.source_type;
+        let path = &entry.path;
+        let source_type = enable_jsx_source_type(entry.source_type);
 
         // TODO: Use `read_to_arena_str()` like `oxlint`?
         let source_text = fs::read_to_string(path).expect("Failed to read file");
@@ -68,13 +69,11 @@ impl FormatService {
                 &source_text,
                 ret.errors,
             );
-            tx_error.send((path.to_path_buf(), diagnostics)).unwrap();
+            tx_error.send((path.clone(), diagnostics)).unwrap();
             return;
         }
 
-        // TODO: Read and apply config
-        let options = FormatOptions::default();
-        let code = Formatter::new(&allocator, options).build(&ret.program);
+        let code = Formatter::new(&allocator, self.format_options.clone()).build(&ret.program);
 
         let elapsed = start_time.elapsed();
         let is_changed = source_text != code;
@@ -107,7 +106,7 @@ impl FormatService {
             ))),
             _ => None,
         } {
-            tx_error.send((path.to_path_buf(), vec![diagnostic.into()])).unwrap();
+            tx_error.send((path.clone(), vec![diagnostic.into()])).unwrap();
         }
     }
 }

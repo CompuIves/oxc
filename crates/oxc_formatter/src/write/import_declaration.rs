@@ -4,15 +4,16 @@ use oxc_span::GetSpan;
 use oxc_syntax::identifier::is_identifier_name;
 
 use crate::{
-    Format, FormatResult, FormatTrailingCommas, QuoteProperties, TrailingSeparator, best_fitting,
-    format_args,
+    Format, FormatResult, FormatTrailingCommas, JsLabels, QuoteProperties, TrailingSeparator,
+    ast_nodes::{AstNode, AstNodes},
+    best_fitting, format_args,
     formatter::{
         Formatter,
         prelude::*,
         separated::FormatSeparatedIter,
         trivia::{FormatLeadingComments, FormatTrailingComments},
     },
-    generated::ast_nodes::{AstNode, AstNodes},
+    utils::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments,
     write,
     write::semicolon::OptionalSemicolon,
 };
@@ -25,15 +26,39 @@ impl<'a> Format<'a> for ImportOrExportKind {
     }
 }
 
-impl<'a> FormatWrite<'a> for AstNode<'a, ImportDeclaration<'a>> {
-    fn write(&self, f: &mut Formatter<'_, 'a>) -> FormatResult<()> {
-        write!(f, ["import", space(), self.import_kind])?;
+pub fn format_import_and_export_source_with_clause<'a>(
+    source: &AstNode<'a, StringLiteral>,
+    with_clause: Option<&AstNode<'a, WithClause>>,
+    f: &mut Formatter<'_, 'a>,
+) -> FormatResult<()> {
+    FormatNodeWithoutTrailingComments(source).fmt(f)?;
 
-        if let Some(specifiers) = self.specifiers() {
-            write!(f, [specifiers, space(), "from", space()])?;
+    if let Some(with_clause) = with_clause {
+        if f.comments().has_comment_before(with_clause.span.start) {
+            write!(f, [space()])?;
         }
 
-        write!(f, [self.source(), self.with_clause(), OptionalSemicolon])
+        write!(f, [with_clause])?;
+    }
+
+    Ok(())
+}
+
+impl<'a> FormatWrite<'a> for AstNode<'a, ImportDeclaration<'a>> {
+    fn write(&self, f: &mut Formatter<'_, 'a>) -> FormatResult<()> {
+        let decl = &format_once(|f| {
+            write!(f, ["import", space(), self.import_kind])?;
+
+            if let Some(specifiers) = self.specifiers() {
+                write!(f, [specifiers, space(), "from", space()])?;
+            }
+
+            format_import_and_export_source_with_clause(self.source(), self.with_clause(), f)?;
+
+            write!(f, [OptionalSemicolon])
+        });
+
+        write!(f, [labelled(LabelId::of(JsLabels::ImportDeclaration), decl)])
     }
 }
 
@@ -66,7 +91,7 @@ impl<'a> Format<'a> for AstNode<'a, Vec<'a, ImportDeclarationSpecifier<'a>>> {
         } else if self.len() == 1
             && let Some(ImportDeclarationSpecifier::ImportSpecifier(specifier)) =
                 specifiers_iter.peek().map(AsRef::as_ref)
-            && !f.comments().has_comment_before(specifier.local.span.start)
+            && f.comments().comments_before_character(self.parent.span().start, b'}').is_empty()
         {
             write!(
                 f,
@@ -92,20 +117,16 @@ impl<'a> Format<'a> for AstNode<'a, Vec<'a, ImportDeclarationSpecifier<'a>>> {
                                 .map(|specifier| {
                                     format_once(move |f| {
                                         // Should add empty line before the specifier if there are comments before it.
-                                        let comments = f
-                                            .context()
+                                        let specifier_span = specifier.span();
+                                        if f.context()
                                             .comments()
-                                            .comments_before(specifier.span().start);
-                                        if !comments.is_empty() {
-                                            if f.source_text()
-                                                .get_lines_before(comments[0].span, f.comments())
+                                            .has_comment_before(specifier_span.start)
+                                            && f.source_text()
+                                                .get_lines_before(specifier_span, f.comments())
                                                 > 1
-                                            {
-                                                write!(f, [empty_line()])?;
-                                            }
-                                            write!(f, [FormatLeadingComments::Comments(comments)])?;
+                                        {
+                                            write!(f, [empty_line()])?;
                                         }
-
                                         write!(f, specifier)
                                     })
                                 });
@@ -134,37 +155,22 @@ impl<'a> FormatWrite<'a> for AstNode<'a, ImportSpecifier<'a>> {
         }
         write!(f, [self.import_kind()])?;
         if self.local.span == self.imported.span() {
-            write!(f, [self.local()])?;
+            write!(f, [self.local()])
         } else {
-            write!(f, [self.imported(), space(), "as", space(), self.local()])?;
-        }
-
-        if f.source_text().next_non_whitespace_byte_is(self.span.end, b'}') {
-            let comments = f.context().comments().comments_before_character(self.span.end, b'}');
-            write!(f, [FormatTrailingComments::Comments(comments)])
-        } else {
-            self.format_trailing_comments(f)
+            write!(f, [self.imported(), space(), "as", space(), self.local()])
         }
     }
 }
 
 impl<'a> FormatWrite<'a> for AstNode<'a, ImportDefaultSpecifier<'a>> {
     fn write(&self, f: &mut Formatter<'_, 'a>) -> FormatResult<()> {
-        self.local().fmt(f)
+        write!(f, [self.local()])
     }
 }
 
 impl<'a> FormatWrite<'a> for AstNode<'a, ImportNamespaceSpecifier<'a>> {
     fn write(&self, f: &mut Formatter<'_, 'a>) -> FormatResult<()> {
-        write!(f, ["*", space(), "as", space()])?;
-        let local = self.local();
-        local.format_leading_comments(f)?;
-        local.write(f)?;
-        // `import * as all /* comment */ from 'mod'`
-        //                  ^^^^^^^^^^^^ get comments that before `from` keyword to print
-        // `f` is the first character of `from`
-        let comments = f.context().comments().comments_before_character(local.span().start, b'f');
-        write!(f, [space(), FormatTrailingComments::Comments(comments)])
+        write!(f, ["*", space(), "as", space(), self.local()])
     }
 }
 
@@ -225,5 +231,30 @@ impl<'a> FormatWrite<'a> for AstNode<'a, ImportAttribute<'a>> {
             write!(f, self.key())?;
         }
         write!(f, [":", space(), self.value()])
+    }
+}
+
+impl<'a> FormatWrite<'a> for AstNode<'a, TSImportEqualsDeclaration<'a>> {
+    fn write(&self, f: &mut Formatter<'_, 'a>) -> FormatResult<()> {
+        write!(
+            f,
+            [
+                "import",
+                space(),
+                self.import_kind(),
+                self.id(),
+                space(),
+                "=",
+                space(),
+                self.module_reference(),
+                OptionalSemicolon
+            ]
+        )
+    }
+}
+
+impl<'a> FormatWrite<'a> for AstNode<'a, TSExternalModuleReference<'a>> {
+    fn write(&self, f: &mut Formatter<'_, 'a>) -> FormatResult<()> {
+        write!(f, ["require(", self.expression(), ")"])
     }
 }

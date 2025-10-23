@@ -11,17 +11,15 @@ mod linter;
 mod options;
 #[cfg(test)]
 mod tester;
+mod utils;
 mod worker;
 
 use crate::backend::Backend;
 
 type ConcurrentHashMap<K, V> = papaya::HashMap<K, V, FxBuildHasher>;
 
-const OXC_CONFIG_FILE: &str = ".oxlintrc.json";
-
-// max range for LSP integer is 2^31 - 1
-// https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#baseTypes
-const LSP_MAX_INT: u32 = 2u32.pow(31) - 1;
+const LINT_CONFIG_FILE: &str = ".oxlintrc.json";
+const FORMAT_CONFIG_FILES: &[&str; 2] = &[".oxfmtrc.json", ".oxfmtrc.jsonc"];
 
 #[tokio::main]
 async fn main() {

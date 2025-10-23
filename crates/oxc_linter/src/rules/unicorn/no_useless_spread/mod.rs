@@ -145,8 +145,9 @@ declare_oxc_lint!(
 
 impl Rule for NoUselessSpread {
     fn run<'a>(&self, node: &AstNode<'a>, ctx: &LintContext<'a>) {
-        if !matches!(node.kind(), AstKind::ArrayExpression(_) | AstKind::ObjectExpression(_)) {
-            return;
+        match node.kind() {
+            AstKind::ArrayExpression(_) | AstKind::ObjectExpression(_) => {}
+            _ => return,
         }
 
         if check_useless_spread_in_list(node, ctx) {
@@ -224,7 +225,7 @@ fn check_useless_spread_in_list<'a>(node: &AstNode<'a>, ctx: &LintContext<'a>) -
                         ""
                     };
 
-                    fixer.replace(spread_elem.span(), replacer)
+                    fixer.replace(spread_elem.span(), replacer.to_owned())
                 });
                 true
             }
@@ -291,7 +292,7 @@ fn diagnose_array_in_array_spread<'a>(
                     }
                 }
                 codegen.print_ascii_byte(b']');
-                fixer.replace(outer_array.span, codegen)
+                fixer.replace(outer_array.span, codegen.into_source_text())
             });
         }
     }
@@ -452,8 +453,8 @@ fn fix_by_removing_array_spread<'a, S: GetSpan>(
     fixer: RuleFixer<'_, 'a>,
     iterable: &S,
     spread: &SpreadElement<'a>,
-) -> RuleFix<'a> {
-    fixer.replace(iterable.span(), fixer.source_range(spread.argument.span()))
+) -> RuleFix {
+    fixer.replace_with(iterable, &spread.argument)
 }
 
 /// Creates a fix that replaces `{...spread}` with `spread`, when `spread` is an
@@ -465,7 +466,7 @@ fn fix_by_removing_array_spread<'a, S: GetSpan>(
 fn fix_by_removing_object_spread<'a>(
     fixer: RuleFixer<'_, 'a>,
     spread: &SpreadElement<'a>,
-) -> RuleFix<'a> {
+) -> RuleFix {
     // get contents inside object brackets
     // e.g. `...{ a, b, }` -> ` a, b, `
     let replacement_span = &spread.argument.span().shrink(1);
@@ -607,6 +608,7 @@ fn test() {
         "[ ...new Uint8Array([ 1, 2, 3 ]) ].map(byte => byte.toString())",
     ];
 
+    #[expect(clippy::literal_string_with_formatting_args)]
     let fail = vec![
         r"const array = [...[a]]",
         r"const object = {...{a}}",

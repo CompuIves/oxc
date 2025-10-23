@@ -4,7 +4,7 @@ use std::{
 };
 
 use itertools::Itertools;
-use oxc_resolver::Resolver;
+use oxc_resolver::{ResolveOptions, Resolver};
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use oxc_span::{CompactStr, format_compact_str};
@@ -13,8 +13,7 @@ use crate::{
     AllowWarnDeny, ExternalPluginStore, LintConfig, LintFilter, LintFilterKind, Oxlintrc,
     RuleCategory, RuleEnum,
     config::{
-        ESLintRule, LintPlugins, OxlintOverrides, OxlintRules, overrides::OxlintOverride,
-        plugins::BuiltinLintPlugins,
+        ESLintRule, OxlintOverrides, OxlintRules, overrides::OxlintOverride, plugins::LintPlugins,
     },
     external_linter::ExternalLinter,
     external_plugin_store::{ExternalRuleId, ExternalRuleLookupError},
@@ -42,7 +41,7 @@ pub struct ConfigStoreBuilder {
 
 impl Default for ConfigStoreBuilder {
     fn default() -> Self {
-        Self { rules: Self::warn_correctness(BuiltinLintPlugins::default()), ..Self::empty() }
+        Self { rules: Self::warn_correctness(LintPlugins::default()), ..Self::empty() }
     }
 }
 
@@ -67,8 +66,7 @@ impl ConfigStoreBuilder {
     ///
     /// You can think of this as `oxlint -W all -W nursery`.
     pub fn all() -> Self {
-        let config =
-            LintConfig { plugins: BuiltinLintPlugins::all().into(), ..LintConfig::default() };
+        let config = LintConfig { plugins: LintPlugins::all(), ..LintConfig::default() };
         let overrides = OxlintOverrides::default();
         let categories: OxlintCategories = OxlintCategories::default();
         let rules = RULES.iter().map(|rule| (rule.clone(), AllowWarnDeny::Warn)).collect();
@@ -149,47 +147,52 @@ impl ConfigStoreBuilder {
         let (oxlintrc, extended_paths) = resolve_oxlintrc_config(oxlintrc)?;
 
         // Collect external plugins from both base config and overrides
-        let mut external_plugins = FxHashSet::default();
+        let mut external_plugins: FxHashSet<(&PathBuf, &str)> = FxHashSet::default();
 
-        if let Some(base_plugins) = oxlintrc.plugins.as_ref() {
-            external_plugins.extend(base_plugins.external.iter().cloned());
+        if let Some(base_external_plugins) = &oxlintrc.external_plugins {
+            external_plugins.extend(base_external_plugins.iter().map(|(k, v)| (k, v.as_str())));
         }
 
         for r#override in &oxlintrc.overrides {
-            if let Some(override_plugins) = &r#override.plugins {
-                external_plugins.extend(override_plugins.external.iter().cloned());
+            if let Some(override_external_plugins) = &r#override.external_plugins {
+                external_plugins
+                    .extend(override_external_plugins.iter().map(|(k, v)| (k, v.as_str())));
             }
         }
 
-        if !external_plugins.is_empty() {
+        // If external plugins are not enabled (language server), then skip loading JS plugins.
+        // This is so that a project can use JS plugins via `oxlint` CLI, and language server
+        // will just silently ignore them - rather than crashing.
+        if !external_plugins.is_empty() && external_plugin_store.is_enabled() {
             let Some(external_linter) = external_linter else {
                 #[expect(clippy::missing_panics_doc, reason = "infallible")]
-                let plugin_specifier = external_plugins.iter().next().unwrap().clone();
-                return Err(ConfigBuilderError::NoExternalLinterConfigured { plugin_specifier });
+                let (_, original_specifier) = external_plugins.iter().next().unwrap();
+                return Err(ConfigBuilderError::NoExternalLinterConfigured {
+                    plugin_specifier: (*original_specifier).to_string(),
+                });
             };
 
-            let resolver = Resolver::default();
+            let resolver = Resolver::new(ResolveOptions {
+                main_fields: vec!["module".into(), "main".into()],
+                condition_names: vec!["module".into(), "import".into()],
+                ..Default::default()
+            });
 
-            #[expect(clippy::missing_panics_doc, reason = "oxlintrc.path is always a file path")]
-            let oxlintrc_dir = oxlintrc.path.parent().unwrap();
-
-            for plugin_specifier in &external_plugins {
+            for (config_path, specifier) in &external_plugins {
                 Self::load_external_plugin(
-                    oxlintrc_dir,
-                    plugin_specifier,
+                    config_path,
+                    specifier,
                     external_linter,
                     &resolver,
                     external_plugin_store,
                 )?;
             }
         }
+
         let plugins = oxlintrc.plugins.unwrap_or_default();
 
-        let rules = if start_empty {
-            FxHashMap::default()
-        } else {
-            Self::warn_correctness(plugins.builtin)
-        };
+        let rules =
+            if start_empty { FxHashMap::default() } else { Self::warn_correctness(plugins) };
 
         let mut categories = oxlintrc.categories.clone();
 
@@ -249,8 +252,8 @@ impl ConfigStoreBuilder {
     /// [`with_filters`]: ConfigStoreBuilder::with_filters
     /// [`and_builtin_plugins`]: ConfigStoreBuilder::and_builtin_plugins
     #[inline]
-    pub fn with_builtin_plugins(mut self, plugins: BuiltinLintPlugins) -> Self {
-        self.config.plugins.builtin = plugins;
+    pub fn with_builtin_plugins(mut self, plugins: LintPlugins) -> Self {
+        self.config.plugins = plugins;
         self
     }
 
@@ -264,14 +267,14 @@ impl ConfigStoreBuilder {
     /// See [`ConfigStoreBuilder::with_builtin_plugins`] for details on how plugin configuration affects your
     /// rules.
     #[inline]
-    pub fn and_builtin_plugins(mut self, plugins: BuiltinLintPlugins, enabled: bool) -> Self {
-        self.config.plugins.builtin.set(plugins, enabled);
+    pub fn and_builtin_plugins(mut self, plugins: LintPlugins, enabled: bool) -> Self {
+        self.config.plugins.set(plugins, enabled);
         self
     }
 
     #[inline]
-    pub fn plugins(&self) -> &LintPlugins {
-        &self.config.plugins
+    pub fn plugins(&self) -> LintPlugins {
+        self.config.plugins
     }
 
     #[cfg(test)]
@@ -302,6 +305,7 @@ impl ConfigStoreBuilder {
                     self.upsert_where(severity, |r| r.category() == *category);
                 }
                 LintFilterKind::Rule(plugin, rule) => {
+                    let (plugin, rule) = super::rules::unalias_plugin_name(plugin, rule);
                     self.upsert_where(severity, |r| r.plugin_name() == plugin && r.name() == rule);
                 }
                 LintFilterKind::Generic(name) => self.upsert_where(severity, |r| r.name() == name),
@@ -314,6 +318,7 @@ impl ConfigStoreBuilder {
                     self.rules.retain(|rule, _| rule.category() != *category);
                 }
                 LintFilterKind::Rule(plugin, rule) => {
+                    let (plugin, rule) = super::rules::unalias_plugin_name(plugin, rule);
                     self.rules.retain(|r, _| r.plugin_name() != plugin || r.name() != rule);
                 }
                 LintFilterKind::Generic(name) => self.rules.retain(|rule, _| rule.name() != name),
@@ -331,25 +336,26 @@ impl ConfigStoreBuilder {
         self.get_all_rules_for_plugins(None)
     }
 
-    fn get_all_rules_for_plugins(&self, override_plugins: Option<&LintPlugins>) -> Vec<RuleEnum> {
+    fn get_all_rules_for_plugins(&self, override_plugins: Option<LintPlugins>) -> Vec<RuleEnum> {
         let mut builtin_plugins = if let Some(override_plugins) = override_plugins {
-            self.config.plugins.builtin | override_plugins.builtin
+            self.config.plugins | override_plugins
         } else {
-            self.config.plugins.builtin
+            self.config.plugins
         };
 
         if builtin_plugins.is_all() {
             RULES.clone()
         } else {
             // we need to include some jest rules when vitest is enabled, see [`VITEST_COMPATIBLE_JEST_RULES`]
-            if builtin_plugins.contains(BuiltinLintPlugins::VITEST) {
-                builtin_plugins = builtin_plugins.union(BuiltinLintPlugins::JEST);
+            if builtin_plugins.contains(LintPlugins::VITEST) {
+                builtin_plugins |= LintPlugins::JEST;
             }
 
             RULES
                 .iter()
                 .filter(|rule| {
-                    builtin_plugins.contains(BuiltinLintPlugins::from(rule.plugin_name()))
+                    LintPlugins::try_from(rule.plugin_name())
+                        .is_ok_and(|plugin_flag| builtin_plugins.contains(plugin_flag))
                 })
                 .cloned()
                 .collect()
@@ -385,11 +391,11 @@ impl ConfigStoreBuilder {
         // When a plugin gets disabled before build(), rules for that plugin aren't removed until
         // with_filters() gets called. If the user never calls it, those now-undesired rules need
         // to be taken out.
-        let mut plugins = self.plugins().builtin;
+        let mut plugins = self.plugins();
 
         // Apply the same Vitest->Jest logic as in get_all_rules()
-        if plugins.contains(BuiltinLintPlugins::VITEST) {
-            plugins = plugins.union(BuiltinLintPlugins::JEST);
+        if plugins.contains(LintPlugins::VITEST) {
+            plugins |= LintPlugins::JEST;
         }
 
         let overrides = std::mem::take(&mut self.overrides);
@@ -400,7 +406,10 @@ impl ConfigStoreBuilder {
         let mut rules: Vec<_> = self
             .rules
             .into_iter()
-            .filter(|(r, _)| plugins.contains(r.plugin_name().into()))
+            .filter(|(r, _)| {
+                LintPlugins::try_from(r.plugin_name())
+                    .is_ok_and(|plugin_name| plugins.contains(plugin_name))
+            })
             .collect();
         rules.sort_unstable_by_key(|(r, _)| r.id());
 
@@ -423,7 +432,7 @@ impl ConfigStoreBuilder {
                 let mut rules_map = FxHashMap::default();
                 let mut external_rules_map = FxHashMap::default();
 
-                let all_rules = self.get_all_rules_for_plugins(override_config.plugins.as_ref());
+                let all_rules = self.get_all_rules_for_plugins(override_config.plugins);
 
                 // Resolve rules for this override
                 override_config.rules.override_rules(
@@ -451,9 +460,9 @@ impl ConfigStoreBuilder {
     }
 
     /// Warn for all correctness rules in the given set of plugins.
-    fn warn_correctness(mut plugins: BuiltinLintPlugins) -> FxHashMap<RuleEnum, AllowWarnDeny> {
-        if plugins.contains(BuiltinLintPlugins::VITEST) {
-            plugins = plugins.union(BuiltinLintPlugins::JEST);
+    fn warn_correctness(mut plugins: LintPlugins) -> FxHashMap<RuleEnum, AllowWarnDeny> {
+        if plugins.contains(LintPlugins::VITEST) {
+            plugins |= LintPlugins::JEST;
         }
         RULES
             .iter()
@@ -461,7 +470,8 @@ impl ConfigStoreBuilder {
                 // NOTE: this logic means there's no way to disable ESLint
                 // correctness rules. I think that's fine for now.
                 rule.category() == RuleCategory::Correctness
-                    && plugins.contains(BuiltinLintPlugins::from(rule.plugin_name()))
+                    && LintPlugins::try_from(rule.plugin_name())
+                        .is_ok_and(|plugin_flag| plugins.contains(plugin_flag))
             })
             .map(|rule| (rule.clone(), AllowWarnDeny::Warn))
             .collect()
@@ -498,7 +508,7 @@ impl ConfigStoreBuilder {
     }
 
     fn load_external_plugin(
-        oxlintrc_dir_path: &Path,
+        resolve_dir: &Path,
         plugin_specifier: &str,
         external_linter: &ExternalLinter,
         resolver: &Resolver,
@@ -506,7 +516,16 @@ impl ConfigStoreBuilder {
     ) -> Result<(), ConfigBuilderError> {
         use crate::PluginLoadResult;
 
-        let resolved = resolver.resolve(oxlintrc_dir_path, plugin_specifier).map_err(|e| {
+        // Print warning on 1st attempt to load a plugin
+        #[expect(clippy::print_stderr)]
+        if external_plugin_store.is_empty() {
+            eprintln!(
+                "WARNING: JS plugins are experimental and not subject to semver.\nBreaking changes are possible while JS plugins support is under development."
+            );
+        }
+
+        // Resolve the specifier relative to the config directory
+        let resolved = resolver.resolve(resolve_dir, plugin_specifier).map_err(|e| {
             ConfigBuilderError::PluginLoadFailed {
                 plugin_specifier: plugin_specifier.to_string(),
                 error: e.to_string(),
@@ -531,8 +550,12 @@ impl ConfigStoreBuilder {
 
         match result {
             PluginLoadResult::Success { name, offset, rule_names } => {
-                external_plugin_store.register_plugin(plugin_path, name, offset, rule_names);
-                Ok(())
+                if LintPlugins::try_from(name.as_str()).is_err() {
+                    external_plugin_store.register_plugin(plugin_path, name, offset, rule_names);
+                    Ok(())
+                } else {
+                    Err(ConfigBuilderError::ReservedExternalPluginName { plugin_name: name })
+                }
             }
             PluginLoadResult::Failure(e) => Err(ConfigBuilderError::PluginLoadFailed {
                 plugin_specifier: plugin_specifier.to_string(),
@@ -579,6 +602,9 @@ pub enum ConfigBuilderError {
     NoExternalLinterConfigured {
         plugin_specifier: String,
     },
+    ReservedExternalPluginName {
+        plugin_name: String,
+    },
 }
 
 impl Display for ConfigBuilderError {
@@ -605,7 +631,14 @@ impl Display for ConfigBuilderError {
             ConfigBuilderError::NoExternalLinterConfigured { plugin_specifier } => {
                 write!(
                     f,
-                    "`plugins` config contains '{plugin_specifier}'. JS plugins are not supported without `--js-plugins` CLI option. Note: JS plugin support is experimental.",
+                    "`jsPlugins` config contains '{plugin_specifier}'. JS plugins are not supported on 32-bit or big-endian platforms at present.",
+                )?;
+                Ok(())
+            }
+            ConfigBuilderError::ReservedExternalPluginName { plugin_name } => {
+                write!(
+                    f,
+                    "Plugin name '{plugin_name}' is reserved, and cannot be used for JS plugins",
                 )?;
                 Ok(())
             }
@@ -620,25 +653,24 @@ impl std::error::Error for ConfigBuilderError {}
 mod test {
     use std::path::PathBuf;
 
-    use rustc_hash::FxHashSet;
-
     use super::*;
 
     #[test]
     fn test_builder_default() {
         let builder = ConfigStoreBuilder::default();
-        assert_eq!(*builder.plugins(), LintPlugins::default());
+        assert_eq!(builder.plugins(), LintPlugins::default());
 
         // populated with all correctness-level ESLint rules at a "warn" severity
         assert!(!builder.rules.is_empty());
         for (rule, severity) in &builder.rules {
             assert_eq!(rule.category(), RuleCategory::Correctness);
             assert_eq!(*severity, AllowWarnDeny::Warn);
-            let plugin = rule.plugin_name();
+            let plugin_name = rule.plugin_name();
+            let plugin = LintPlugins::try_from(plugin_name);
             let name = rule.name();
             assert!(
-                builder.plugins().builtin.contains(plugin.into()),
-                "{plugin}/{name} is in the default rule set but its plugin is not enabled"
+                plugin.is_ok_and(|plugin| builder.plugins().contains(plugin)),
+                "{plugin_name}/{name} is in the default rule set but its plugin is not enabled"
             );
         }
     }
@@ -646,7 +678,7 @@ mod test {
     #[test]
     fn test_builder_empty() {
         let builder = ConfigStoreBuilder::empty();
-        assert_eq!(*builder.plugins(), LintPlugins::default());
+        assert_eq!(builder.plugins(), LintPlugins::default());
         assert!(builder.rules.is_empty());
     }
 
@@ -667,11 +699,12 @@ mod test {
             assert_eq!(rule.category(), RuleCategory::Correctness);
             assert_eq!(*severity, AllowWarnDeny::Deny);
 
-            let plugin = rule.plugin_name();
+            let plugin_name = rule.plugin_name();
+            let plugin = LintPlugins::try_from(plugin_name);
             let name = rule.name();
             assert!(
-                builder.plugins().builtin.contains(plugin.into()),
-                "{plugin}/{name} is in the default rule set but its plugin is not enabled"
+                plugin.is_ok_and(|plugin| builder.plugins().contains(plugin)),
+                "{plugin_name}/{name} is in the default rule set but its plugin is not enabled"
             );
         }
     }
@@ -751,7 +784,7 @@ mod test {
         let builder = ConfigStoreBuilder::default();
         let initial_rule_count = builder.rules.len();
 
-        let builder = builder.and_builtin_plugins(BuiltinLintPlugins::IMPORT, true);
+        let builder = builder.and_builtin_plugins(LintPlugins::IMPORT, true);
         assert_eq!(
             initial_rule_count,
             builder.rules.len(),
@@ -762,22 +795,22 @@ mod test {
     #[test]
     fn test_rules_after_plugin_removal() {
         // sanity check: the plugin we're removing is, in fact, enabled by default.
-        assert!(LintPlugins::default().builtin.contains(BuiltinLintPlugins::TYPESCRIPT));
+        assert!(LintPlugins::default().contains(LintPlugins::TYPESCRIPT));
 
         let mut desired_plugins = LintPlugins::default();
-        desired_plugins.builtin.set(BuiltinLintPlugins::TYPESCRIPT, false);
+        desired_plugins.set(LintPlugins::TYPESCRIPT, false);
 
         let external_plugin_store = ExternalPluginStore::default();
         let linter = ConfigStoreBuilder::default()
-            .with_builtin_plugins(desired_plugins.builtin)
+            .with_builtin_plugins(desired_plugins)
             .build(&external_plugin_store)
             .unwrap();
         for (rule, _) in linter.base.rules.iter() {
             let name = rule.name();
             let plugin = rule.plugin_name();
             assert_ne!(
-                BuiltinLintPlugins::from(plugin),
-                BuiltinLintPlugins::TYPESCRIPT,
+                LintPlugins::try_from(plugin),
+                Ok(LintPlugins::TYPESCRIPT),
                 "{plugin}/{name} is in the rules list after typescript plugin has been disabled"
             );
         }
@@ -786,7 +819,7 @@ mod test {
     #[test]
     fn test_plugin_configuration() {
         let builder = ConfigStoreBuilder::default();
-        let initial_plugins = builder.plugins().clone();
+        let initial_plugins = builder.plugins();
 
         // ==========================================================================================
         // Test ConfigStoreBuilder::and_plugins, which deltas the plugin list instead of overriding it
@@ -794,41 +827,77 @@ mod test {
 
         // Enable eslint plugin. Since it's already enabled, this does nothing.
 
-        assert!(initial_plugins.builtin.contains(BuiltinLintPlugins::ESLINT)); // sanity check that eslint is
+        assert!(initial_plugins.contains(LintPlugins::ESLINT)); // sanity check that eslint is
         // enabled
-        let builder = builder.and_builtin_plugins(BuiltinLintPlugins::ESLINT, true);
-        assert_eq!(initial_plugins, *builder.plugins());
+        let builder = builder.and_builtin_plugins(LintPlugins::ESLINT, true);
+        assert_eq!(initial_plugins, builder.plugins());
 
         // Disable import plugin. Since it's not already enabled, this is also a no-op.
-        assert!(!builder.plugins().builtin.contains(BuiltinLintPlugins::IMPORT)); // sanity check that it's not
+        assert!(!builder.plugins().contains(LintPlugins::IMPORT)); // sanity check that it's not
         // already enabled
-        let builder = builder.and_builtin_plugins(BuiltinLintPlugins::IMPORT, false);
-        assert_eq!(initial_plugins, *builder.plugins());
+        let builder = builder.and_builtin_plugins(LintPlugins::IMPORT, false);
+        assert_eq!(initial_plugins, builder.plugins());
 
         // Enable import plugin. Since it's not already enabled, this turns it on.
-        let builder = builder.and_builtin_plugins(BuiltinLintPlugins::IMPORT, true);
-        assert_eq!(
-            BuiltinLintPlugins::default().union(BuiltinLintPlugins::IMPORT),
-            builder.plugins().builtin
-        );
-        assert_ne!(initial_plugins, *builder.plugins());
+        let builder = builder.and_builtin_plugins(LintPlugins::IMPORT, true);
+        assert_eq!(LintPlugins::default() | LintPlugins::IMPORT, builder.plugins());
+        assert_ne!(initial_plugins, builder.plugins());
 
         // Turn import back off, resetting plugins to the initial state
-        let builder = builder.and_builtin_plugins(BuiltinLintPlugins::IMPORT, false);
-        assert_eq!(initial_plugins, *builder.plugins());
+        let builder = builder.and_builtin_plugins(LintPlugins::IMPORT, false);
+        assert_eq!(initial_plugins, builder.plugins());
 
         // ==========================================================================================
         // Test ConfigStoreBuilder::with_plugins, which _does_ override plugins
         // ==========================================================================================
 
-        let builder = builder.with_builtin_plugins(BuiltinLintPlugins::ESLINT);
-        assert_eq!(BuiltinLintPlugins::ESLINT, builder.plugins().builtin);
+        let builder = builder.with_builtin_plugins(LintPlugins::ESLINT);
+        assert_eq!(LintPlugins::ESLINT, builder.plugins());
 
-        let expected_plugins = BuiltinLintPlugins::ESLINT
-            .union(BuiltinLintPlugins::TYPESCRIPT)
-            .union(BuiltinLintPlugins::NEXTJS);
+        let expected_plugins = LintPlugins::ESLINT | LintPlugins::TYPESCRIPT | LintPlugins::NEXTJS;
         let builder = builder.with_builtin_plugins(expected_plugins);
-        assert_eq!(expected_plugins, builder.plugins().builtin);
+        assert_eq!(expected_plugins, builder.plugins());
+    }
+
+    #[test]
+    fn test_cli_rule_aliases() {
+        let builder = ConfigStoreBuilder::default().and_builtin_plugins(LintPlugins::REACT, true);
+
+        // Assert rule doesn't exist by default
+        assert_eq!(
+            builder
+                .rules
+                .iter()
+                .find(|(r, _)| r.plugin_name() == "react" && r.name() == "exhaustive-deps"),
+            None
+        );
+
+        let builder = builder.with_filter(
+            &LintFilter::new(AllowWarnDeny::Deny, "react-hooks/exhaustive-deps").unwrap(),
+        );
+
+        let (rule, sev) = builder
+            .rules
+            .iter()
+            .find(|(r, _)| r.plugin_name() == "react" && r.name() == "exhaustive-deps")
+            .expect("react/exhaustive-deps should be configured to Deny");
+
+        assert_eq!(rule.plugin_name(), "react");
+        assert_eq!(rule.name(), "exhaustive-deps");
+        assert_eq!(sev, &AllowWarnDeny::Deny);
+
+        let builder = builder.with_filter(
+            &LintFilter::new(AllowWarnDeny::Allow, "react-hooks/exhaustive-deps").unwrap(),
+        );
+
+        // Allowing the rule removes it from rules "overlay"
+        assert_eq!(
+            builder
+                .rules
+                .iter()
+                .find(|(r, _)| r.plugin_name() == "react" && r.name() == "exhaustive-deps"),
+            None
+        );
     }
 
     #[test]
@@ -1051,7 +1120,7 @@ mod test {
             "#,
         );
         // Check that default plugins are correctly set
-        assert_eq!(*default_config.plugins(), LintPlugins::default());
+        assert_eq!(default_config.plugins(), LintPlugins::default());
 
         // Test 2: Parent config with explicitly specified plugins
         let parent_config = config_store_from_str(
@@ -1061,38 +1130,21 @@ mod test {
             }
             "#,
         );
-        assert_eq!(
-            *parent_config.plugins(),
-            LintPlugins::new(
-                BuiltinLintPlugins::REACT | BuiltinLintPlugins::TYPESCRIPT,
-                FxHashSet::default()
-            )
-        );
+        assert_eq!(parent_config.plugins(), LintPlugins::REACT | LintPlugins::TYPESCRIPT);
 
         // Test 3: Child config that extends parent without specifying plugins
         // Should inherit parent's plugins
         let child_no_plugins_config =
             config_store_from_path("fixtures/extends_config/plugins/child_no_plugins.json");
-        assert_eq!(
-            *child_no_plugins_config.plugins(),
-            LintPlugins::new(
-                BuiltinLintPlugins::REACT | BuiltinLintPlugins::TYPESCRIPT,
-                FxHashSet::default()
-            )
-        );
+        assert_eq!(child_no_plugins_config.plugins(), LintPlugins::REACT | LintPlugins::TYPESCRIPT);
 
         // Test 4: Child config that extends parent and specifies additional plugins
         // Should have parent's plugins plus its own
         let child_with_plugins_config =
             config_store_from_path("fixtures/extends_config/plugins/child_with_plugins.json");
         assert_eq!(
-            *child_with_plugins_config.plugins(),
-            LintPlugins::new(
-                BuiltinLintPlugins::REACT
-                    | BuiltinLintPlugins::TYPESCRIPT
-                    | BuiltinLintPlugins::JEST,
-                FxHashSet::default()
-            )
+            child_with_plugins_config.plugins(),
+            LintPlugins::REACT | LintPlugins::TYPESCRIPT | LintPlugins::JEST
         );
 
         // Test 5: Empty plugins array should result in empty plugins
@@ -1103,10 +1155,7 @@ mod test {
             }
             "#,
         );
-        assert_eq!(
-            *empty_plugins_config.plugins(),
-            LintPlugins::new(BuiltinLintPlugins::empty(), FxHashSet::default())
-        );
+        assert_eq!(empty_plugins_config.plugins(), LintPlugins::empty());
 
         // Test 6: Extending multiple config files with plugins
         let config = config_store_from_str(
@@ -1119,8 +1168,8 @@ mod test {
             }
             "#,
         );
-        assert!(config.plugins().builtin.contains(BuiltinLintPlugins::JEST));
-        assert!(config.plugins().builtin.contains(BuiltinLintPlugins::REACT));
+        assert!(config.plugins().contains(LintPlugins::JEST));
+        assert!(config.plugins().contains(LintPlugins::REACT));
 
         // Test 7: Adding more plugins to extended configs
         let config = config_store_from_str(
@@ -1135,13 +1184,8 @@ mod test {
             "#,
         );
         assert_eq!(
-            *config.plugins(),
-            LintPlugins::new(
-                BuiltinLintPlugins::JEST
-                    | BuiltinLintPlugins::REACT
-                    | BuiltinLintPlugins::TYPESCRIPT,
-                FxHashSet::default()
-            )
+            config.plugins(),
+            LintPlugins::JEST | LintPlugins::REACT | LintPlugins::TYPESCRIPT
         );
 
         // Test 8: Extending a config with a plugin is the same as adding it directly
@@ -1179,7 +1223,7 @@ mod test {
         }
         "#,
         );
-        assert_eq!(*config.plugins(), LintPlugins::default());
+        assert_eq!(config.plugins(), LintPlugins::default());
         assert!(config.rules().is_empty());
     }
 

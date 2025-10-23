@@ -3,7 +3,7 @@ use oxc_ast::AstKind;
 use oxc_diagnostics::OxcDiagnostic;
 use oxc_macros::declare_oxc_lint;
 use oxc_span::Span;
-use oxc_syntax::symbol::SymbolId;
+use schemars::JsonSchema;
 use serde_json::Value;
 
 const PRE_DEFINE_VAR: [&str; 5] = ["Infinity", "NaN", "arguments", "eval", "undefined"];
@@ -17,16 +17,18 @@ fn no_shadow_restricted_names_diagnostic(shadowed_name: &str, span: Span) -> Oxc
 #[derive(Debug, Default, Clone)]
 pub struct NoShadowRestrictedNames(Box<NoShadowRestrictedNamesConfig>);
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, JsonSchema)]
+#[serde(rename_all = "camelCase", default)]
 pub struct NoShadowRestrictedNamesConfig {
+    /// If true, also report shadowing of `globalThis`.
     report_global_this: bool,
 }
 
 declare_oxc_lint!(
     /// ### What it does
     ///
-    /// Disallows the redefining of global variables such as `undefined`, `NaN`, `Infinity`, `eval`
-    /// and `arguments`.
+    /// Disallows the redefining of global variables such as `undefined`, `NaN`, `Infinity`,
+    /// `eval`, and `arguments`.
     ///
     /// ### Why is this bad?
     ///
@@ -79,7 +81,8 @@ declare_oxc_lint!(
     /// ```
     NoShadowRestrictedNames,
     eslint,
-    correctness
+    correctness,
+    config = NoShadowRestrictedNamesConfig
 );
 
 impl Rule for NoShadowRestrictedNames {
@@ -93,35 +96,38 @@ impl Rule for NoShadowRestrictedNames {
         }))
     }
 
-    fn run_on_symbol(&self, symbol_id: SymbolId, ctx: &LintContext<'_>) {
-        let name = ctx.scoping().symbol_name(symbol_id);
+    fn run_once(&self, ctx: &LintContext) {
+        for symbol_id in ctx.scoping().symbol_ids() {
+            let name = ctx.scoping().symbol_name(symbol_id);
 
-        if !(PRE_DEFINE_VAR.contains(&name) || self.0.report_global_this && name == "globalThis") {
-            return;
-        }
+            if !(PRE_DEFINE_VAR.contains(&name)
+                || self.0.report_global_this && name == "globalThis")
+            {
+                continue;
+            }
 
-        if name == "undefined" {
-            // Allow to declare `undefined` variable but not allow to assign value to it.
-            let node_id = ctx.scoping().symbol_declaration(symbol_id);
-            if let AstKind::VariableDeclarator(declarator) = ctx.nodes().kind(node_id) {
-                if declarator.init.is_none()
+            if name == "undefined" {
+                // Allow to declare `undefined` variable but not allow to assign value to it.
+                let node_id = ctx.scoping().symbol_declaration(symbol_id);
+                if let AstKind::VariableDeclarator(declarator) = ctx.nodes().kind(node_id)
+                    && declarator.init.is_none()
                     && ctx
                         .scoping()
                         .get_resolved_references(symbol_id)
                         .all(|reference| !reference.is_write())
                 {
-                    return;
+                    continue;
                 }
             }
-        }
 
-        let redeclarations = ctx.scoping().symbol_redeclarations(symbol_id);
-        if redeclarations.is_empty() {
-            let span = ctx.scoping().symbol_span(symbol_id);
-            ctx.diagnostic(no_shadow_restricted_names_diagnostic(name, span));
-        } else {
-            for rd in redeclarations {
-                ctx.diagnostic(no_shadow_restricted_names_diagnostic(name, rd.span));
+            let redeclarations = ctx.scoping().symbol_redeclarations(symbol_id);
+            if redeclarations.is_empty() {
+                let span = ctx.scoping().symbol_span(symbol_id);
+                ctx.diagnostic(no_shadow_restricted_names_diagnostic(name, span));
+            } else {
+                for rd in redeclarations {
+                    ctx.diagnostic(no_shadow_restricted_names_diagnostic(name, rd.span));
+                }
             }
         }
     }

@@ -4,6 +4,42 @@ All notable changes to this package will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0).
 
+
+## [0.94.0] - 2025-10-06
+
+### 🚀 Features
+
+- f37b211 allocator: Add `HashSet` (#14212) (sapphi-red)
+- 7a1c339 allocator: Add `HashMap::from_iter_in` (#14211) (sapphi-red)
+
+### 📚 Documentation
+
+- 0c14e50 allocator/hashmap: Add comments to `HashMap::from_iter_in` (#14329) (overlookmotel)
+
+
+## [0.93.0] - 2025-09-28
+
+### 🚜 Refactor
+
+- 7e42b0a syntax: Use allocator HashMap in ModuleRecord fields (#14141) (Boshen)
+
+
+
+## [0.91.0] - 2025-09-22
+
+### 🚀 Features
+
+- a14aa79 npm/oxlint: Convert to ES modules (#13876) (Boshen)
+
+### 🐛 Bug Fixes
+
+- 91c88e2 allocator: Fix lint warning building WASM (#13897) (overlookmotel)
+
+### 💼 Other
+
+- fb347da crates: V0.91.0 (#13961) (Boshen)
+
+
 ## [0.91.0] - 2025-09-21
 
 ### 🚀 Features

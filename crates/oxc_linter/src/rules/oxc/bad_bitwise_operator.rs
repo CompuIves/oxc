@@ -68,7 +68,7 @@ declare_oxc_lint!(
     /// ```
     BadBitwiseOperator,
     oxc,
-    restriction // Restricted because there are false positives for enum bitflags in TypeScript,
+    restriction, // Restricted because there are false positives for enum bitflags in TypeScript,
                 // e.g. in the vscode repo
     pending
 );
@@ -106,10 +106,10 @@ fn is_mistype_short_circuit(node: &AstNode) -> bool {
                 return false;
             };
 
-            if let Some(member_expr) = bin_expr.right.as_member_expression() {
-                if let Expression::Identifier(ident) = member_expr.object() {
-                    return ident.name == left_ident.name;
-                }
+            if let Some(member_expr) = bin_expr.right.as_member_expression()
+                && let Expression::Identifier(ident) = member_expr.object()
+            {
+                return ident.name == left_ident.name;
             }
 
             false
@@ -122,10 +122,10 @@ fn is_mistype_option_fallback(node: &AstNode) -> bool {
     let AstKind::BinaryExpression(binary_expr) = node.kind() else {
         return false;
     };
-    if binary_expr.operator == BinaryOperator::BitwiseOR {
-        if let Expression::Identifier(_) = &binary_expr.left {
-            return !is_numeric_expr(&binary_expr.right, true);
-        }
+    if binary_expr.operator == BinaryOperator::BitwiseOR
+        && let Expression::Identifier(_) = &binary_expr.left
+    {
+        return !is_numeric_expr(&binary_expr.right, true);
     }
     false
 }

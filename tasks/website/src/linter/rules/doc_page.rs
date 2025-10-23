@@ -6,7 +6,7 @@ use std::{
     path::PathBuf,
 };
 
-use oxc_linter::{BuiltinLintPlugins, table::RuleTableRow};
+use oxc_linter::{LintPlugins, table::RuleTableRow};
 use schemars::{
     JsonSchema, SchemaGenerator,
     schema::{InstanceType, Schema, SchemaObject, SingleOrVec},
@@ -69,7 +69,11 @@ const source = `{}`;
         self.page.div(r#"class="rule-meta""#, |p| {
             if *turned_on_by_default {
                 p.Alert(r#"class="default-on" type="success""#, |p| {
-                    p.writeln(r#"<span class="emoji">✅</span> This rule is turned on by default."#)
+                    if *is_tsgolint_rule {
+                        p.writeln(r#"<span class="emoji">✅</span> This rule is turned on by default when type-aware linting is enabled."#)
+                    } else {
+                        p.writeln(r#"<span class="emoji">✅</span> This rule is turned on by default."#)
+                    }
                 })?;
             }
             if *is_tsgolint_rule {
@@ -172,8 +176,7 @@ fn rule_source(rule: &RuleTableRow) -> String {
 /// - Example: `eslint` => true
 /// - Example: `jest` => false
 fn is_default_plugin(plugin: &str) -> bool {
-    let plugin = BuiltinLintPlugins::from(plugin);
-    BuiltinLintPlugins::default().contains(plugin)
+    LintPlugins::try_from(plugin).is_ok_and(|plugin| LintPlugins::default().contains(plugin))
 }
 
 /// Returns the normalized plugin name.
@@ -181,7 +184,7 @@ fn is_default_plugin(plugin: &str) -> bool {
 /// - Example: `eslint` -> `eslint`
 /// - Example: `jsx_a11y` -> `jsx-a11y`
 fn get_normalized_plugin_name(plugin: &str) -> &str {
-    BuiltinLintPlugins::from(plugin).into()
+    LintPlugins::try_from(plugin).unwrap_or(LintPlugins::empty()).into()
 }
 
 fn how_to_use(rule: &RuleTableRow) -> String {

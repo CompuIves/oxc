@@ -1,13 +1,21 @@
 use std::ops::Deref;
 
 use oxc_ast::ast::*;
+use oxc_span::GetSpan;
 
 use crate::{
-    JsLabels, format_args,
+    JsLabels,
+    ast_nodes::{AstNode, AstNodes},
+    format_args,
     formatter::{
-        Buffer, Format, FormatResult, Formatter, prelude::*, trivia::format_dangling_comments,
+        Buffer, Format, FormatResult, Formatter,
+        buffer::RemoveSoftLinesBuffer,
+        prelude::*,
+        trivia::{
+            DanglingIndentMode, FormatDanglingComments, FormatLeadingComments,
+            FormatTrailingComments, format_dangling_comments,
+        },
     },
-    generated::ast_nodes::{AstNode, AstNodes},
     options::Expand,
     utils::member_chain::chain_member::FormatComputedMemberExpressionWithoutObject,
     write,
@@ -30,7 +38,7 @@ impl<'a> FormatWrite<'a> for AstNode<'a, StaticMemberExpression<'a>> {
             recording.stop().has_label(LabelId::of(JsLabels::MemberChain))
         };
 
-        match layout(self, is_member_chain) {
+        match layout(self, is_member_chain, f) {
             StaticMemberLayout::NoBreak => {
                 let format_no_break =
                     format_with(|f| write!(f, [operator_token(self.optional()), self.property()]));
@@ -46,6 +54,19 @@ impl<'a> FormatWrite<'a> for AstNode<'a, StaticMemberExpression<'a>> {
                     f,
                     [group(&indent(&format_args!(
                         soft_line_break(),
+                        &format_once(|f| {
+                            if f.comments().has_leading_own_line_comment(self.property.span.start) {
+                                let comments = f
+                                    .context()
+                                    .comments()
+                                    .comments_before(self.property.span.start);
+                                write!(
+                                    f,
+                                    [FormatLeadingComments::Comments(comments), soft_line_break()]
+                                )?;
+                            }
+                            Ok(())
+                        }),
                         operator_token(self.optional()),
                         self.property(),
                     )))]
@@ -71,8 +92,19 @@ fn operator_token(optional: bool) -> &'static str {
 fn layout<'a>(
     node: &AstNode<'a, StaticMemberExpression<'a>>,
     is_member_chain: bool,
+    f: &Formatter<'_, 'a>,
 ) -> StaticMemberLayout {
-    let parent = node.parent;
+    if f.comments().has_leading_own_line_comment(node.property.span.start) {
+        return StaticMemberLayout::BreakAfterObject;
+    }
+
+    // `a.b.c!` and `a.b?.c`
+    // `TSNonNullExpression` is a wrapper node for `!`, and `ChainExpression` is a wrapper node for `?.`,
+    // so we need to skip them to find the real parent node.
+    let mut parent = node.parent;
+    while matches!(parent, AstNodes::TSNonNullExpression(_) | AstNodes::ChainExpression(_)) {
+        parent = parent.parent();
+    }
     let object = &node.object;
 
     let is_nested = match parent {

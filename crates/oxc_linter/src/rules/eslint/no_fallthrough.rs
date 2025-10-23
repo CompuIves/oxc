@@ -260,7 +260,7 @@ impl Rule for NoFallthrough {
         let AstKind::SwitchStatement(switch) = node.kind() else { return };
 
         let cfg = ctx.cfg();
-        let switch_id = node.cfg_id();
+        let switch_id = ctx.nodes().cfg_id(node.id());
         let graph = cfg.graph();
 
         let (cfg_ids, tests, default, exit) = get_switch_semantic_cases(ctx, node, switch);
@@ -307,10 +307,10 @@ impl Rule for NoFallthrough {
         while let Some((case, _)) = iter.next() {
             let Some((next_case, next_cfg_id)) = iter.peek() else { continue };
             if !fallthroughs.contains(next_cfg_id) {
-                if self.0.report_unused_fallthrough_comment {
-                    if let Some(span) = self.maybe_allow_fallthrough_trivia(ctx, case, next_case) {
-                        ctx.diagnostic(no_unused_fallthrough_diagnostic(span));
-                    }
+                if self.0.report_unused_fallthrough_comment
+                    && let Some(span) = self.maybe_allow_fallthrough_trivia(ctx, case, next_case)
+                {
+                    ctx.diagnostic(no_unused_fallthrough_diagnostic(span));
                 }
                 continue;
             }
@@ -412,7 +412,7 @@ impl NoFallthrough {
 // ----------------------------------------!README!-----------------------------------------------
 // >> PLEASE DON'T MAKE IT A REPEATING PATTERN IN THE PROJECT, ONE TIME HACK TO GET IT DONE
 //  >>  TODO: it is a hack to get our cases `cfg_id`s. please replace me with semantic API when
-//          one became available. This code is highly volitile and has a lot of assumptions about
+//          one became available. This code is highly volatile and has a lot of assumptions about
 //          the current shape of the CFG, It is just a slow and dirty workaround!
 // ----------------------------------------------------------------------------------------------
 // TREAT LIKE BLACK MAGIC, IT BREAKS WITH SMALLEST CHANGES TO THE SWITCH CASE CFG!
@@ -438,7 +438,7 @@ fn get_switch_semantic_cases(
     let graph = cfg.graph();
     let has_default = switch.cases.iter().any(SwitchCase::is_default_case);
     let (mut cfg_ids, tests, exit) = graph
-        .edges_directed(node.cfg_id(), Direction::Outgoing)
+        .edges_directed(ctx.nodes().cfg_id(node.id()), Direction::Outgoing)
         .fold((Vec::new(), Vec::new(), None), |(mut cfg_ids, mut conds, exit), it| {
             let target = it.target();
             if !matches!(it.weight(), EdgeType::Normal) {
@@ -585,6 +585,18 @@ fn test() {
                 "reportUnusedFallthroughComment": false
             }])),
         ),
+        // Issue #6417: switch with logical operators should work correctly with break
+        ("switch(true) { case x === 1 || x === 2: a(); break; case x === 3: b(); }", None),
+        ("switch(true) { case x === 1 && y: a(); break; case x === 3: b(); }", None),
+        (
+            r#"c.map(c => { switch (true) {
+        case c.f === 'qux' && xCount > 1: { return <td key="foo">Foo</td>; }
+        case c.f === 'barbaz' && isFoo: { return <td key="bar">Foobar</td>; }
+        case c.f === 'baz': { return arrayOfRecords.map(r => <td key={r.id}>{r.id}</td>); }
+        default: { return <td>Bar</td>; }
+      } });"#,
+            None,
+        ),
     ];
 
     let fail = vec![
@@ -648,6 +660,9 @@ fn test() {
                 "reportUnusedFallthroughComment": true
             }])),
         ),
+        // Issue #6417: switch with logical operators should detect fallthrough
+        ("switch(true) { case x === 1 || x === 2: a(); case x === 3: b(); }", None),
+        ("switch(true) { case x === 1 && y: a(); case x === 3: b(); }", None),
         // TODO: it should fail but doesn't, we ignore conditional discriminants for now.
         // ("switch (a === b ? c : d) { case 1: ; case 2: ; case 3: ; }", None)
     ];

@@ -2,15 +2,16 @@ use std::{
     borrow::Cow,
     ffi::OsStr,
     fs,
+    hash::BuildHasherDefault,
     mem::take,
     path::{Path, PathBuf},
-    sync::{Arc, mpsc},
+    sync::{Arc, Mutex, mpsc},
 };
 
 use indexmap::IndexSet;
 use rayon::iter::ParallelDrainRange;
 use rayon::{Scope, iter::IntoParallelRefIterator, prelude::ParallelIterator};
-use rustc_hash::{FxBuildHasher, FxHashMap, FxHashSet};
+use rustc_hash::{FxBuildHasher, FxHashMap, FxHashSet, FxHasher};
 use self_cell::self_cell;
 use smallvec::SmallVec;
 
@@ -21,20 +22,22 @@ use oxc_resolver::Resolver;
 use oxc_semantic::{Semantic, SemanticBuilder};
 use oxc_span::{CompactStr, SourceType, VALID_EXTENSIONS};
 
-#[cfg(feature = "language_server")]
-use crate::lsp::MessageWithPosition;
+#[cfg(any(test, feature = "language_server"))]
+use crate::{Message, fixer::PossibleFixes};
 
-#[cfg(test)]
-use crate::fixer::{Message, PossibleFixes};
 use crate::{
     Fixer, Linter,
     context::ContextSubHost,
+    disable_directives::DisableDirectives,
     loader::{JavaScriptSource, LINT_PARTIAL_LOADER_EXTENSIONS, PartialLoader},
     module_record::ModuleRecord,
     utils::read_to_arena_str,
 };
 
 use super::LintServiceOptions;
+
+type ModulesByPath =
+    papaya::HashMap<Arc<OsStr>, SmallVec<[Arc<ModuleRecord>; 1]>, BuildHasherDefault<FxHasher>>;
 
 pub struct Runtime {
     cwd: Box<Path>,
@@ -46,6 +49,17 @@ pub struct Runtime {
     pub(super) file_system: Box<dyn RuntimeFileSystem + Sync + Send>,
 
     allocator_pool: AllocatorPool,
+
+    /// The module graph keyed by module paths. It is looked up when populating `loaded_modules`.
+    /// The values are module records of sections (check the docs of `ProcessedModule.section_module_records`)
+    /// Its entries are kept across groups because modules discovered in former groups could be referenced by modules in latter groups.
+    ///
+    /// `ModuleRecord` is a cyclic data structure.
+    /// To make sure all `ModuleRecord` gets dropped after `Runtime` is dropped,
+    /// `modules_by_path` must own `ModuleRecord` with `Arc`, all other references must use `Weak<ModuleRecord>`.
+    modules_by_path: ModulesByPath,
+    /// Collected disable directives from linted files
+    disable_directives_map: Arc<Mutex<FxHashMap<PathBuf, DisableDirectives>>>,
 }
 
 /// Output of `Runtime::process_path`
@@ -174,74 +188,6 @@ impl RuntimeFileSystem for OsFileSystem {
     }
 }
 
-/// [`MessageCloner`] is a wrapper around an `&Allocator` which allows it to be safely shared across threads,
-/// in order to clone [`crate::fixer::Message`]s into it.
-///
-/// `Allocator` is not thread safe (it is not `Sync`), so cannot be shared across threads.
-/// It would be undefined behavior to allocate into an `Allocator` from multiple threads simultaneously.
-///
-/// `MessageCloner` ensures only one thread at a time can utilize the `Allocator`, by taking an
-/// exclusive `&mut Allocator` to start with, and synchronising access to the `Allocator` with a `Mutex`.
-///
-/// This type is wrapped in a module so that other code cannot access the inner `UnsafeAllocatorRef`
-/// directly, and must go via the [`MessageCloner::clone_message`] method.
-#[cfg(any(feature = "language_server", test))]
-mod message_cloner {
-    use std::sync::Mutex;
-
-    use oxc_allocator::{Allocator, CloneIn};
-
-    use crate::Message;
-
-    /// Unsafe wrapper around an `&Allocator` which makes it `Send`.
-    struct UnsafeAllocatorRef<'a>(&'a Allocator);
-
-    // SAFETY: It is sound to implement `Send` for `UnsafeAllocatorRef` because:
-    // * The only way to construct an `UnsafeAllocatorRef` is via `MessageCloner::new`, which takes
-    //   an exclusive `&mut Allocator`, ensuring no other references to the same `Allocator` exist.
-    // * The lifetime `'a` ensures that the reference to the `Allocator` cannot outlive the original
-    //   mutable borrow, preventing aliasing or concurrent mutation.
-    // * All access to the `Allocator` via `UnsafeAllocatorRef` is synchronized by a `Mutex` inside
-    //   `MessageCloner`, so only one thread can access the allocator at a time.
-    // * The module encapsulation prevents direct access to `UnsafeAllocatorRef`, so it cannot be
-    //   misused outside of the intended, synchronized context.
-    //
-    // Therefore, although `Allocator` is not `Sync`, it is safe to send `UnsafeAllocatorRef` between
-    // threads as long as it is only accessed via the `Mutex` in `MessageCloner`.
-    unsafe impl Send for UnsafeAllocatorRef<'_> {}
-
-    /// Wrapper around an [`Allocator`] which allows safely using it on multiple threads to
-    /// clone [`Message`]s into.
-    pub struct MessageCloner<'a>(Mutex<UnsafeAllocatorRef<'a>>);
-
-    impl<'a> MessageCloner<'a> {
-        /// Wrap an [`Allocator`] in a [`MessageCloner`].
-        ///
-        /// This method takes a `&mut Allocator`, to ensure that no other references to the `Allocator`
-        /// can exist, which guarantees no other threads can allocate with the `Allocator` while this
-        /// `MessageCloner` exists.
-        #[inline]
-        #[expect(clippy::needless_pass_by_ref_mut)]
-        pub fn new(allocator: &'a mut Allocator) -> Self {
-            Self(Mutex::new(UnsafeAllocatorRef(allocator)))
-        }
-
-        /// Clone a [`Message`] into the [`Allocator`] held by this [`MessageCloner`].
-        ///
-        /// # Panics
-        /// Panics if the underlying `Mutex` is poisoned.
-        pub fn clone_message(&self, message: &Message) -> Message<'a> {
-            // Obtain an exclusive lock on the `Mutex` during `clone_in` operation,
-            // to ensure no other thread can be simultaneously using the `Allocator`
-            let guard = self.0.lock().unwrap();
-            let allocator = guard.0;
-            message.clone_in(allocator)
-        }
-    }
-}
-#[cfg(any(feature = "language_server", test))]
-use message_cloner::MessageCloner;
-
 impl Runtime {
     pub(super) fn new(linter: Linter, options: LintServiceOptions) -> Self {
         // If global thread pool wasn't already initialized, do it now.
@@ -285,6 +231,11 @@ impl Runtime {
             linter,
             resolver,
             file_system: Box::new(OsFileSystem),
+            modules_by_path: papaya::HashMap::builder()
+                .hasher(BuildHasherDefault::default())
+                .resize_mode(papaya::ResizeMode::Blocking)
+                .build(),
+            disable_directives_map: Arc::new(Mutex::new(FxHashMap::default())),
         }
     }
 
@@ -297,17 +248,27 @@ impl Runtime {
     }
 
     pub fn with_paths(&mut self, paths: Vec<Arc<OsStr>>) -> &mut Self {
+        self.modules_by_path.pin().reserve(paths.len());
         self.paths = paths.into_iter().collect();
         self
     }
 
+    pub fn set_disable_directives_map(
+        &mut self,
+        map: Arc<Mutex<FxHashMap<PathBuf, DisableDirectives>>>,
+    ) {
+        self.disable_directives_map = map;
+    }
+
     fn get_resolver(tsconfig_path: Option<PathBuf>) -> Resolver {
-        use oxc_resolver::{ResolveOptions, TsconfigOptions, TsconfigReferences};
+        use oxc_resolver::{
+            ResolveOptions, TsconfigDiscovery, TsconfigOptions, TsconfigReferences,
+        };
         let tsconfig = tsconfig_path.and_then(|path| {
-            path.is_file().then_some(TsconfigOptions {
+            path.is_file().then_some(TsconfigDiscovery::Manual(TsconfigOptions {
                 config_file: path,
                 references: TsconfigReferences::Auto,
-            })
+            }))
         });
         let extension_alias = tsconfig.as_ref().map_or_else(Vec::new, |_| {
             vec![
@@ -365,7 +326,7 @@ impl Runtime {
         &'a mut self,
         scope: &Scope<'a>,
         check_syntax_errors: bool,
-        tx_error: &'a DiagnosticSender,
+        tx_error: Option<&'a DiagnosticSender>,
         on_module_to_lint: impl Fn(&'a Self, ModuleToLint) + Send + Sync + Clone + 'a,
     ) {
         if self.resolver.is_none() {
@@ -421,15 +382,6 @@ impl Runtime {
 
         // Set self to immutable reference so it can be shared among spawned tasks.
         let me: &Self = self;
-
-        // The module graph keyed by module paths. It is looked up when populating `loaded_modules`.
-        // The values are module records of sections (check the docs of `ProcessedModule.section_module_records`)
-        // Its entries are kept across groups because modules discovered in former groups could be referenced by modules in latter groups.
-        let mut modules_by_path =
-            FxHashMap::<Arc<OsStr>, SmallVec<[Arc<ModuleRecord>; 1]>>::with_capacity_and_hasher(
-                me.paths.len(),
-                FxBuildHasher,
-            );
 
         // `encountered_paths` prevents duplicated processing.
         // It is a superset of keys of `modules_by_path` as it also contains paths that are queued to process.
@@ -517,7 +469,7 @@ impl Runtime {
                 }
 
                 // Populate this module to `modules_by_path`
-                modules_by_path.insert(
+                self.modules_by_path.pin().insert(
                     Arc::clone(&path),
                     processed_module
                         .section_module_records
@@ -558,7 +510,8 @@ impl Runtime {
                 if requested_module_paths.is_empty() {
                     return;
                 }
-                let records = &modules_by_path[&path];
+                let modules_by_path = self.modules_by_path.pin();
+                let records = modules_by_path.get(&path).unwrap();
                 assert_eq!(
                     records.len(), requested_module_paths.len(),
                     "This is an internal logic error. Please file an issue at https://github.com/oxc-project/oxc/issues",
@@ -566,15 +519,15 @@ impl Runtime {
                 for (record, requested_module_paths) in
                     records.iter().zip(requested_module_paths.into_iter())
                 {
-                    let mut loaded_modules = record.loaded_modules.write().unwrap();
+                    let mut loaded_modules = record.write_loaded_modules();
                     for request in requested_module_paths {
                         // TODO: revise how to store multiple sections in loaded_modules
                         let Some(dep_module_record) =
-                            modules_by_path[&request.resolved_requested_path].last()
+                            modules_by_path.get(&request.resolved_requested_path).unwrap().last()
                         else {
                             continue;
                         };
-                        loaded_modules.insert(request.specifier, Arc::clone(dep_module_record));
+                        loaded_modules.insert(request.specifier, Arc::downgrade(dep_module_record));
                     }
                 }
             });
@@ -590,7 +543,7 @@ impl Runtime {
 
     pub(super) fn run(&mut self, tx_error: &DiagnosticSender) {
         rayon::scope(|scope| {
-            self.resolve_modules(scope, true, tx_error, |me, mut module_to_lint| {
+            self.resolve_modules(scope, true, Some(tx_error), |me, mut module_to_lint| {
                 module_to_lint.content.with_dependent_mut(|allocator_guard, dep| {
                     // If there are fixes, we will accumulate all of them and write to the file at the end.
                     // This means we do not write multiple times to the same file if there are multiple sources
@@ -634,7 +587,19 @@ impl Runtime {
                         return;
                     }
 
-                    let mut messages = me.linter.run(path, context_sub_hosts, allocator_guard);
+                    let (mut messages, disable_directives) = me.linter.run_with_disable_directives(
+                        path,
+                        context_sub_hosts,
+                        allocator_guard,
+                    );
+
+                    // Store the disable directives for this file
+                    if let Some(disable_directives) = disable_directives {
+                        me.disable_directives_map
+                            .lock()
+                            .expect("disable_directives_map mutex poisoned")
+                            .insert(path.to_path_buf(), disable_directives);
+                    }
 
                     if me.linter.options().fix.is_some() {
                         let fix_result = Fixer::new(dep.source_text, messages).fix();
@@ -674,31 +639,18 @@ impl Runtime {
     // the struct not using `oxc_diagnostic::Error, because we are just collecting information
     // and returning it to the client to let him display it.
     #[cfg(feature = "language_server")]
-    pub(super) fn run_source<'a>(
-        &mut self,
-        allocator: &'a mut oxc_allocator::Allocator,
-    ) -> Vec<MessageWithPosition<'a>> {
+    pub(super) fn run_source(&mut self) -> Vec<Message> {
         use std::sync::Mutex;
 
-        use oxc_data_structures::rope::Rope;
-
-        use crate::lsp::message_to_message_with_position;
-
-        // Wrap allocator in `MessageCloner` so can clone `Message`s into it
-        let message_cloner = MessageCloner::new(allocator);
-
-        let messages = Mutex::new(Vec::<MessageWithPosition<'a>>::new());
-        let (sender, _receiver) = mpsc::channel();
+        let messages = Mutex::new(Vec::<Message>::new());
         rayon::scope(|scope| {
-            self.resolve_modules(scope, true, &sender, |me, mut module_to_lint| {
+            self.resolve_modules(scope, true, None, |me, mut module_to_lint| {
                 module_to_lint.content.with_dependent_mut(
-                    |allocator_guard, ModuleContentDependent { source_text, section_contents }| {
+                    |allocator_guard, ModuleContentDependent { source_text: _, section_contents }| {
                         assert_eq!(
                             module_to_lint.section_module_records.len(),
                             section_contents.len()
                         );
-
-                        let rope = &Rope::from_str(source_text);
 
                         let context_sub_hosts: Vec<ContextSubHost<'_>> = module_to_lint
                             .section_module_records
@@ -715,10 +667,11 @@ impl Runtime {
                                 }
                                 Err(diagnostics) => {
                                     if !diagnostics.is_empty() {
-                                        messages
-                                            .lock()
-                                            .unwrap()
-                                            .extend(diagnostics.into_iter().map(Into::into));
+                                        messages.lock().unwrap().extend(
+                                            diagnostics.into_iter().map(|diagnostic| {
+                                                Message::new(diagnostic, PossibleFixes::None)
+                                            }),
+                                        );
                                     }
                                     None
                                 }
@@ -729,52 +682,40 @@ impl Runtime {
                             return;
                         }
 
-                        let section_messages = me.linter.run(
-                            Path::new(&module_to_lint.path),
-                            context_sub_hosts,
-                            allocator_guard,
+                        let path = Path::new(&module_to_lint.path);
+                        let (section_messages, disable_directives) = me
+                            .linter
+                            .run_with_disable_directives(path, context_sub_hosts, allocator_guard);
+
+                        if let Some(disable_directives) = disable_directives {
+                            me.disable_directives_map
+                                .lock()
+                                .expect("disable_directives_map mutex poisoned")
+                                .insert(path.to_path_buf(), disable_directives);
+                        }
+
+                        messages.lock().unwrap().extend(
+                            section_messages
                         );
-
-                        messages.lock().unwrap().extend(section_messages.iter().map(|message| {
-                            let message = message_cloner.clone_message(message);
-
-                            message_to_message_with_position(&message, source_text, rope)
-                        }));
                     },
                 );
             });
         });
 
-        // ToDo: oxc_diagnostic::Error is not compatible with MessageWithPosition
-        // send use OxcDiagnostic or even better the MessageWithPosition struct
-        // while let Ok(diagnostics) = receiver.recv() {
-        //     if let Some(diagnostics) = diagnostics {
-        //         messages.lock().unwrap().extend(
-        //             diagnostics.1
-        //                 .into_iter()
-        //                 .map(|report| MessageWithPosition::from(report))
-        //         );
-        //     }
-        // }
-
         messages.into_inner().unwrap()
     }
 
     #[cfg(test)]
-    pub(super) fn run_test_source<'a>(
+    pub(super) fn run_test_source(
         &mut self,
-        allocator: &'a mut Allocator,
         check_syntax_errors: bool,
         tx_error: &DiagnosticSender,
-    ) -> Vec<Message<'a>> {
+    ) -> Vec<Message> {
         use std::sync::Mutex;
 
-        // Wrap allocator in `MessageCloner` so can clone `Message`s into it
-        let message_cloner = MessageCloner::new(allocator);
-
-        let messages = Mutex::new(Vec::<Message<'a>>::new());
+        let messages = Mutex::new(Vec::<Message>::new());
         rayon::scope(|scope| {
-            self.resolve_modules(scope, check_syntax_errors, tx_error, |me, mut module| {
+            self.resolve_modules(scope, check_syntax_errors, Some(tx_error), |me, mut module| {
                 module.content.with_dependent_mut(
                     |allocator_guard, ModuleContentDependent { source_text: _, section_contents }| {
                         assert_eq!(module.section_module_records.len(), section_contents.len());
@@ -814,10 +755,8 @@ impl Runtime {
                                 Path::new(&module.path),
                                 context_sub_hosts,
                                 allocator_guard
-                            ).iter_mut()
-                                .map(|message| {
-                                    message_cloner.clone_message(message)
-                                }),
+                            )
+                            ,
                         );
                     },
                 );
@@ -830,7 +769,7 @@ impl Runtime {
         &self,
         path: &Arc<OsStr>,
         check_syntax_errors: bool,
-        tx_error: &DiagnosticSender,
+        tx_error: Option<&DiagnosticSender>,
     ) -> ModuleProcessOutput<'_> {
         let processed_module =
             self.process_path_to_module(path, check_syntax_errors, tx_error).unwrap_or_default();
@@ -841,7 +780,7 @@ impl Runtime {
         &self,
         path: &Arc<OsStr>,
         check_syntax_errors: bool,
-        tx_error: &DiagnosticSender,
+        tx_error: Option<&DiagnosticSender>,
     ) -> Option<ProcessedModule<'_>> {
         let ext = Path::new(path).extension().and_then(OsStr::to_str)?;
 
@@ -869,7 +808,9 @@ impl Runtime {
                 let (source_type, source_text) = match stt {
                     Ok(v) => v,
                     Err(e) => {
-                        tx_error.send((Path::new(path).to_path_buf(), vec![e])).unwrap();
+                        if let Some(tx_error) = tx_error {
+                            tx_error.send((Path::new(path).to_path_buf(), vec![e])).unwrap();
+                        }
                         return Err(());
                     }
                 };
@@ -898,7 +839,9 @@ impl Runtime {
             let (source_type, source_text) = match stt {
                 Ok(v) => v,
                 Err(e) => {
-                    tx_error.send((Path::new(path).to_path_buf(), vec![e])).unwrap();
+                    if let Some(tx_error) = tx_error {
+                        tx_error.send((Path::new(path).to_path_buf(), vec![e])).unwrap();
+                    }
                     return None;
                 }
             };
@@ -985,7 +928,6 @@ impl Runtime {
         let semantic_ret = SemanticBuilder::new()
             .with_cfg(true)
             .with_scope_tree_child_ids(true)
-            .with_build_jsdoc(true)
             .with_check_syntax_error(check_syntax_errors)
             .build(allocator.alloc(ret.program));
 

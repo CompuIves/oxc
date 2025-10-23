@@ -4,7 +4,7 @@ use oxc_ast::{
 };
 use oxc_diagnostics::OxcDiagnostic;
 use oxc_macros::declare_oxc_lint;
-use oxc_span::{GetSpan, Span};
+use oxc_span::Span;
 
 use crate::{AstNode, ast_util::outermost_paren_parent, context::LintContext, rule::Rule};
 
@@ -133,10 +133,11 @@ impl Rule for PreferRegexpTest {
                     return;
                 }
 
-                if let Some(expr) = call_expr.arguments[0].as_expression() {
-                    if expr.is_literal() && !matches!(expr, Expression::RegExpLiteral(_)) {
-                        return;
-                    }
+                if let Some(expr) = call_expr.arguments[0].as_expression()
+                    && expr.is_literal()
+                    && !matches!(expr, Expression::RegExpLiteral(_))
+                {
+                    return;
                 }
             }
             "exec" => {
@@ -156,16 +157,8 @@ impl Rule for PreferRegexpTest {
             let mut fix = fixer.new_fix_with_capacity(3);
 
             fix.push(fixer.replace(span, "test"));
-
-            fix.push(fixer.replace(
-                call_expr.arguments[0].span(),
-                fixer.source_range(member_expr.object().span()),
-            ));
-
-            fix.push(fixer.replace(
-                member_expr.object().span(),
-                fixer.source_range(call_expr.arguments[0].span()),
-            ));
+            fix.push(fixer.replace_with(&call_expr.arguments[0], member_expr.object()));
+            fix.push(fixer.replace_with(member_expr.object(), &call_expr.arguments[0]));
 
             fix.with_message("Replace with `RegExp.test()`")
         });

@@ -4,6 +4,59 @@ All notable changes to this package will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0).
 
+## [0.95.0] - 2025-10-15
+
+### 🐛 Bug Fixes
+
+- baab7eb semantic: Fix quote handling in jsdoc parser(#13776) (#14561) (Li Wei)
+
+
+## [0.94.0] - 2025-10-06
+
+### 🚀 Features
+
+- 3656908 rust: Oxc-index-vec v4.0 (#14254) (Boshen)
+
+### 🐛 Bug Fixes
+
+- 81a28d4 parser: Forbid abstract class members with implementation in parser instead of semantic (#14325) (Ulrich Stark)
+
+
+## [0.93.0] - 2025-09-28
+
+### 🚀 Features
+
+- 5e05d1b semantic: Put jsdoc behind linter feature, remove runtime flag (#14140) (Boshen)
+- 71af1aa semantic: Add "linter" feature (#14139) (Boshen)
+
+### 🐛 Bug Fixes
+
+- f2fd7da semantic: Don't report abstract method with implementation twice (#14193) (Ulrich Stark)
+
+### 🚜 Refactor
+
+- 3542572 semantic: Do not use `Astnodes::get_node` for `check_unresolved_exports` (#14176) (Boshen)
+- ad0e5df semantic: Split node.rs into node/mod.rs and node/nodes.rs (#14138) (Boshen)
+- 497236e semantic: Move AstNode::cfg_id to struct of arrays in AstNodes (#14137) (Boshen)
+- 5ba765c semantic: Move AstNode::flags to struct of arrays in AstNodes (#14136) (Boshen)
+
+
+
+## [0.91.0] - 2025-09-22
+
+### 🚀 Features
+
+- a14aa79 npm/oxlint: Convert to ES modules (#13876) (Boshen)
+
+### 🐛 Bug Fixes
+
+- f067159 parser: Forbid readonly in parser instead of semantic (#13905) (Ulrich Stark)
+
+### 💼 Other
+
+- fb347da crates: V0.91.0 (#13961) (Boshen)
+
+
 ## [0.91.0] - 2025-09-21
 
 ### 🚀 Features

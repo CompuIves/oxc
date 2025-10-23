@@ -12,7 +12,7 @@ use serde::{
 use oxc_diagnostics::{Error, OxcDiagnostic};
 
 use crate::{
-    AllowWarnDeny, BuiltinLintPlugins, ExternalPluginStore,
+    AllowWarnDeny, ExternalPluginStore, LintPlugins,
     external_plugin_store::{ExternalRuleId, ExternalRuleLookupError},
     rules::{RULES, RuleEnum},
     utils::{is_eslint_rule_adapted_to_typescript, is_jest_rule_adapted_to_vitest},
@@ -86,8 +86,7 @@ impl OxlintRules {
                 let config = rule_config.config.clone().unwrap_or_default();
                 let severity = rule_config.severity;
 
-                // TODO(camc314): remove the `plugin_name == "eslint"`
-                if plugin_name == "eslint" || !BuiltinLintPlugins::from(plugin_name).is_empty() {
+                if LintPlugins::try_from(plugin_name).is_ok() {
                     let rule = rules_map.get(&plugin_name).copied().or_else(|| {
                         all_rules
                             .iter()
@@ -97,12 +96,21 @@ impl OxlintRules {
                         rules_to_replace.push((rule.read_json(config), severity));
                     }
                 } else {
-                    let external_rule_id =
-                        external_plugin_store.lookup_rule_id(plugin_name, rule_name)?;
-                    external_rules_for_override
-                        .entry(external_rule_id)
-                        .and_modify(|sev| *sev = severity)
-                        .or_insert(severity);
+                    // If JS plugins are disabled (language server), assume plugin name refers to a JS plugin,
+                    // and that rule name is valid for that plugin.
+                    // But language server doesn't support JS plugins, so ignore the rule.
+                    //
+                    // This unfortunately means we can't catch genuinely invalid plugin names in language server
+                    // (e.g. typos like `unicon/filename-case`). But we can't avoid this as the name of a JS plugin
+                    // can only be known by loading it, which language server can't do at present.
+                    if external_plugin_store.is_enabled() {
+                        let external_rule_id =
+                            external_plugin_store.lookup_rule_id(plugin_name, rule_name)?;
+                        external_rules_for_override
+                            .entry(external_rule_id)
+                            .and_modify(|sev| *sev = severity)
+                            .or_insert(severity);
+                    }
                 }
             }
         }
@@ -232,7 +240,10 @@ fn parse_rule_key(name: &str) -> (String, String) {
             name.to_string(),
         );
     };
+    unalias_plugin_name(plugin_name, rule_name)
+}
 
+pub(super) fn unalias_plugin_name(plugin_name: &str, rule_name: &str) -> (String, String) {
     let (oxlint_plugin_name, rule_name) = match plugin_name {
         "@typescript-eslint" => ("typescript", rule_name),
         // import-x has the same rules but better performance

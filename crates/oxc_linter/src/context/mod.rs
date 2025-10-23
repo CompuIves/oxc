@@ -1,6 +1,6 @@
 #![expect(rustdoc::private_intra_doc_links)] // useful for intellisense
 
-use std::{ops::Deref, path::Path, rc::Rc};
+use std::{ffi::OsStr, ops::Deref, path::Path, rc::Rc};
 
 use javascript_globals::GLOBALS;
 
@@ -8,7 +8,7 @@ use oxc_ast::ast::IdentifierReference;
 use oxc_cfg::ControlFlowGraph;
 use oxc_diagnostics::{OxcDiagnostic, Severity};
 use oxc_semantic::Semantic;
-use oxc_span::{GetSpan, Span};
+use oxc_span::Span;
 
 #[cfg(debug_assertions)]
 use crate::rule::RuleFixMeta;
@@ -125,7 +125,7 @@ impl<'a> LintContext<'a> {
 
     /// List of all disable directives in the file being linted.
     #[inline]
-    pub fn disable_directives(&self) -> &DisableDirectives<'a> {
+    pub fn disable_directives(&self) -> &DisableDirectives {
         self.parent.disable_directives()
     }
 
@@ -139,6 +139,12 @@ impl<'a> LintContext<'a> {
     #[inline]
     pub fn file_path(&self) -> &Path {
         &self.parent.file_path
+    }
+
+    /// Extension of the file currently being linted, without the leading dot.
+    #[inline]
+    pub fn file_extension(&self) -> Option<&OsStr> {
+        self.parent.file_extension()
     }
 
     /// Plugin settings
@@ -188,10 +194,10 @@ impl<'a> LintContext<'a> {
         }
 
         for env in self.env().iter() {
-            if let Some(env) = GLOBALS.get(env) {
-                if let Some(value) = env.get(var) {
-                    return Some(GlobalValue::from(*value));
-                }
+            if let Some(env) = GLOBALS.get(env)
+                && let Some(value) = env.get(var)
+            {
+                return Some(GlobalValue::from(*value));
             }
         }
 
@@ -209,10 +215,10 @@ impl<'a> LintContext<'a> {
             return true;
         }
         for env in self.env().iter() {
-            if let Some(env) = GLOBALS.get(env) {
-                if env.contains_key(var) {
-                    return true;
-                }
+            if let Some(env) = GLOBALS.get(env)
+                && env.contains_key(var)
+            {
+                return true;
             }
         }
         false
@@ -222,8 +228,8 @@ impl<'a> LintContext<'a> {
 
     /// Add a diagnostic message to the list of diagnostics. Outputs a diagnostic with the current rule
     /// name, severity, and a link to the rule's documentation URL.
-    fn add_diagnostic(&self, mut message: Message<'a>) {
-        if self.parent.disable_directives().contains(self.current_rule_name, message.span()) {
+    fn add_diagnostic(&self, mut message: Message) {
+        if self.parent.disable_directives().contains(self.current_rule_name, message.span) {
             return;
         }
         message.error = message
@@ -247,7 +253,14 @@ impl<'a> LintContext<'a> {
     /// Use [`LintContext::diagnostic_with_fix`] to provide an automatic fix.
     #[inline]
     pub fn diagnostic(&self, diagnostic: OxcDiagnostic) {
+        #[cfg(not(feature = "language_server"))]
         self.add_diagnostic(Message::new(diagnostic, PossibleFixes::None));
+
+        #[cfg(feature = "language_server")]
+        self.add_diagnostic(
+            Message::new(diagnostic, PossibleFixes::None)
+                .with_section_offset(self.parent.current_sub_host().source_text_offset),
+        );
     }
 
     /// Report a lint rule violation and provide an automatic fix.
@@ -265,7 +278,7 @@ impl<'a> LintContext<'a> {
     #[inline]
     pub fn diagnostic_with_fix<C, F>(&self, diagnostic: OxcDiagnostic, fix: F)
     where
-        C: Into<RuleFix<'a>>,
+        C: Into<RuleFix>,
         F: FnOnce(RuleFixer<'_, 'a>) -> C,
     {
         self.diagnostic_with_fix_of_kind(diagnostic, FixKind::SafeFix, fix);
@@ -286,7 +299,7 @@ impl<'a> LintContext<'a> {
     #[inline]
     pub fn diagnostic_with_suggestion<C, F>(&self, diagnostic: OxcDiagnostic, fix: F)
     where
-        C: Into<RuleFix<'a>>,
+        C: Into<RuleFix>,
         F: FnOnce(RuleFixer<'_, 'a>) -> C,
     {
         self.diagnostic_with_fix_of_kind(diagnostic, FixKind::Suggestion, fix);
@@ -307,7 +320,7 @@ impl<'a> LintContext<'a> {
     #[inline]
     pub fn diagnostic_with_dangerous_suggestion<C, F>(&self, diagnostic: OxcDiagnostic, fix: F)
     where
-        C: Into<RuleFix<'a>>,
+        C: Into<RuleFix>,
         F: FnOnce(RuleFixer<'_, 'a>) -> C,
     {
         self.diagnostic_with_fix_of_kind(diagnostic, FixKind::DangerousSuggestion, fix);
@@ -335,7 +348,7 @@ impl<'a> LintContext<'a> {
     #[inline]
     pub fn diagnostic_with_dangerous_fix<C, F>(&self, diagnostic: OxcDiagnostic, fix: F)
     where
-        C: Into<RuleFix<'a>>,
+        C: Into<RuleFix>,
         F: FnOnce(RuleFixer<'_, 'a>) -> C,
     {
         self.diagnostic_with_fix_of_kind(diagnostic, FixKind::DangerousFix, fix);
@@ -353,12 +366,19 @@ impl<'a> LintContext<'a> {
         fix_kind: FixKind,
         fix: F,
     ) where
-        C: Into<RuleFix<'a>>,
+        C: Into<RuleFix>,
         F: FnOnce(RuleFixer<'_, 'a>) -> C,
     {
         let (diagnostic, fix) = self.create_fix(fix_kind, fix, diagnostic);
         if let Some(fix) = fix {
+            #[cfg(not(feature = "language_server"))]
             self.add_diagnostic(Message::new(diagnostic, PossibleFixes::Single(fix)));
+
+            #[cfg(feature = "language_server")]
+            self.add_diagnostic(
+                Message::new(diagnostic, PossibleFixes::Single(fix))
+                    .with_section_offset(self.parent.current_sub_host().source_text_offset),
+            );
         } else {
             self.diagnostic(diagnostic);
         }
@@ -372,11 +392,11 @@ impl<'a> LintContext<'a> {
         fix_one: (FixKind, F1),
         fix_two: (FixKind, F2),
     ) where
-        C: Into<RuleFix<'a>>,
+        C: Into<RuleFix>,
         F1: FnOnce(RuleFixer<'_, 'a>) -> C,
         F2: FnOnce(RuleFixer<'_, 'a>) -> C,
     {
-        let fixes_result: Vec<Fix<'a>> = vec![
+        let fixes_result: Vec<Fix> = vec![
             self.create_fix(fix_one.0, fix_one.1, diagnostic.clone()).1,
             self.create_fix(fix_two.0, fix_two.1, diagnostic.clone()).1,
         ]
@@ -387,7 +407,14 @@ impl<'a> LintContext<'a> {
         if fixes_result.is_empty() {
             self.diagnostic(diagnostic);
         } else {
+            #[cfg(not(feature = "language_server"))]
             self.add_diagnostic(Message::new(diagnostic, PossibleFixes::Multiple(fixes_result)));
+
+            #[cfg(feature = "language_server")]
+            self.add_diagnostic(
+                Message::new(diagnostic, PossibleFixes::Multiple(fixes_result))
+                    .with_section_offset(self.parent.current_sub_host().source_text_offset),
+            );
         }
     }
 
@@ -396,13 +423,13 @@ impl<'a> LintContext<'a> {
         fix_kind: FixKind,
         fix: F,
         diagnostic: OxcDiagnostic,
-    ) -> (OxcDiagnostic, Option<Fix<'a>>)
+    ) -> (OxcDiagnostic, Option<Fix>)
     where
-        C: Into<RuleFix<'a>>,
+        C: Into<RuleFix>,
         F: FnOnce(RuleFixer<'_, 'a>) -> C,
     {
         let fixer = RuleFixer::new(fix_kind, self);
-        let rule_fix: RuleFix<'a> = fix(fixer).into();
+        let rule_fix: RuleFix = fix(fixer).into();
         #[cfg(debug_assertions)]
         debug_assert!(
             self.current_rule_fix_capabilities.supports_fix(fix_kind),
@@ -464,23 +491,21 @@ impl<'a> LintContext<'a> {
 /// ```
 #[inline]
 fn plugin_name_to_prefix(plugin_name: &'static str) -> &'static str {
-    PLUGIN_PREFIXES.get(plugin_name).copied().unwrap_or(plugin_name)
+    match plugin_name {
+        "import" => "eslint-plugin-import",
+        "jest" => "eslint-plugin-jest",
+        "jsdoc" => "eslint-plugin-jsdoc",
+        "jsx_a11y" => "eslint-plugin-jsx-a11y",
+        "nextjs" => "eslint-plugin-next",
+        "promise" => "eslint-plugin-promise",
+        "react_perf" => "eslint-plugin-react-perf",
+        "react" => "eslint-plugin-react",
+        "typescript" => "typescript-eslint",
+        "unicorn" => "eslint-plugin-unicorn",
+        "vitest" => "eslint-plugin-vitest",
+        "node" => "eslint-plugin-node",
+        "vue" => "eslint-plugin-vue",
+        "regexp" => "eslint-plugin-regexp",
+        _ => plugin_name,
+    }
 }
-
-/// Map of plugin names to their prefixed versions.
-const PLUGIN_PREFIXES: phf::Map<&'static str, &'static str> = phf::phf_map! {
-    "import" => "eslint-plugin-import",
-    "jest" => "eslint-plugin-jest",
-    "jsdoc" => "eslint-plugin-jsdoc",
-    "jsx_a11y" => "eslint-plugin-jsx-a11y",
-    "nextjs" => "eslint-plugin-next",
-    "promise" => "eslint-plugin-promise",
-    "react_perf" => "eslint-plugin-react-perf",
-    "react" => "eslint-plugin-react",
-    "typescript" => "typescript-eslint",
-    "unicorn" => "eslint-plugin-unicorn",
-    "vitest" => "eslint-plugin-vitest",
-    "node" => "eslint-plugin-node",
-    "vue" => "eslint-plugin-vue",
-    "regexp" => "eslint-plugin-regexp",
-};

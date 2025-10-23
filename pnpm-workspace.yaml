@@ -9,22 +9,30 @@ packages:
   - tasks/mcp
 
 catalog:
-  '@napi-rs/cli': 3.2.0
-  typescript: 5.9.2
+  '@napi-rs/cli': 3.4.0
+  '@napi-rs/wasm-runtime': 1.0.7
+  publint: 0.3.14
+  typescript: 5.9.3
   vitest: 3.2.4
-  '@napi-rs/wasm-runtime': 1.0.5
 
-verifyDepsBeforeRun: install
+minimumReleaseAge: 1440
 
-# To reduce the risk of installing compromised packages.
-minimumReleaseAge: 1440 # 1 day
 minimumReleaseAgeExclude:
+  - '@napi-rs/*'
+  - '@oxc-project/*'
+  - '@oxfmt/*'
+  - '@oxlint-tsgolint/*'
+  - '@oxlint/*'
+  - '@rolldown/*'
   - oxfmt
   - oxlint
   - oxlint-tsgolint
   - rolldown
+  - rolldown-plugin-dts
   - rolldown-vite
   - tsdown
   - vite
   - vitepress
   - vitest
+
+verifyDepsBeforeRun: install

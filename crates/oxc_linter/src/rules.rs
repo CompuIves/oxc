@@ -30,6 +30,7 @@ pub(crate) mod import {
     pub mod no_named_as_default;
     pub mod no_named_as_default_member;
     pub mod no_named_default;
+    pub mod no_named_export;
     pub mod no_namespace;
     pub mod no_self_import;
     pub mod no_unassigned_import;
@@ -43,6 +44,7 @@ pub(crate) mod eslint {
     pub mod arrow_body_style;
     pub mod block_scoped_var;
     pub mod class_methods_use_this;
+    pub mod constructor_super;
     pub mod curly;
     pub mod default_case;
     pub mod default_case_last;
@@ -127,6 +129,7 @@ pub(crate) mod eslint {
     pub mod no_nonoctal_decimal_escape;
     pub mod no_obj_calls;
     pub mod no_object_constructor;
+    pub mod no_param_reassign;
     pub mod no_plusplus;
     pub mod no_proto;
     pub mod no_prototype_builtins;
@@ -168,6 +171,7 @@ pub(crate) mod eslint {
     pub mod no_useless_rename;
     pub mod no_var;
     pub mod no_void;
+    pub mod no_warning_comments;
     pub mod no_with;
     pub mod operator_assignment;
     pub mod prefer_destructuring;
@@ -337,6 +341,7 @@ pub(crate) mod react {
     pub mod button_has_type;
     pub mod checked_requires_onchange_or_readonly;
     pub mod exhaustive_deps;
+    pub mod forbid_dom_props;
     pub mod forbid_elements;
     pub mod forward_ref_uses_ref;
     pub mod iframe_missing_sandbox;
@@ -352,6 +357,7 @@ pub(crate) mod react {
     pub mod jsx_no_target_blank;
     pub mod jsx_no_undef;
     pub mod jsx_no_useless_fragment;
+    pub mod jsx_pascal_case;
     pub mod jsx_props_no_spread_multi;
     pub mod no_array_index_key;
     pub mod no_children_prop;
@@ -366,6 +372,7 @@ pub(crate) mod react {
     pub mod no_string_refs;
     pub mod no_unescaped_entities;
     pub mod no_unknown_property;
+    pub mod only_export_components;
     pub mod prefer_es6_class;
     pub mod react_in_jsx_scope;
     pub mod require_render_return;
@@ -398,10 +405,12 @@ pub(crate) mod unicorn {
     pub mod no_abusive_eslint_disable;
     pub mod no_accessor_recursion;
     pub mod no_anonymous_default_export;
+    pub mod no_array_callback_reference;
     pub mod no_array_for_each;
     pub mod no_array_method_this_argument;
     pub mod no_array_reduce;
     pub mod no_array_reverse;
+    pub mod no_array_sort;
     pub mod no_await_expression_member;
     pub mod no_await_in_promise_methods;
     pub mod no_console_spaces;
@@ -428,10 +437,12 @@ pub(crate) mod unicorn {
     pub mod no_this_assignment;
     pub mod no_typeof_undefined;
     pub mod no_unnecessary_array_flat_depth;
+    pub mod no_unnecessary_array_splice_count;
     pub mod no_unnecessary_await;
     pub mod no_unnecessary_slice_end;
     pub mod no_unreadable_array_destructuring;
     pub mod no_unreadable_iife;
+    pub mod no_useless_error_capture_stack_trace;
     pub mod no_useless_fallback_in_spread;
     pub mod no_useless_length_check;
     pub mod no_useless_promise_resolve_reject;
@@ -447,7 +458,10 @@ pub(crate) mod unicorn {
     pub mod prefer_array_flat_map;
     pub mod prefer_array_index_of;
     pub mod prefer_array_some;
+    pub mod prefer_at;
     pub mod prefer_blob_reading_methods;
+    pub mod prefer_class_fields;
+    pub mod prefer_classlist_toggle;
     pub mod prefer_code_point;
     pub mod prefer_date_now;
     pub mod prefer_dom_node_append;
@@ -481,8 +495,10 @@ pub(crate) mod unicorn {
     pub mod prefer_string_starts_ends_with;
     pub mod prefer_string_trim_start_end;
     pub mod prefer_structured_clone;
+    pub mod prefer_top_level_await;
     pub mod prefer_type_error;
     pub mod require_array_join_separator;
+    pub mod require_module_specifiers;
     pub mod require_number_to_fixed_digits_argument;
     pub mod require_post_message_target_origin;
     pub mod switch_case_braces;
@@ -531,6 +547,7 @@ pub(crate) mod oxc {
     pub mod bad_min_max_func;
     pub mod bad_object_literal_comparison;
     pub mod bad_replace_all_arg;
+    pub mod branches_sharing_code;
     pub mod const_comparisons;
     pub mod double_comparisons;
     pub mod erasing_op;
@@ -600,6 +617,7 @@ pub(crate) mod promise {
     pub mod avoid_new;
     pub mod catch_or_return;
     pub mod no_callback_in_promise;
+    pub mod no_multiple_resolved;
     pub mod no_nesting;
     pub mod no_new_statics;
     pub mod no_promise_in_callback;
@@ -625,13 +643,20 @@ pub(crate) mod vitest {
 pub(crate) mod node {
     pub mod no_exports_assign;
     pub mod no_new_require;
+    pub mod no_process_env;
 }
 
 pub(crate) mod vue {
     pub mod define_emits_declaration;
     pub mod define_props_declaration;
+    pub mod define_props_destructuring;
+    pub mod max_props;
+    pub mod no_export_in_script_setup;
+    pub mod no_import_compiler_macros;
     pub mod no_multiple_slot_args;
     pub mod no_required_prop_with_default;
+    pub mod prefer_import_from_vue;
+    pub mod require_default_export;
     pub mod require_typed_ref;
     pub mod valid_define_emits;
     pub mod valid_define_props;
@@ -642,6 +667,7 @@ oxc_macros::declare_all_lint_rules! {
     eslint::arrow_body_style,
     eslint::block_scoped_var,
     eslint::class_methods_use_this,
+    eslint::constructor_super,
     eslint::curly,
     eslint::default_case,
     eslint::default_case_last,
@@ -681,6 +707,7 @@ oxc_macros::declare_all_lint_rules! {
     eslint::no_multi_assign,
     eslint::no_nested_ternary,
     eslint::no_object_constructor,
+    eslint::no_param_reassign,
     eslint::no_restricted_imports,
     eslint::no_unneeded_ternary,
     eslint::no_useless_backreference,
@@ -767,6 +794,7 @@ oxc_macros::declare_all_lint_rules! {
     eslint::no_useless_rename,
     eslint::no_var,
     eslint::no_void,
+    eslint::no_warning_comments,
     eslint::no_with,
     eslint::operator_assignment,
     eslint::prefer_template,
@@ -798,6 +826,7 @@ oxc_macros::declare_all_lint_rules! {
     import::extensions,
     import::first,
     import::group_exports,
+    import::no_named_export,
     import::no_unassigned_import,
     import::no_empty_named_blocks,
     import::no_anonymous_default_export,
@@ -938,6 +967,7 @@ oxc_macros::declare_all_lint_rules! {
     nextjs::no_typos,
     nextjs::no_unwanted_polyfillio,
     nextjs::no_html_link_for_pages,
+    node::no_process_env,
     node::no_exports_assign,
     node::no_new_require,
     oxc::approx_constant,
@@ -948,6 +978,7 @@ oxc_macros::declare_all_lint_rules! {
     oxc::bad_min_max_func,
     oxc::bad_object_literal_comparison,
     oxc::bad_replace_all_arg,
+    oxc::branches_sharing_code,
     oxc::const_comparisons,
     oxc::double_comparisons,
     oxc::erasing_op,
@@ -971,6 +1002,7 @@ oxc_macros::declare_all_lint_rules! {
     promise::no_nesting,
     promise::no_promise_in_callback,
     promise::no_callback_in_promise,
+    promise::no_multiple_resolved,
     promise::no_new_statics,
     promise::no_return_in_finally,
     promise::param_names,
@@ -982,9 +1014,11 @@ oxc_macros::declare_all_lint_rules! {
     react::button_has_type,
     react::checked_requires_onchange_or_readonly,
     react::exhaustive_deps,
+    react::forbid_dom_props,
     react::forbid_elements,
     react::forward_ref_uses_ref,
     react::iframe_missing_sandbox,
+    react::jsx_pascal_case,
     react::jsx_fragments,
     react::jsx_filename_extension,
     react::jsx_boolean_value,
@@ -1011,6 +1045,7 @@ oxc_macros::declare_all_lint_rules! {
     react::no_string_refs,
     react::no_unescaped_entities,
     react::no_unknown_property,
+    react::only_export_components,
     react::prefer_es6_class,
     react::react_in_jsx_scope,
     react::require_render_return,
@@ -1117,6 +1152,10 @@ oxc_macros::declare_all_lint_rules! {
     unicorn::explicit_length_check,
     unicorn::filename_case,
     unicorn::new_for_builtins,
+    unicorn::no_unnecessary_array_splice_count,
+    unicorn::no_array_callback_reference,
+    unicorn::no_useless_error_capture_stack_trace,
+    unicorn::no_array_sort,
     unicorn::no_array_reverse,
     unicorn::no_instanceof_builtins,
     unicorn::no_array_method_this_argument,
@@ -1163,6 +1202,10 @@ oxc_macros::declare_all_lint_rules! {
     unicorn::no_zero_fractions,
     unicorn::number_literal_case,
     unicorn::numeric_separators_style,
+    unicorn::prefer_classlist_toggle,
+    unicorn::prefer_class_fields,
+    unicorn::prefer_top_level_await,
+    unicorn::prefer_at,
     unicorn::prefer_global_this,
     unicorn::prefer_object_from_entries,
     unicorn::prefer_array_find,
@@ -1204,6 +1247,7 @@ oxc_macros::declare_all_lint_rules! {
     unicorn::prefer_string_trim_start_end,
     unicorn::prefer_structured_clone,
     unicorn::prefer_type_error,
+    unicorn::require_module_specifiers,
     unicorn::require_post_message_target_origin,
     unicorn::require_array_join_separator,
     unicorn::require_number_to_fixed_digits_argument,
@@ -1216,10 +1260,16 @@ oxc_macros::declare_all_lint_rules! {
     vitest::prefer_to_be_object,
     vitest::prefer_to_be_truthy,
     vitest::require_local_test_context_for_concurrent_snapshots,
+    vue::define_props_destructuring,
     vue::define_emits_declaration,
     vue::define_props_declaration,
+    vue::max_props,
+    vue::no_import_compiler_macros,
+    vue::no_export_in_script_setup,
     vue::no_multiple_slot_args,
     vue::no_required_prop_with_default,
+    vue::prefer_import_from_vue,
+    vue::require_default_export,
     vue::require_typed_ref,
     vue::valid_define_emits,
     vue::valid_define_props,

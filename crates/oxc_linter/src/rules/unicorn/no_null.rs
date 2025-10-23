@@ -135,10 +135,12 @@ fn match_call_expression_pass_case(null_literal: &NullLiteral, call_expr: &CallE
     }
 
     // `useRef(null)`
-    if let Expression::Identifier(ident) = &call_expr.callee {
-        if ident.name == "useRef" && call_expr.arguments.len() == 1 && !call_expr.optional {
-            return true;
-        }
+    if let Expression::Identifier(ident) = &call_expr.callee
+        && ident.name == "useRef"
+        && call_expr.arguments.len() == 1
+        && !call_expr.optional
+    {
+        return true;
     }
 
     // `React.useRef(null)`
@@ -235,15 +237,15 @@ impl Rule for NoNull {
     }
 }
 
-fn fix_null<'a>(fixer: RuleFixer<'_, 'a>, null: &NullLiteral) -> RuleFix<'a> {
+fn fix_null(fixer: RuleFixer<'_, '_>, null: &NullLiteral) -> RuleFix {
     fixer.replace(null.span, "undefined")
 }
 
-fn try_fix_case<'a>(
-    fixer: RuleFixer<'_, 'a>,
+fn try_fix_case(
+    fixer: RuleFixer<'_, '_>,
     null: &NullLiteral,
-    switch: &SwitchStatement<'a>,
-) -> RuleFix<'a> {
+    switch: &SwitchStatement<'_>,
+) -> RuleFix {
     let also_has_undefined = switch
         .cases
         .iter()

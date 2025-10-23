@@ -5,7 +5,9 @@ use oxc_ast::{ast::*, match_expression};
 use oxc_span::GetSpan;
 
 use crate::{
-    Buffer, Format, FormatResult, FormatTrailingCommas, TrailingSeparator, format_args,
+    Buffer, Format, FormatResult, FormatTrailingCommas, TrailingSeparator,
+    ast_nodes::{AstNode, AstNodes},
+    format_args,
     formatter::{
         BufferExtensions, Comments, FormatElement, FormatError, Formatter, SourceText, VecBuffer,
         format_element,
@@ -16,7 +18,6 @@ use crate::{
         separated::FormatSeparatedIter,
         trivia::{DanglingIndentMode, format_dangling_comments},
     },
-    generated::ast_nodes::{AstNode, AstNodes},
     utils::{
         call_expression::is_test_call_expression, is_long_curried_call,
         member_chain::simple_argument::SimpleArgument,
@@ -25,17 +26,17 @@ use crate::{
     write::{
         FormatFunctionOptions,
         arrow_function_expression::is_multiline_template_starting_on_same_line,
-        parameter_list::has_only_simple_parameters,
     },
 };
 
 use super::{
     array_element_list::can_concisely_print_array_list,
     arrow_function_expression::{
-        FormatJsArrowFunctionExpression, FormatJsArrowFunctionExpressionOptions,
-        FunctionBodyCacheMode, GroupedCallArgumentLayout,
+        FormatJsArrowFunctionExpression, FormatJsArrowFunctionExpressionOptions, FunctionCacheMode,
+        GroupedCallArgumentLayout,
     },
     function,
+    parameters::has_only_simple_parameters,
 };
 
 impl<'a> Format<'a> for AstNode<'a, ArenaVec<'a, Argument<'a>>> {
@@ -43,6 +44,8 @@ impl<'a> Format<'a> for AstNode<'a, ArenaVec<'a, Argument<'a>>> {
         let l_paren_token = "(";
         let r_paren_token = ")";
         let call_like_span = self.parent.span();
+
+        let arguments = self.as_ref();
 
         if self.is_empty() {
             return write!(
@@ -69,7 +72,7 @@ impl<'a> Format<'a> for AstNode<'a, ArenaVec<'a, Argument<'a>>> {
             || (is_test_call && {
                 self.len() != 2
                     || matches!(
-                        self.as_ref().first(),
+                        arguments.first(),
                         Some(
                             Argument::StringLiteral(_)
                                 | Argument::TemplateLiteral(_)
@@ -96,9 +99,25 @@ impl<'a> Format<'a> for AstNode<'a, ArenaVec<'a, Argument<'a>>> {
             );
         }
 
-        let has_empty_line =
-            self.iter().any(|arg| f.source_text().get_lines_before(arg.span(), f.comments()) > 1);
-        if has_empty_line || is_function_composition_args(self) {
+        // Check if there's an empty line (2+ newlines) between any consecutive arguments.
+        // This is used to preserve intentional blank lines in the original source.
+        let has_empty_line = arguments.windows(2).any(|window| {
+            let (cur_arg, next_arg) = (&window[0], &window[1]);
+
+            // Count newlines between arguments, short-circuiting at 2 for performance
+            // Check if there are at least two newlines between arguments
+            f.source_text()
+                .bytes_range(cur_arg.span().end, next_arg.span().start)
+                .iter()
+                .filter(|&&b| b == b'\n')
+                .nth(1)
+                .is_some()
+        });
+
+        if has_empty_line
+            || (!matches!(self.grand_parent(), AstNodes::Decorator(_))
+                && is_function_composition_args(self))
+        {
             return format_all_args_broken_out(self, true, f);
         }
 
@@ -162,7 +181,9 @@ pub fn is_function_composition_args(args: &[Argument<'_>]) -> bool {
                 };
             }
             Argument::CallExpression(call) => {
-                return is_call_expression_with_arrow_or_function(call);
+                if is_call_expression_with_arrow_or_function(call) {
+                    return true;
+                }
             }
             _ => {}
         }
@@ -172,6 +193,7 @@ pub fn is_function_composition_args(args: &[Argument<'_>]) -> bool {
 }
 
 fn format_all_elements_broken_out<'a, 'b>(
+    node: &'b AstNode<'a, ArenaVec<'a, Argument<'a>>>,
     elements: impl Iterator<Item = (FormatResult<Option<FormatElement<'a>>>, usize)>,
     expand: bool,
     mut buffer: impl Buffer<'a>,
@@ -194,7 +216,11 @@ fn format_all_elements_broken_out<'a, 'b>(
                     }
                 }
 
-                write!(f, FormatTrailingCommas::All)
+                write!(
+                    f,
+                    [(!matches!(node.parent, AstNodes::ImportExpression(_)))
+                        .then_some(FormatTrailingCommas::All)]
+                )
             })),
             ")",
         ))
@@ -224,7 +250,11 @@ fn format_all_args_broken_out<'a, 'b>(
                     write!(f, [argument, (index != last_index).then_some(",")])?;
                 }
 
-                write!(f, FormatTrailingCommas::All)
+                write!(
+                    f,
+                    [(!matches!(node.parent, AstNodes::ImportExpression(_)))
+                        .then_some(FormatTrailingCommas::All)]
+                )
             })),
             ")",
         ))
@@ -299,11 +329,14 @@ fn should_group_last_argument(
     match last.and_then(|arg| arg.as_expression()) {
         Some(last) => {
             let penultimate = iter.next_back();
-            if let Some(penultimate) = &penultimate {
-                // TODO: check if both last and penultimate are same kind of expression.
-                // if penultimate.syntax().kind() == last.syntax().kind() {
-                //     return Ok(false);
-                // }
+            if let Some(penultimate) = &penultimate
+                && matches!(
+                    (penultimate, last),
+                    (Argument::ObjectExpression(_), Expression::ObjectExpression(_))
+                        | (Argument::ArrayExpression(_), Expression::ArrayExpression(_))
+                )
+            {
+                return false;
             }
 
             let previous_span = penultimate.map_or(call_like_span.start, |a| a.span().end);
@@ -570,7 +603,7 @@ fn write_grouped_arguments<'a>(
                             has_cached = true;
                             return function.fmt_with_options(
                                 FormatFunctionOptions {
-                                    cache_mode: FunctionBodyCacheMode::Cache,
+                                    cache_mode: FunctionCacheMode::Cache,
                                     ..Default::default()
                                 },
                                 f,
@@ -580,7 +613,7 @@ fn write_grouped_arguments<'a>(
                             has_cached = true;
                             return arrow.fmt_with_options(
                                 FormatJsArrowFunctionExpressionOptions {
-                                    cache_mode: FunctionBodyCacheMode::Cache,
+                                    cache_mode: FunctionCacheMode::Cache,
                                     ..FormatJsArrowFunctionExpressionOptions::default()
                                 },
                                 f,
@@ -617,7 +650,7 @@ fn write_grouped_arguments<'a>(
     // If any of the not grouped elements break, then fall back to the variant where
     // all arguments are printed in expanded mode.
     if non_grouped_breaks {
-        return format_all_elements_broken_out(elements.into_iter(), true, f);
+        return format_all_elements_broken_out(node, elements.into_iter(), true, f);
     }
 
     // We now cache the delimiter tokens. This is needed because `[crate::best_fitting]` will try to
@@ -630,7 +663,7 @@ fn write_grouped_arguments<'a>(
         let mut buffer = VecBuffer::new(f.state_mut());
         buffer.write_element(FormatElement::Tag(Tag::StartEntry))?;
 
-        format_all_elements_broken_out(elements.iter().cloned(), true, &mut buffer);
+        format_all_elements_broken_out(node, elements.iter().cloned(), true, &mut buffer);
 
         buffer.write_element(FormatElement::Tag(Tag::EndEntry))?;
 
@@ -798,7 +831,7 @@ impl<'a> Format<'a> for FormatGroupedFirstArgument<'a, '_> {
             AstNodes::ArrowFunctionExpression(arrow) => with_token_tracking_disabled(f, |f| {
                 arrow.fmt_with_options(
                     FormatJsArrowFunctionExpressionOptions {
-                        cache_mode: FunctionBodyCacheMode::Cache,
+                        cache_mode: FunctionCacheMode::Cache,
                         call_arg_layout: Some(GroupedCallArgumentLayout::GroupedFirstArgument),
                         ..FormatJsArrowFunctionExpressionOptions::default()
                     },
@@ -832,7 +865,7 @@ impl<'a> Format<'a> for FormatGroupedLastArgument<'a, '_> {
                 with_token_tracking_disabled(f, |f| {
                     function.fmt_with_options(
                         FormatFunctionOptions {
-                            cache_mode: FunctionBodyCacheMode::Cache,
+                            cache_mode: FunctionCacheMode::Cache,
                             call_argument_layout: Some(
                                 GroupedCallArgumentLayout::GroupedLastArgument,
                             ),
@@ -845,7 +878,7 @@ impl<'a> Format<'a> for FormatGroupedLastArgument<'a, '_> {
             AstNodes::ArrowFunctionExpression(arrow) => with_token_tracking_disabled(f, |f| {
                 arrow.fmt_with_options(
                     FormatJsArrowFunctionExpressionOptions {
-                        cache_mode: FunctionBodyCacheMode::Cache,
+                        cache_mode: FunctionCacheMode::Cache,
                         call_arg_layout: Some(GroupedCallArgumentLayout::GroupedLastArgument),
                         ..FormatJsArrowFunctionExpressionOptions::default()
                     },
@@ -936,19 +969,11 @@ fn is_multiline_template_only_args(arguments: &[Argument], source_text: SourceTe
         return false;
     }
 
-    match arguments.first().unwrap() {
-        Argument::TemplateLiteral(template) => {
-            is_multiline_template_starting_on_same_line(template.span.start, template, source_text)
-        }
-        Argument::TaggedTemplateExpression(template) => {
-            is_multiline_template_starting_on_same_line(
-                template.span.start,
-                &template.quasi,
-                source_text,
-            )
-        }
-        _ => false,
-    }
+    arguments
+        .first()
+        .unwrap()
+        .as_expression()
+        .is_some_and(|expr| is_multiline_template_starting_on_same_line(expr, source_text))
 }
 
 /// This function is used to check if the code is a hook-like code:

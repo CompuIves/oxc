@@ -4,6 +4,54 @@ All notable changes to this package will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0).
 
+## [0.95.0] - 2025-10-15
+
+### ⚡ Performance
+
+- ea3f362 codegen: Reorder match arms based on usage patterns (#14496) (Boshen)
+
+
+## [0.94.0] - 2025-10-06
+
+### 🚀 Features
+
+- 3656908 rust: Oxc-index-vec v4.0 (#14254) (Boshen)
+
+### 🐛 Bug Fixes
+
+- fc519c8 mangler: Mangle private class members in subsequent classes correctly (#14361) (sapphi-red)
+- b83ffe5 mangler: Mangle private class members used in nested classes properly (#14218) (sapphi-red)
+
+
+## [0.93.0] - 2025-09-28
+
+### 🐛 Bug Fixes
+
+- aa927ab codegen: Don't inject parenthesis in optional chaining within new expressions (#14170) (sapphi-red)
+
+
+## [0.92.0] - 2025-09-24
+
+### 🚀 Features
+
+- 0fe4d95 mangler: Mangle private class members (#14027) (sapphi-red)
+
+
+## [0.91.0] - 2025-09-22
+
+### 🐛 Bug Fixes
+
+- 8f3f460 codegen: Add missing dot when printing import.defer and import.source (#13975) (Boshen)
+
+### ⚡ Performance
+
+- ed8ff7d codegen: Unroll loop in `SourcemapBuilder::update_generated_line_and_column` (#13903) (翠)
+
+### 💼 Other
+
+- fb347da crates: V0.91.0 (#13961) (Boshen)
+
+
 
 
 

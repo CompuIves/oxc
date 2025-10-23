@@ -4,21 +4,19 @@ use std::{
 };
 
 use log::debug;
+use oxc_data_structures::rope::Rope;
 use rustc_hash::FxHashSet;
-use tower_lsp_server::{
-    UriExt,
-    lsp_types::{self, DiagnosticRelatedInformation, DiagnosticSeverity, Uri},
-};
+use tower_lsp_server::{UriExt, lsp_types::Uri};
 
 use oxc_allocator::Allocator;
 use oxc_linter::{
-    ConfigStore, LINTABLE_EXTENSIONS, LintOptions, LintService, LintServiceOptions, Linter,
-    MessageWithPosition, read_to_arena_str,
+    AllowWarnDeny, ConfigStore, DirectivesStore, DisableDirectives, Fix, LINTABLE_EXTENSIONS,
+    LintOptions, LintService, LintServiceOptions, Linter, Message, PossibleFixes, RuleCommentType,
+    RuntimeFileSystem, read_to_arena_str, read_to_string,
 };
-use oxc_linter::{RuntimeFileSystem, read_to_string};
 
 use super::error_with_position::{
-    DiagnosticReport, PossibleFixContent, message_with_position_to_lsp_diagnostic_report,
+    DiagnosticReport, generate_inverted_diagnostics, message_to_lsp_diagnostic,
 };
 
 /// smaller subset of LintServiceOptions, which is used by IsolatedLintHandler
@@ -31,15 +29,17 @@ pub struct IsolatedLintHandlerOptions {
 
 pub struct IsolatedLintHandler {
     service: LintService,
+    directives_coordinator: DirectivesStore,
+    unused_directives_severity: Option<AllowWarnDeny>,
 }
 
 pub struct IsolatedLintHandlerFileSystem {
     path_to_lint: PathBuf,
-    source_text: String,
+    source_text: Arc<str>,
 }
 
 impl IsolatedLintHandlerFileSystem {
-    pub fn new(path_to_lint: PathBuf, source_text: String) -> Self {
+    pub fn new(path_to_lint: PathBuf, source_text: Arc<str>) -> Self {
         Self { path_to_lint, source_text }
     }
 }
@@ -68,17 +68,27 @@ impl IsolatedLintHandler {
         config_store: ConfigStore,
         options: &IsolatedLintHandlerOptions,
     ) -> Self {
+        let directives_coordinator = DirectivesStore::new();
+
         let linter = Linter::new(lint_options, config_store, None);
         let mut lint_service_options = LintServiceOptions::new(options.root_path.clone())
             .with_cross_module(options.use_cross_module);
 
-        if let Some(tsconfig_path) = &options.tsconfig_path {
+        if let Some(tsconfig_path) = &options.tsconfig_path
+            && tsconfig_path.is_file()
+        {
+            debug_assert!(tsconfig_path.is_absolute());
             lint_service_options = lint_service_options.with_tsconfig(tsconfig_path);
         }
 
-        let service = LintService::new(linter, lint_service_options);
+        let mut service = LintService::new(linter, lint_service_options);
+        service.set_disable_directives_map(directives_coordinator.map());
 
-        Self { service }
+        Self {
+            service,
+            directives_coordinator,
+            unused_directives_severity: lint_options.report_unused_directive,
+        }
     }
 
     pub fn run_single(
@@ -92,68 +102,41 @@ impl IsolatedLintHandler {
             return None;
         }
 
-        let mut allocator = Allocator::default();
         let source_text = content.or_else(|| read_to_string(&path).ok())?;
-        let errors = self.lint_path(&mut allocator, &path, source_text);
 
-        let mut diagnostics: Vec<DiagnosticReport> =
-            errors.iter().map(|e| message_with_position_to_lsp_diagnostic_report(e, uri)).collect();
-
-        // a diagnostics connected from related_info to original diagnostic
-        let mut inverted_diagnostics = vec![];
-        for d in &diagnostics {
-            let Some(related_info) = &d.diagnostic.related_information else {
-                continue;
-            };
-            let related_information = Some(vec![DiagnosticRelatedInformation {
-                location: lsp_types::Location { uri: uri.clone(), range: d.diagnostic.range },
-                message: "original diagnostic".to_string(),
-            }]);
-            for r in related_info {
-                if r.location.range == d.diagnostic.range {
-                    continue;
-                }
-                // If there is no message content for this span, then don't produce an additional diagnostic
-                // which also has no content. This prevents issues where editors expect diagnostics to have messages.
-                if r.message.is_empty() {
-                    continue;
-                }
-                inverted_diagnostics.push(DiagnosticReport {
-                    diagnostic: lsp_types::Diagnostic {
-                        range: r.location.range,
-                        severity: Some(DiagnosticSeverity::HINT),
-                        code: None,
-                        message: r.message.clone(),
-                        source: d.diagnostic.source.clone(),
-                        code_description: None,
-                        related_information: related_information.clone(),
-                        tags: None,
-                        data: None,
-                    },
-                    fixed_content: PossibleFixContent::None,
-                    rule_name: None,
-                });
-            }
-        }
-        diagnostics.append(&mut inverted_diagnostics);
+        let mut diagnostics = self.lint_path(&path, uri, &source_text);
+        diagnostics.append(&mut generate_inverted_diagnostics(&diagnostics, uri));
         Some(diagnostics)
     }
 
-    fn lint_path<'a>(
-        &mut self,
-        allocator: &'a mut Allocator,
-        path: &Path,
-        source_text: String,
-    ) -> Vec<MessageWithPosition<'a>> {
+    fn lint_path(&mut self, path: &Path, uri: &Uri, source_text: &str) -> Vec<DiagnosticReport> {
         debug!("lint {}", path.display());
+        let rope = &Rope::from_str(source_text);
 
-        self.service
+        let mut messages: Vec<DiagnosticReport> = self
+            .service
             .with_file_system(Box::new(IsolatedLintHandlerFileSystem::new(
                 path.to_path_buf(),
-                source_text,
+                Arc::from(source_text),
             )))
             .with_paths(vec![Arc::from(path.as_os_str())])
-            .run_source(allocator)
+            .run_source()
+            .iter()
+            .map(|message| message_to_lsp_diagnostic(message, uri, source_text, rope))
+            .collect();
+
+        // Add unused directives if configured
+        if let Some(severity) = self.unused_directives_severity
+            && let Some(directives) = self.directives_coordinator.get(path)
+        {
+            messages.extend(
+                create_unused_directives_messages(&directives, severity, source_text)
+                    .iter()
+                    .map(|message| message_to_lsp_diagnostic(message, uri, source_text, rope)),
+            );
+        }
+
+        messages
     }
 
     fn should_lint_path(path: &Path) -> bool {
@@ -165,4 +148,78 @@ impl IsolatedLintHandler {
             .and_then(std::ffi::OsStr::to_str)
             .is_some_and(|ext| wanted_exts.contains(ext))
     }
+}
+
+/// Almost the same as [oxc_linter::create_unused_directives_diagnostics], but returns `Message`s
+/// with a `PossibleFixes` instead of `OxcDiagnostic`s.
+fn create_unused_directives_messages(
+    directives: &DisableDirectives,
+    severity: AllowWarnDeny,
+    source_text: &str,
+) -> Vec<Message> {
+    use oxc_diagnostics::OxcDiagnostic;
+
+    let mut diagnostics = Vec::new();
+    let fix_message = "remove unused disable directive";
+
+    let severity = if severity == AllowWarnDeny::Deny {
+        oxc_diagnostics::Severity::Error
+    } else {
+        oxc_diagnostics::Severity::Warning
+    };
+
+    // Report unused disable comments
+    let unused_disable = directives.collect_unused_disable_comments();
+    for unused_comment in unused_disable {
+        let span = unused_comment.span;
+        match unused_comment.r#type {
+            RuleCommentType::All => {
+                diagnostics.push(Message::new(
+                    OxcDiagnostic::warn(
+                        "Unused eslint-disable directive (no problems were reported).",
+                    )
+                    .with_label(span)
+                    .with_severity(severity),
+                    PossibleFixes::Single(Fix::delete(span).with_message(fix_message)),
+                ));
+            }
+            RuleCommentType::Single(rules) => {
+                for rule in rules {
+                    let rule_message = format!(
+                        "Unused eslint-disable directive (no problems were reported from {}).",
+                        rule.rule_name
+                    );
+                    diagnostics.push(Message::new(
+                        OxcDiagnostic::warn(rule_message)
+                            .with_label(rule.name_span)
+                            .with_severity(severity),
+                        PossibleFixes::Single(
+                            rule.create_fix(source_text, span).with_message(fix_message),
+                        ),
+                    ));
+                }
+            }
+        }
+    }
+
+    // Report unused enable comments
+    let unused_enable = directives.unused_enable_comments();
+    for (rule_name, span) in unused_enable {
+        let message = if let Some(rule_name) = rule_name {
+            format!(
+                "Unused eslint-enable directive (no matching eslint-disable directives were found for {rule_name})."
+            )
+        } else {
+            "Unused eslint-enable directive (no matching eslint-disable directives were found)."
+                .to_string()
+        };
+        diagnostics.push(Message::new(
+            OxcDiagnostic::warn(message).with_label(*span).with_severity(severity),
+            // TODO: fixer
+            // copy the structure of disable directives
+            PossibleFixes::None,
+        ));
+    }
+
+    diagnostics
 }

@@ -14,7 +14,7 @@ use std::ops::Deref;
 use options::{IgnorePattern, NoUnusedVarsOptions};
 use oxc_ast::AstKind;
 use oxc_macros::declare_oxc_lint;
-use oxc_semantic::{AstNode, ScopeFlags, SymbolFlags, SymbolId};
+use oxc_semantic::{AstNode, ScopeFlags, SymbolFlags};
 use oxc_span::GetSpan;
 use symbol::Symbol;
 
@@ -189,7 +189,8 @@ declare_oxc_lint!(
     NoUnusedVars,
     eslint,
     correctness,
-    dangerous_suggestion
+    dangerous_suggestion,
+    config = NoUnusedVarsOptions
 );
 
 impl Deref for NoUnusedVars {
@@ -205,13 +206,15 @@ impl Rule for NoUnusedVars {
         Self(Box::new(NoUnusedVarsOptions::try_from(value).unwrap()))
     }
 
-    fn run_on_symbol(&self, symbol_id: SymbolId, ctx: &LintContext<'_>) {
-        let symbol = Symbol::new(ctx, ctx.module_record(), symbol_id);
-        if Self::should_skip_symbol(&symbol) {
-            return;
-        }
+    fn run_once(&self, ctx: &LintContext) {
+        for symbol in ctx.scoping().symbol_ids() {
+            let symbol = Symbol::new(ctx, ctx.module_record(), symbol);
+            if Self::should_skip_symbol(&symbol) {
+                continue;
+            }
 
-        self.run_on_symbol_internal(&symbol, ctx);
+            self.run_on_symbol_internal(&symbol, ctx);
+        }
     }
 
     fn should_run(&self, ctx: &ContextHost) -> bool {
@@ -221,8 +224,7 @@ impl Rule for NoUnusedVars {
         //    we can't detect
         !ctx.source_type().is_typescript_definition()
             && !ctx
-                .file_path()
-                .extension()
+                .file_extension()
                 .is_some_and(|ext| ext == "vue" || ext == "svelte" || ext == "astro")
     }
 }
@@ -351,6 +353,15 @@ impl NoUnusedVars {
             // ambient namespaces
             || flags == AMBIENT_NAMESPACE_FLAGS
             || (symbol.is_in_ts() && symbol.is_in_declare_global())
+        {
+            return true;
+        }
+
+        let node_id = symbol.declaration().id();
+        if flags.intersects(SymbolFlags::FunctionScopedVariable)
+            && let AstKind::FormalParameters(formal_parameters) =
+                symbol.nodes().parent_node(node_id).kind()
+            && formal_parameters.kind.is_signature()
         {
             return true;
         }

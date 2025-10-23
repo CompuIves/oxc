@@ -227,80 +227,80 @@ impl GetterReturn {
                 }
                 // If the signature of function supports the return of the `undefined` value,
                 // you do not need to check this rule
-                if let AstKind::Function(func) = node.kind() {
-                    if let Some(ret) = &func.return_type {
-                        if ret.type_annotation.is_maybe_undefined() {
-                            break 'returns true;
-                        }
-                    }
+                if let AstKind::Function(func) = node.kind()
+                    && let Some(ret) = &func.return_type
+                    && ret.type_annotation.is_maybe_undefined()
+                {
+                    break 'returns true;
                 }
             }
-            let output = set_depth_first_search(graph, Some(node.cfg_id()), |event| {
-                match event {
-                    // We only need to check paths that are normal or jump.
-                    DfsEvent::TreeEdge(a, b) => {
-                        let edges = graph.edges_connecting(a, b).collect::<Vec<_>>();
-                        if edges.iter().any(|e| {
-                            matches!(
-                                e.weight(),
-                                EdgeType::Normal
-                                    | EdgeType::Jump
-                                    | EdgeType::Error(ErrorEdgeKind::Explicit)
-                            )
-                        }) {
-                            Control::Continue
-                        } else {
-                            Control::Prune
+            let output =
+                set_depth_first_search(graph, Some(ctx.nodes().cfg_id(node.id())), |event| {
+                    match event {
+                        // We only need to check paths that are normal or jump.
+                        DfsEvent::TreeEdge(a, b) => {
+                            let edges = graph.edges_connecting(a, b).collect::<Vec<_>>();
+                            if edges.iter().any(|e| {
+                                matches!(
+                                    e.weight(),
+                                    EdgeType::Normal
+                                        | EdgeType::Jump
+                                        | EdgeType::Error(ErrorEdgeKind::Explicit)
+                                )
+                            }) {
+                                Control::Continue
+                            } else {
+                                Control::Prune
+                            }
                         }
-                    }
-                    DfsEvent::Discover(basic_block_id, _) => {
-                        let return_instruction =
-                            cfg.basic_block(basic_block_id).instructions().iter().find(|it| {
-                                match it.kind {
-                                    // Throws are classified as returning.
-                                    InstructionKind::Return(_) | InstructionKind::Throw => true,
+                        DfsEvent::Discover(basic_block_id, _) => {
+                            let return_instruction =
+                                cfg.basic_block(basic_block_id).instructions().iter().find(|it| {
+                                    match it.kind {
+                                        // Throws are classified as returning.
+                                        InstructionKind::Return(_) | InstructionKind::Throw => true,
 
-                                    // Ignore irrelevant elements.
-                                    InstructionKind::ImplicitReturn
-                                    | InstructionKind::Break(_)
-                                    | InstructionKind::Continue(_)
-                                    | InstructionKind::Iteration(_)
-                                    | InstructionKind::Unreachable
-                                    | InstructionKind::Condition
-                                    | InstructionKind::Statement => false,
-                                }
+                                        // Ignore irrelevant elements.
+                                        InstructionKind::ImplicitReturn
+                                        | InstructionKind::Break(_)
+                                        | InstructionKind::Continue(_)
+                                        | InstructionKind::Iteration(_)
+                                        | InstructionKind::Unreachable
+                                        | InstructionKind::Condition
+                                        | InstructionKind::Statement => false,
+                                    }
+                                });
+
+                            let does_return = return_instruction.is_some_and(|ret| {
+                                !matches!( ret.kind,
+                                InstructionKind::Return(ReturnInstructionKind::ImplicitUndefined)
+                                    if !self.allow_implicit
+                                )
                             });
 
-                        let does_return = return_instruction.is_some_and(|ret| {
-                            !matches!( ret.kind,
-                            InstructionKind::Return(ReturnInstructionKind::ImplicitUndefined)
-                                if !self.allow_implicit
-                            )
-                        });
-
-                        // Return true as the second argument to signify we should
-                        // continue walking this branch, as we haven't seen anything
-                        // that will signify to us that this path of the program will
-                        // definitely return or throw.
-                        if graph.edges_directed(basic_block_id, Direction::Outgoing).any(|e| {
-                            matches!(
-                                e.weight(),
-                                EdgeType::Jump
-                                    | EdgeType::Normal
-                                    | EdgeType::Backedge
-                                    | EdgeType::Error(ErrorEdgeKind::Explicit)
-                            )
-                        }) {
-                            Control::Continue
-                        } else if does_return {
-                            Control::Prune
-                        } else {
-                            Control::Break(())
+                            // Return true as the second argument to signify we should
+                            // continue walking this branch, as we haven't seen anything
+                            // that will signify to us that this path of the program will
+                            // definitely return or throw.
+                            if graph.edges_directed(basic_block_id, Direction::Outgoing).any(|e| {
+                                matches!(
+                                    e.weight(),
+                                    EdgeType::Jump
+                                        | EdgeType::Normal
+                                        | EdgeType::Backedge
+                                        | EdgeType::Error(ErrorEdgeKind::Explicit)
+                                )
+                            }) {
+                                Control::Continue
+                            } else if does_return {
+                                Control::Prune
+                            } else {
+                                Control::Break(())
+                            }
                         }
+                        _ => Control::Continue,
                     }
-                    _ => Control::Continue,
-                }
-            });
+                });
 
             output.break_value().is_none()
         };

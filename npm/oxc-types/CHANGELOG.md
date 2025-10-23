@@ -5,6 +5,23 @@ All notable changes to this package will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0).
 
 
+## [0.94.0] - 2025-10-06
+
+### 🚀 Features
+
+- 7e4d04f napi/parser: Add option to add `parent` prop to AST nodes with raw transfer (#14344) (overlookmotel)
+
+
+
+
+## [0.91.0] - 2025-09-22
+
+### 💼 Other
+
+- fb347da crates: V0.91.0 (#13961) (Boshen)
+
+
+
 ## [0.90.0] - 2025-09-18
 
 ### 🚀 Features

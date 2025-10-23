@@ -103,7 +103,7 @@ fn do_fix<'a>(
     fixer: RuleFixer<'_, 'a>,
     err_kind: ErrorKind,
     call_expr: &CallExpression<'a>,
-) -> RuleFix<'a> {
+) -> RuleFix {
     let Some(target_span) = can_replace(call_expr) else { return fixer.noop() };
     let (argument, method) = match err_kind {
         ErrorKind::StartsWith(arg) => {
@@ -120,7 +120,7 @@ fn do_fix<'a>(
     content.print_str(&format!(r"{}.{}(", fixer.source_range(target_span), method));
     content.print_expression(&ast.expression_string_literal(SPAN, ast.atom(&argument), None));
     content.print_str(r")");
-    fixer.replace(call_expr.span, content)
+    fixer.replace(call_expr.span, content.into_source_text())
 }
 
 fn can_replace(call_expr: &CallExpression) -> Option<Span> {
@@ -163,26 +163,26 @@ fn check_regex(regexp_lit: &RegExpLiteral) -> Option<ErrorKind> {
     }
     let pattern_terms = alternatives.first().map(|it| &it.body)?;
 
-    if let Some(Term::BoundaryAssertion(boundary_assert)) = pattern_terms.first() {
-        if boundary_assert.kind == BoundaryAssertionKind::Start {
-            return pattern_terms
-                .iter()
-                .skip(1)
-                .map(|t| if let Term::Character(c) = t { Some(c.value) } else { None })
-                .collect::<Option<Vec<_>>>()
-                .map(ErrorKind::StartsWith);
-        }
+    if let Some(Term::BoundaryAssertion(boundary_assert)) = pattern_terms.first()
+        && boundary_assert.kind == BoundaryAssertionKind::Start
+    {
+        return pattern_terms
+            .iter()
+            .skip(1)
+            .map(|t| if let Term::Character(c) = t { Some(c.value) } else { None })
+            .collect::<Option<Vec<_>>>()
+            .map(ErrorKind::StartsWith);
     }
 
-    if let Some(Term::BoundaryAssertion(boundary_assert)) = pattern_terms.last() {
-        if boundary_assert.kind == BoundaryAssertionKind::End {
-            return pattern_terms
-                .iter()
-                .take(pattern_terms.len() - 1)
-                .map(|t| if let Term::Character(c) = t { Some(c.value) } else { None })
-                .collect::<Option<Vec<_>>>()
-                .map(ErrorKind::EndsWith);
-        }
+    if let Some(Term::BoundaryAssertion(boundary_assert)) = pattern_terms.last()
+        && boundary_assert.kind == BoundaryAssertionKind::End
+    {
+        return pattern_terms
+            .iter()
+            .take(pattern_terms.len() - 1)
+            .map(|t| if let Term::Character(c) = t { Some(c.value) } else { None })
+            .collect::<Option<Vec<_>>>()
+            .map(ErrorKind::EndsWith);
     }
 
     None

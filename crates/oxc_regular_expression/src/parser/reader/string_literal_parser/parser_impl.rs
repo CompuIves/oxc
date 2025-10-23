@@ -315,10 +315,10 @@ impl Parser {
         let checkpoint = self.checkpoint();
 
         if self.eat('x') {
-            if let Some(first) = self.consume_hex_digit() {
-                if let Some(second) = self.consume_hex_digit() {
-                    return Some(first * 16 + second);
-                }
+            if let Some(first) = self.consume_hex_digit()
+                && let Some(second) = self.consume_hex_digit()
+            {
+                return Some(first * 16 + second);
             }
 
             self.rewind(checkpoint);
@@ -333,26 +333,24 @@ impl Parser {
     //   u{ CodePoint }
     // ```
     fn parse_unicode_escape_sequence(&mut self, offset_start: u32) -> Result<Option<u32>> {
-        let chckpoint = self.checkpoint();
+        let checkpoint = self.checkpoint();
 
         if self.eat('u') {
             if let Some(cp) = self.consume_hex4_digits() {
                 return Ok(Some(cp));
             }
-            self.rewind(chckpoint);
+            self.rewind(checkpoint);
         }
 
         if self.eat('u') {
-            if self.eat('{') {
-                if let Some(hex_digits) =
+            if self.eat('{')
+                && let Some(hex_digits) =
                     self.consume_hex_digits(offset_start)?.filter(|&cp| cp <= 0x10_ffff)
-                {
-                    if self.eat('}') {
-                        return Ok(Some(hex_digits));
-                    }
-                }
+                && self.eat('}')
+            {
+                return Ok(Some(hex_digits));
             }
-            self.rewind(chckpoint);
+            self.rewind(checkpoint);
         }
 
         Ok(None)

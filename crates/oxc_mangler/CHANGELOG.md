@@ -4,6 +4,47 @@ All notable changes to this package will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0).
 
+## [0.95.0] - 2025-10-15
+
+### 🚀 Features
+
+- bce31b5 napi/playground: Call `with_private_member_mappings()` for private class member mangling (#14380) (copilot-swe-agent)
+
+
+## [0.94.0] - 2025-10-06
+
+### 🚀 Features
+
+- 3656908 rust: Oxc-index-vec v4.0 (#14254) (Boshen)
+
+### 🐛 Bug Fixes
+
+- c257b41 mangler: Avoid reusing same mangled names in the outer class (#14362) (sapphi-red)
+- fc519c8 mangler: Mangle private class members in subsequent classes correctly (#14361) (sapphi-red)
+- 5d3114c mangler: Allow using typescript keywords as variable names (#14315) (sapphi-red)
+
+
+## [0.93.0] - 2025-09-28
+
+### 🐛 Bug Fixes
+
+- d02d750 mangler: Mangle non top-level `exports` variable (#14169) (sapphi-red)
+
+
+## [0.92.0] - 2025-09-24
+
+### 🚀 Features
+
+- 0fe4d95 mangler: Mangle private class members (#14027) (sapphi-red)
+
+
+## [0.91.0] - 2025-09-22
+
+### 💼 Other
+
+- fb347da crates: V0.91.0 (#13961) (Boshen)
+
+
 
 
 

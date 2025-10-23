@@ -109,7 +109,6 @@ use oxc_span::{GetSpan, Span};
 use crate::{
     Format, FormatResult, SyntaxTriviaPieceComments,
     formatter::{Formatter, SourceText},
-    generated::ast_nodes::SiblingNode,
 };
 
 #[derive(Debug, Clone)]
@@ -127,18 +126,32 @@ pub struct Comments<'a> {
     printed_count: usize,
     /// The index of the type cast comment that has been printed already.
     /// Used to prevent duplicate processing of special TypeScript type cast comments.
-    handled_type_cast_comment: usize,
+    last_handled_type_cast_comment: usize,
+    type_cast_node_span: Span,
+    /// Optional limit for the unprinted_comments view.
+    ///
+    /// When set, [`Self::unprinted_comments()`] will only return comments up to this index,
+    /// effectively hiding comments beyond this point from the formatter.
+    pub view_limit: Option<usize>,
 }
 
 impl<'a> Comments<'a> {
     pub fn new(source_text: SourceText<'a>, comments: &'a [Comment]) -> Self {
-        Comments { source_text, comments, printed_count: 0, handled_type_cast_comment: 0 }
+        Comments {
+            source_text,
+            comments,
+            printed_count: 0,
+            last_handled_type_cast_comment: 0,
+            type_cast_node_span: Span::default(),
+            view_limit: None,
+        }
     }
 
     /// Returns comments that have not been printed yet.
     #[inline]
     pub fn unprinted_comments(&self) -> &'a [Comment] {
-        &self.comments[self.printed_count..]
+        let end = self.view_limit.unwrap_or(self.comments.len());
+        &self.comments[self.printed_count..end]
     }
 
     /// Returns comments that have already been printed.
@@ -166,11 +179,27 @@ impl<'a> Comments<'a> {
 
     /// Returns comments that are on their own line and end before or at the given position.
     pub fn own_line_comments_before(&self, pos: u32) -> &'a [Comment] {
-        let index = self
-            .comments_before_iter(pos)
-            .take_while(|c| self.source_text.is_own_line_comment(c))
-            .count();
+        let index =
+            self.comments_before_iter(pos).take_while(|c| self.is_own_line_comment(c)).count();
         &self.unprinted_comments()[..index]
+    }
+
+    /// Returns end-of-line comments that are after the given position (excluding printed ones).
+    pub fn end_of_line_comments_after(&self, mut pos: u32) -> &'a [Comment] {
+        let comments = self.unprinted_comments();
+        for (index, comment) in comments.iter().enumerate() {
+            if self.source_text.all_bytes_match(pos, comment.span.start, |b| {
+                matches!(b, b'\t' | b' ' | b'=' | b':')
+            }) {
+                if comment.is_line() || self.is_end_of_line_comment(comment) {
+                    return &comments[..=index];
+                }
+                pos = comment.span.end;
+            } else {
+                break;
+            }
+        }
+        &[]
     }
 
     /// Returns comments that start after the given position (excluding printed ones).
@@ -203,7 +232,7 @@ impl<'a> Comments<'a> {
 
     /// Checks if there are any comments between the given positions.
     pub fn has_comment_in_range(&self, start: u32, end: u32) -> bool {
-        self.comments_before_iter(end).any(|comment| comment.span.end >= start)
+        self.comments_before_iter(end).any(|comment| comment.span.end > start)
     }
 
     /// Checks if there are any comments within the given span.
@@ -220,10 +249,8 @@ impl<'a> Comments<'a> {
 
     /// Checks if there are any leading own-line comments before the given position.
     pub fn has_leading_own_line_comment(&self, start: u32) -> bool {
-        self.comments_before_iter(start).any(|comment| {
-            self.source_text.is_own_line_comment(comment)
-                || self.source_text.lines_after(comment.span.end) > 0
-        })
+        self.comments_before_iter(start)
+            .any(|comment| self.source_text.lines_after(comment.span.end) > 0)
     }
 
     /// Checks if there are leading or trailing comments around `current_span`.
@@ -255,7 +282,7 @@ impl<'a> Comments<'a> {
     /// Used when multiple comments are processed in batch. Each unit of `count`
     /// represents one comment that has been formatted and should be marked as processed.
     ///
-    /// Like [`increment_printed_count`], this is essential for maintaining the
+    /// Like [`Comments::increment_printed_count`], this is essential for maintaining the
     /// integrity of the comment tracking system.
     #[inline]
     pub fn increase_printed_count_by(&mut self, count: usize) {
@@ -266,50 +293,44 @@ impl<'a> Comments<'a> {
     /// Returns comments that should be printed as trailing comments for `preceding_node`.
     pub fn get_trailing_comments(
         &self,
-        enclosing_node: &SiblingNode<'a>,
-        preceding_node: &SiblingNode<'a>,
-        mut following_node: Option<&SiblingNode<'a>>,
+        enclosing_span: Span,
+        preceding_span: Span,
+        mut following_span: Option<Span>,
     ) -> &'a [Comment] {
-        if !matches!(
-            enclosing_node,
-            SiblingNode::Program(_)
-                | SiblingNode::BlockStatement(_)
-                | SiblingNode::FunctionBody(_)
-                | SiblingNode::TSModuleBlock(_)
-                | SiblingNode::SwitchStatement(_)
-                | SiblingNode::StaticBlock(_)
-        ) && matches!(following_node, Some(SiblingNode::EmptyStatement(_)))
-        {
-            let enclosing_span = enclosing_node.span();
-            return self.comments_before(enclosing_span.end);
-        }
-
-        // If preceding_node is a callee, let the following node handle its comments
-        // Based on Prettier's comment handling logic
-        if matches!(enclosing_node, SiblingNode::CallExpression(CallExpression { callee, ..}) | SiblingNode::NewExpression(NewExpression { callee, ..}) if callee.span().contains_inclusive(preceding_node.span()))
-        {
-            return &[];
-        }
-
         let comments = self.unprinted_comments();
         if comments.is_empty() {
             return &[];
         }
 
         let source_text = self.source_text;
-        let preceding_span = preceding_node.span();
 
         // All of the comments before this node are printed already.
         debug_assert!(
             comments.first().is_none_or(|comment| comment.span.end > preceding_span.start)
         );
 
-        let Some(following_node) = following_node else {
-            let enclosing_span = enclosing_node.span();
-            return self.comments_before(enclosing_span.end);
-        };
+        let Some(following_span) = following_span else {
+            // Find dangling comments at the end of the enclosing node
+            let comments = self.comments_before(enclosing_span.end);
 
-        let following_span = following_node.span();
+            let mut start = preceding_span.end;
+            for (idx, comment) in comments.iter().enumerate() {
+                // Comments inside the preceding node, which should be printed without checking
+                if start > comment.span.start {
+                    continue;
+                }
+
+                if !source_text.all_bytes_match(start, comment.span.start, |b| {
+                    b.is_ascii_whitespace() || matches!(b, b')' | b',' | b';')
+                }) {
+                    return &comments[..idx];
+                }
+
+                start = comment.span.end;
+            }
+
+            return comments;
+        };
 
         let mut comment_index = 0;
         while let Some(comment) = comments.get(comment_index) {
@@ -324,78 +345,14 @@ impl<'a> Comments<'a> {
                 break;
             }
 
-            if source_text.is_own_line_comment(comment) {
+            if self.is_own_line_comment(comment) {
                 // Own line comments are typically leading comments for the next node
-
-                if matches!(enclosing_node, SiblingNode::IfStatement(stmt) if stmt.test.span() == preceding_span)
-                    || matches!(enclosing_node, SiblingNode::WhileStatement(stmt) if stmt.test.span() == preceding_span)
-                {
-                    return handle_if_and_while_statement_comments(
-                        following_span.start,
-                        comment_index,
-                        comments,
-                        source_text,
-                    );
-                }
-
                 break;
-            } else if self.source_text.is_end_of_line_comment(comment) {
-                if let SiblingNode::IfStatement(if_stmt) = enclosing_node {
-                    if if_stmt.consequent.span() == preceding_span {
-                        // If comment is after the `else` keyword, it is not a trailing comment of consequent.
-                        if source_text[preceding_span.end as usize..comment.span.start as usize]
-                            .contains("else")
-                        {
-                            return &[];
-                        }
-                    }
-                }
-
-                if matches!(enclosing_node, SiblingNode::IfStatement(stmt) if stmt.test.span() == preceding_span)
-                    || matches!(enclosing_node, SiblingNode::WhileStatement(stmt) if stmt.test.span() == preceding_span)
-                {
-                    return handle_if_and_while_statement_comments(
-                        following_span.start,
-                        comment_index,
-                        comments,
-                        source_text,
-                    );
-                }
-
-                // End-of-line comments in specific contexts should be leading comments
-                if matches!(
-                    enclosing_node,
-                    SiblingNode::VariableDeclarator(_)
-                        | SiblingNode::AssignmentExpression(_)
-                        | SiblingNode::TSTypeAliasDeclaration(_)
-                ) && (comment.is_block()
-                    || matches!(
-                        following_node,
-                        SiblingNode::ObjectExpression(_)
-                            | SiblingNode::ArrayExpression(_)
-                            | SiblingNode::TSTypeLiteral(_)
-                            | SiblingNode::TemplateLiteral(_)
-                            | SiblingNode::TaggedTemplateExpression(_)
-                    ))
-                {
-                    return &[];
-                }
+            } else if self.is_end_of_line_comment(comment) {
                 return &comments[..=comment_index];
             }
 
             comment_index += 1;
-        }
-
-        if comment_index == 0 {
-            // No comments to print
-            return &[];
-        }
-
-        if matches!(
-            enclosing_node,
-            SiblingNode::ImportDeclaration(_) | SiblingNode::ExportAllDeclaration(_)
-        ) {
-            return &comments[..comment_index];
         }
 
         // Find the first comment (from the end) that has non-whitespace/non-paren content after it
@@ -427,6 +384,14 @@ impl<'a> Comments<'a> {
         const TYPE_PATTERN: &[u8] = b"@type";
         const SATISFIES_PATTERN: &[u8] = b"@satisfies";
 
+        /// Checks if a pattern matches at the given position.
+        fn matches_pattern_at(bytes: &[u8], pos: usize, pattern: &[u8]) -> bool {
+            bytes[pos..].starts_with(pattern)
+                && bytes
+                    .get(pos + pattern.len())
+                    .is_some_and(|&byte| byte.is_ascii_whitespace() || byte == b'{')
+        }
+
         if !matches!(comment.content, CommentContent::Jsdoc) {
             return false;
         }
@@ -443,6 +408,14 @@ impl<'a> Comments<'a> {
         false
     }
 
+    pub fn is_own_line_comment(&self, comment: &Comment) -> bool {
+        self.source_text.has_newline_before(comment.span.start)
+    }
+
+    pub fn is_end_of_line_comment(&self, comment: &Comment) -> bool {
+        self.source_text.has_newline_after(comment.span.end)
+    }
+
     /// Finds the index of a type cast comment before the given span.
     ///
     /// Searches for a JSDoc comment containing @type or @satisfies that is followed
@@ -456,38 +429,47 @@ impl<'a> Comments<'a> {
         )
     }
 
-    /// Marks the most recently printed type cast comment as handled.
-    pub fn mark_as_handled_type_cast_comment(&mut self) {
-        self.handled_type_cast_comment = self.printed_count;
+    /// Marks the given span as a type cast node.
+    pub fn mark_as_type_cast_node(&mut self, node: &impl GetSpan) {
+        self.type_cast_node_span = node.span();
+        self.last_handled_type_cast_comment = self.printed_count;
     }
 
     /// Checks if the most recently printed type cast comment has been handled.
-    pub fn is_already_handled_type_cast_comment(&self) -> bool {
-        self.printed_count == self.handled_type_cast_comment
+    pub fn is_handled_type_cast_comment(&self) -> bool {
+        self.printed_count == self.last_handled_type_cast_comment
     }
-}
 
-/// Checks if a pattern matches at the given position.
-fn matches_pattern_at(bytes: &[u8], pos: usize, pattern: &[u8]) -> bool {
-    bytes[pos..].starts_with(pattern)
-        && matches!(bytes.get(pos + pattern.len()), Some(b' ' | b'\t' | b'\n' | b'\r' | b'{'))
-}
+    #[inline]
+    pub fn is_type_cast_node(&self, node: &impl GetSpan) -> bool {
+        self.type_cast_node_span == node.span()
+    }
 
-/// Handles comment placement logic for if and while statements.
-fn handle_if_and_while_statement_comments<'a>(
-    mut end: u32,
-    comment_index: usize,
-    comments: &'a [Comment],
-    source_text: SourceText,
-) -> &'a [Comment] {
-    // Handle pattern: `if (a /* comment */) // trailing comment`
-    // Find the last comment that contains ')' between its end and the current end
-    for (idx, comment) in comments[..=comment_index].iter().enumerate().rev() {
-        if source_text.bytes_contain(comment.span.end, end, b')') {
-            return &comments[..=idx];
+    /// Temporarily limits the unprinted comments view to only those before the given position.
+    /// Returns the previous view limit to allow restoration.
+    pub fn limit_comments_up_to(&mut self, end_pos: u32) -> Option<usize> {
+        // Save the original limit for restoration
+        let original_limit = self.view_limit;
+
+        // Find the index of the first comment that starts at or after end_pos
+        // Using binary search would be more efficient for large comment arrays
+        let limit_index = self.comments[self.printed_count..]
+            .iter()
+            .position(|c| c.span.start >= end_pos)
+            .map_or(self.comments.len(), |idx| self.printed_count + idx);
+
+        // Only update if we're actually limiting the view
+        if limit_index < self.comments.len() {
+            self.view_limit = Some(limit_index);
         }
-        end = comment.span.start;
+
+        original_limit
     }
 
-    &[]
+    /// Restores the view limit to a previously saved value.
+    /// This is typically used after temporarily limiting the view with `limit_comments_up_to`.
+    #[inline]
+    pub fn restore_view_limit(&mut self, limit: Option<usize>) {
+        self.view_limit = limit;
+    }
 }

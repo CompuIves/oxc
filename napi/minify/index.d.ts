@@ -38,13 +38,38 @@ export interface CompressOptions {
    */
   dropDebugger?: boolean
   /**
-   * Drop unreferenced functions and variables.
+   * Pass `true` to drop unreferenced functions and variables.
    *
-   * Simple direct variable assignments do not count as references unless set to "keep_assign".
+   * Simple direct variable assignments do not count as references unless set to `keep_assign`.
+   * @default true
    */
-  unused?: true | false | 'keep_assign'
+  unused?: boolean | 'keep_assign'
   /** Keep function / class names. */
   keepNames?: CompressOptionsKeepNames
+  /**
+   * Join consecutive var, let and const statements.
+   *
+   * @default true
+   */
+  joinVars?: boolean
+  /**
+   * Join consecutive simple statements using the comma operator.
+   *
+   * `a; b` -> `a, b`
+   *
+   * @default true
+   */
+  sequences?: boolean
+  /**
+   * Set of label names to drop from the code.
+   *
+   * Labeled statements matching these names will be removed during minification.
+   *
+   * @default []
+   */
+  dropLabels?: Array<string>
+  /** Limit the maximum number of iterations for debugging purpose. */
+  maxIterations?: number
 }
 
 export interface CompressOptionsKeepNames {

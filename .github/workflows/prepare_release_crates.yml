@@ -15,12 +15,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: taiki-e/checkout-action@b13d20b7cda4e2f325ef19895128f7ff735c0b3d # v1.3.1
-      - uses: oxc-project/setup-rust@d286d43bc1f606abbd98096666ff8be68c8d5f57 # v1.0.2
+      - uses: oxc-project/setup-rust@1ff88fdaffd6ae35c0fb32ccc159340b37d0beac # v1.0.7
         with:
           cache-key: warm
           tools: cargo-release-oxc
       - run: cargo ck
-      - run: cargo publish --workspace --dry-run
+      - run: cargo release-oxc publish --release crates --dry-run
 
   prepare:
     needs: check
@@ -41,7 +41,7 @@ jobs:
     steps:
       - uses: taiki-e/checkout-action@b13d20b7cda4e2f325ef19895128f7ff735c0b3d # v1.3.1
 
-      - uses: peter-evans/create-or-update-comment@71345be0265236311c031f5c7866368bd1eff043 # v4
+      - uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
         id: comment
         with:
           token: ${{ secrets.GITHUB_TOKEN }}

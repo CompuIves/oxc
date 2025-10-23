@@ -4,6 +4,41 @@ All notable changes to this package will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0).
 
+## [0.95.0] - 2025-10-15
+
+### 🐛 Bug Fixes
+
+- 5e0ab1b tranformer_plugins: Define plugin need to add reference to scoping (#14615) (Boshen)
+
+
+## [0.94.0] - 2025-10-06
+
+### 🐛 Bug Fixes
+
+- 013e053 napi/transform: Fix define plugin not applying DCE correctly (#14264) (Boshen)
+
+
+## [0.93.0] - 2025-09-28
+
+### 🚀 Features
+
+- 5e05d1b semantic: Put jsdoc behind linter feature, remove runtime flag (#14140) (Boshen)
+
+
+## [0.92.0] - 2025-09-24
+
+### 🚀 Features
+
+- 0fe4d95 mangler: Mangle private class members (#14027) (sapphi-red)
+
+
+## [0.91.0] - 2025-09-22
+
+### 💼 Other
+
+- fb347da crates: V0.91.0 (#13961) (Boshen)
+
+
 
 
 

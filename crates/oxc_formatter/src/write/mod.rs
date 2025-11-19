@@ -12,6 +12,7 @@ mod class;
 mod decorators;
 mod export_declarations;
 mod function;
+mod function_type;
 mod import_declaration;
 mod import_expression;
 mod intersection_type;
@@ -72,7 +73,7 @@ use crate::{
         member_chain::MemberChain,
         object::format_property_key,
         statement_body::FormatStatementBody,
-        string_utils::{FormatLiteralStringToken, StringLiteralParentKind},
+        string::{FormatLiteralStringToken, StringLiteralParentKind},
         suppressed::FormatSuppressedNode,
     },
     write,
@@ -82,7 +83,8 @@ use crate::{
 use self::{
     array_expression::FormatArrayExpression,
     arrow_function_expression::is_multiline_template_starting_on_same_line,
-    class::format_grouped_parameters_with_return_type,
+    call_arguments::is_simple_module_import,
+    class::format_grouped_parameters_with_return_type_for_method,
     function::should_group_function_parameters,
     object_like::ObjectLike,
     object_pattern_like::ObjectPatternLike,
@@ -101,25 +103,25 @@ pub trait FormatWrite<'ast, T = ()> {
 
 impl<'a> FormatWrite<'a> for AstNode<'a, IdentifierName<'a>> {
     fn write(&self, f: &mut Formatter<'_, 'a>) -> FormatResult<()> {
-        write!(f, dynamic_text(self.name().as_str()))
+        write!(f, text_without_whitespace(self.name().as_str()))
     }
 }
 
 impl<'a> FormatWrite<'a> for AstNode<'a, IdentifierReference<'a>> {
     fn write(&self, f: &mut Formatter<'_, 'a>) -> FormatResult<()> {
-        write!(f, dynamic_text(self.name().as_str()))
+        write!(f, text_without_whitespace(self.name().as_str()))
     }
 }
 
 impl<'a> FormatWrite<'a> for AstNode<'a, BindingIdentifier<'a>> {
     fn write(&self, f: &mut Formatter<'_, 'a>) -> FormatResult<()> {
-        write!(f, dynamic_text(self.name().as_str()))
+        write!(f, text_without_whitespace(self.name().as_str()))
     }
 }
 
 impl<'a> FormatWrite<'a> for AstNode<'a, LabelIdentifier<'a>> {
     fn write(&self, f: &mut Formatter<'_, 'a>) -> FormatResult<()> {
-        write!(f, dynamic_text(self.name().as_str()))
+        write!(f, text_without_whitespace(self.name().as_str()))
     }
 }
 
@@ -190,7 +192,7 @@ impl<'a> FormatWrite<'a> for AstNode<'a, ObjectProperty<'a>> {
                 format_property_key(self.key(), f)?;
             }
 
-            format_grouped_parameters_with_return_type(
+            format_grouped_parameters_with_return_type_for_method(
                 value.type_parameters(),
                 value.this_param.as_deref(),
                 value.params(),
@@ -222,14 +224,13 @@ impl<'a> FormatWrite<'a> for AstNode<'a, CallExpression<'a>> {
             });
 
         if !is_template_literal_single_arg
-            && callee.as_member_expression().is_some_and(|e| {
-                matches!(
-                    e,
-                    MemberExpression::StaticMemberExpression(_)
-                        | MemberExpression::ComputedMemberExpression(_)
-                )
-            })
+            && matches!(
+                callee.as_ref(),
+                Expression::StaticMemberExpression(_) | Expression::ComputedMemberExpression(_)
+            )
             && !callee.needs_parentheses(f)
+            && !is_simple_module_import(self.arguments(), f.comments())
+            && !is_test_call_expression(self)
         {
             MemberChain::from_call_expression(self, f).fmt(f)
         } else {
@@ -252,13 +253,7 @@ impl<'a> FormatWrite<'a> for AstNode<'a, CallExpression<'a>> {
 
 impl<'a> FormatWrite<'a> for AstNode<'a, NewExpression<'a>> {
     fn write(&self, f: &mut Formatter<'_, 'a>) -> FormatResult<()> {
-        write!(f, ["new", space()]);
-        if self.type_arguments.is_some() {
-            write!(f, [self.callee()]);
-        } else {
-            write!(f, [FormatNodeWithoutTrailingComments(self.callee())]);
-        }
-        write!(f, [self.type_arguments(), self.arguments()])
+        write!(f, ["new", space(), self.callee(), self.type_arguments(), self.arguments()])
     }
 }
 
@@ -299,7 +294,7 @@ impl<'a> FormatWrite<'a> for AstNode<'a, UnaryExpression<'a>> {
         {
             write!(
                 f,
-                [group(&format_args!(text("("), soft_block_indent(self.argument()), text(")")))]
+                [group(&format_args!(token("("), soft_block_indent(self.argument()), token(")")))]
             )
         } else {
             write!(f, self.argument())
@@ -420,11 +415,9 @@ impl<'a> FormatWrite<'a> for AstNode<'a, AwaitExpression<'a>> {
         let format_inner = format_with(|f| write!(f, ["await", space(), self.argument()]));
 
         let is_callee_or_object = match self.parent {
-            AstNodes::CallExpression(_)
-            | AstNodes::NewExpression(_)
-            | AstNodes::StaticMemberExpression(_) => true,
+            AstNodes::StaticMemberExpression(_) => true,
             AstNodes::ComputedMemberExpression(member) => member.object.span() == self.span(),
-            _ => false,
+            _ => self.parent.is_call_like_callee_span(self.span),
         };
 
         if is_callee_or_object {
@@ -903,15 +896,23 @@ impl<'a> FormatWrite<'a> for AstNode<'a, WithStatement<'a>> {
 
 impl<'a> FormatWrite<'a> for AstNode<'a, LabeledStatement<'a>> {
     fn write(&self, f: &mut Formatter<'_, 'a>) -> FormatResult<()> {
-        let comments = f.context().comments().comments_before(self.body.span().start);
+        let comments = f.context().comments().line_comments_before(self.body.span().start);
         FormatLeadingComments::Comments(comments).fmt(f)?;
 
         let label = self.label();
         let body = self.body();
         write!(f, [label, ":"])?;
         if matches!(body.as_ref(), Statement::EmptyStatement(_)) {
-            // If the body is an empty statement, force semicolon insertion
-            write!(f, ";")
+            let empty_comments = f.context().comments().comments_before(self.span.end);
+            write!(
+                f,
+                [
+                    FormatTrailingComments::Comments(empty_comments),
+                    maybe_space(!empty_comments.is_empty()),
+                    // If the body is an empty statement, force semicolon insertion
+                    ";"
+                ]
+            )
         } else {
             write!(f, [space(), body])
         }
@@ -962,12 +963,7 @@ impl<'a> FormatWrite<'a> for AstNode<'a, AssignmentPattern<'a>> {
 
 impl<'a> FormatWrite<'a> for AstNode<'a, ObjectPattern<'a>> {
     fn write(&self, f: &mut Formatter<'_, 'a>) -> FormatResult<()> {
-        if matches!(self.parent, AstNodes::FormalParameter(param) if param.pattern.type_annotation.is_some())
-        {
-            FormatNodeWithoutTrailingComments(&ObjectPatternLike::ObjectPattern(self)).fmt(f)
-        } else {
-            ObjectPatternLike::ObjectPattern(self).fmt(f)
-        }
+        ObjectPatternLike::ObjectPattern(self).fmt(f)
     }
 }
 
@@ -1081,9 +1077,7 @@ impl<'a> FormatWrite<'a> for AstNode<'a, BigIntLiteral<'a>> {
     fn write(&self, f: &mut Formatter<'_, 'a>) -> FormatResult<()> {
         write!(
             f,
-            dynamic_text(
-                f.context().allocator().alloc_str(&self.raw().unwrap().cow_to_ascii_lowercase())
-            )
+            text(f.context().allocator().alloc_str(&self.raw().unwrap().cow_to_ascii_lowercase()))
         )
     }
 }
@@ -1097,7 +1091,7 @@ impl<'a> FormatWrite<'a> for AstNode<'a, RegExpLiteral<'a>> {
         flags.sort_unstable();
         let flags = flags.iter().collect::<String>();
         let s = StringBuilder::from_strs_array_in([pattern, "/", &flags], f.context().allocator());
-        write!(f, dynamic_text(s.into_str(),))
+        write!(f, text(s.into_str()))
     }
 }
 
@@ -1210,16 +1204,7 @@ impl<'a> FormatWrite<'a> for AstNode<'a, TSTypeOperator<'a>> {
 
 impl<'a> FormatWrite<'a> for AstNode<'a, TSArrayType<'a>> {
     fn write(&self, f: &mut Formatter<'_, 'a>) -> FormatResult<()> {
-        if let AstNodes::TSUnionType(union) = self.element_type().as_ast_nodes() {
-            // `TSUnionType` has special logic for comments, so we need to delegate to it.
-            union.fmt(f)?;
-        } else {
-            FormatNodeWithoutTrailingComments(self.element_type()).fmt(f)?;
-        }
-        let comments =
-            f.context().comments().comments_before_character(self.element_type.span().end, b'[');
-        FormatTrailingComments::Comments(comments).fmt(f)?;
-        write!(f, ["[]"])
+        write!(f, [self.element_type(), "[]"])
     }
 }
 
@@ -1532,14 +1517,14 @@ impl<'a> Format<'a> for FormatTSSignature<'a, '_> {
         match f.options().semicolons {
             Semicolons::Always => {
                 if self.last {
-                    write!(f, [if_group_breaks(&text(";"))])?;
+                    write!(f, [if_group_breaks(&token(";"))])?;
                 } else {
-                    text(";").fmt(f)?;
+                    token(";").fmt(f)?;
                 }
             }
             Semicolons::AsNeeded => {
                 if !self.last {
-                    write!(f, [if_group_fits_on_line(&text(";"))])?;
+                    write!(f, [if_group_fits_on_line(&token(";"))])?;
                 }
             }
         }
@@ -1561,63 +1546,6 @@ impl<'a> Format<'a> for AstNode<'a, Vec<'a, TSSignature<'a>>> {
     }
 }
 
-impl<'a> FormatWrite<'a> for AstNode<'a, TSCallSignatureDeclaration<'a>> {
-    fn write(&self, f: &mut Formatter<'_, 'a>) -> FormatResult<()> {
-        format_grouped_parameters_with_return_type(
-            self.type_parameters(),
-            None,
-            self.params(),
-            self.return_type(),
-            f,
-        )
-    }
-}
-
-impl<'a> FormatWrite<'a> for AstNode<'a, TSMethodSignature<'a>> {
-    fn write(&self, f: &mut Formatter<'_, 'a>) -> FormatResult<()> {
-        match self.kind() {
-            TSMethodSignatureKind::Method => {}
-            TSMethodSignatureKind::Get => {
-                write!(f, ["get", space()])?;
-            }
-            TSMethodSignatureKind::Set => {
-                write!(f, ["set", space()])?;
-            }
-        }
-        if self.computed() {
-            write!(f, "[")?;
-        }
-        write!(f, self.key())?;
-        if self.computed() {
-            write!(f, "]")?;
-        }
-        if self.optional() {
-            write!(f, "?")?;
-        }
-
-        format_grouped_parameters_with_return_type(
-            self.type_parameters(),
-            self.this_param.as_deref(),
-            self.params(),
-            self.return_type(),
-            f,
-        )
-    }
-}
-
-impl<'a> FormatWrite<'a> for AstNode<'a, TSConstructSignatureDeclaration<'a>> {
-    fn write(&self, f: &mut Formatter<'_, 'a>) -> FormatResult<()> {
-        write!(f, ["new", space()])?;
-        format_grouped_parameters_with_return_type(
-            self.type_parameters(),
-            None,
-            self.params(),
-            self.return_type(),
-            f,
-        )
-    }
-}
-
 impl<'a> Format<'a> for AstNode<'a, Vec<'a, TSInterfaceHeritage<'a>>> {
     fn fmt(&self, f: &mut Formatter<'_, 'a>) -> FormatResult<()> {
         let last_index = self.len().saturating_sub(1);
@@ -1628,6 +1556,7 @@ impl<'a> Format<'a> for AstNode<'a, Vec<'a, TSInterfaceHeritage<'a>>> {
             .enumerate()
         {
             if i == last_index {
+                // The trailing comments of the last heritage should be printed inside the interface declaration
                 joiner.entry(&FormatNodeWithoutTrailingComments(&heritage));
             } else {
                 joiner.entry(&heritage);
@@ -1663,9 +1592,7 @@ impl<'a> FormatWrite<'a> for AstNode<'a, TSModuleDeclaration<'a>> {
             write!(f, ["declare", space()])?;
         }
 
-        if !self.kind.is_global() {
-            write!(f, self.kind().as_str())?;
-        }
+        write!(f, self.kind().as_str())?;
 
         write!(f, [space(), self.id()])?;
 
@@ -1695,6 +1622,17 @@ impl<'a> FormatWrite<'a> for AstNode<'a, TSModuleDeclaration<'a>> {
         }
 
         Ok(())
+    }
+}
+
+impl<'a> FormatWrite<'a> for AstNode<'a, TSGlobalDeclaration<'a>> {
+    fn write(&self, f: &mut Formatter<'_, 'a>) -> FormatResult<()> {
+        if self.declare {
+            write!(f, ["declare", space()])?;
+        }
+        let comments_before_global = f.context().comments().comments_before(self.global_span.start);
+        write!(f, FormatLeadingComments::Comments(comments_before_global))?;
+        write!(f, ["global", space(), self.body()])
     }
 }
 
@@ -1734,10 +1672,39 @@ impl<'a> FormatWrite<'a> for AstNode<'a, TSTypeQuery<'a>> {
 
 impl<'a> FormatWrite<'a> for AstNode<'a, TSImportType<'a>> {
     fn write(&self, f: &mut Formatter<'_, 'a>) -> FormatResult<()> {
-        write!(f, ["import(", self.argument()])?;
-        if let Some(options) = &self.options() {
-            write!(f, [",", space(), options])?;
+        write!(f, ["import("])?;
+
+        let has_comment = f.context().comments().has_comment_before(self.argument.span().start);
+
+        let format_argument = self.argument().memoized();
+        let format_options = self.options().memoized();
+
+        if has_comment || self.options().is_some() {
+            let format_inner = format_with(|f| {
+                write!(
+                    f,
+                    [
+                        format_argument,
+                        &format_once(|f| {
+                            if self.options.is_some() {
+                                write!(f, [",", soft_line_break_or_space(), format_options])?;
+                            }
+                            Ok(())
+                        }),
+                    ]
+                )
+            });
+            if has_comment {
+                write!(f, [&soft_block_indent(&format_inner)])?;
+            } else if self.options().is_some() {
+                write!(f, [best_fitting!(format_inner, &soft_block_indent(&format_inner))])?;
+            } else {
+                write!(f, [format_inner])?;
+            }
+        } else {
+            write!(f, self.argument())?;
         }
+
         write!(f, ")")?;
         if let Some(qualified_name) = &self.qualifier() {
             write!(f, [".", qualified_name])?;
@@ -1749,62 +1716,6 @@ impl<'a> FormatWrite<'a> for AstNode<'a, TSImportType<'a>> {
 impl<'a> FormatWrite<'a> for AstNode<'a, TSImportTypeQualifiedName<'a>> {
     fn write(&self, f: &mut Formatter<'_, 'a>) -> FormatResult<()> {
         write!(f, [self.left(), ".", self.right()])
-    }
-}
-
-impl<'a> FormatWrite<'a> for AstNode<'a, TSFunctionType<'a>> {
-    fn write(&self, f: &mut Formatter<'_, 'a>) -> FormatResult<()> {
-        let format_inner = format_with(|f| {
-            let type_parameters = self.type_parameters();
-            write!(f, type_parameters)?;
-
-            let params = self.params();
-            let return_type = self.return_type();
-            let mut format_parameters = params.memoized();
-            let mut format_return_type = return_type.memoized();
-
-            // Inspect early, in case the `return_type` is formatted before `parameters`
-            // in `should_group_function_parameters`.
-            format_parameters.inspect(f)?;
-
-            let group_parameters = should_group_function_parameters(
-                type_parameters.map(AsRef::as_ref),
-                params.items.len()
-                    + usize::from(params.rest.is_some())
-                    + usize::from(self.this_param.is_some()),
-                Some(&self.return_type),
-                &mut format_return_type,
-                f,
-            )?;
-
-            if group_parameters {
-                write!(f, [group(&format_parameters)])
-            } else {
-                write!(f, [format_parameters])
-            }?;
-
-            write!(f, [space(), format_return_type])
-        });
-
-        write!(f, group(&format_inner))
-    }
-}
-
-impl<'a> FormatWrite<'a> for AstNode<'a, TSConstructorType<'a>> {
-    fn write(&self, f: &mut Formatter<'_, 'a>) -> FormatResult<()> {
-        let r#abstract = self.r#abstract();
-        let type_parameters = self.type_parameters();
-        let params = self.params();
-        let return_type = self.return_type();
-
-        if r#abstract {
-            write!(f, ["abstract", space()])?;
-        }
-        write!(
-            f,
-            [group(&format_args!("new", space(), type_parameters, params, space(), return_type))]
-        );
-        Ok(())
     }
 }
 
@@ -1830,9 +1741,9 @@ impl<'a> FormatWrite<'a> for AstNode<'a, TSTypeAssertion<'a>> {
                     format_args!(
                         format_cast,
                         group(&format_args!(
-                            text("("),
+                            token("("),
                             block_indent(&format_expression),
-                            text(")")
+                            token(")")
                         ))
                     ),
                     format_args!(format_cast, format_expression)

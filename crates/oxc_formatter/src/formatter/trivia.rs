@@ -61,7 +61,6 @@ use oxc_ast::{
     ast::{CallExpression, NewExpression},
 };
 use oxc_span::{GetSpan, Span};
-use oxc_syntax::comment_node;
 
 use crate::write;
 
@@ -207,36 +206,35 @@ impl<'a> Format<'a> for FormatTrailingComments<'a> {
                 // trailing comment for `2`. We can simulate the above by checking
                 // if this a comment on its own line; normal trailing comments are
                 // always at the end of another expression.
-                if total_lines_before > 0 {
+                if total_lines_before > 0
+                    || previous_comment.is_some_and(|comment| comment.is_line())
+                {
                     write!(
                         f,
-                        [
-                            line_suffix(&format_with(|f| {
-                                match lines_before {
-                                    _ if should_nestle => {}
-                                    0 => {
-                                        // If the comment is immediately following a block-like comment,
-                                        // then it can stay on the same line with just a space between.
-                                        // Otherwise, it gets a hard break.
-                                        //
-                                        //   [>* hello <] // hi
-                                        //   [>*
-                                        //    * docs
-                                        //   */ [> still on the same line <]
-                                        if previous_comment.copied().is_some_and(Comment::is_line) {
-                                            write!(f, [hard_line_break()])?;
-                                        } else {
-                                            write!(f, [space()])?;
-                                        }
+                        [line_suffix(&format_with(|f| {
+                            match lines_before {
+                                _ if should_nestle => {}
+                                0 => {
+                                    // If the comment is immediately following a block-like comment,
+                                    // then it can stay on the same line with just a space between.
+                                    // Otherwise, it gets a hard break.
+                                    //
+                                    //   [>* hello <] // hi
+                                    //   [>*
+                                    //    * docs
+                                    //   */ [> still on the same line <]
+                                    if previous_comment.copied().is_some_and(Comment::is_line) {
+                                        write!(f, [hard_line_break()])?;
+                                    } else {
+                                        write!(f, [space()])?;
                                     }
-                                    1 => write!(f, [hard_line_break()])?,
-                                    _ => write!(f, [empty_line()])?,
                                 }
+                                1 => write!(f, [hard_line_break()])?,
+                                _ => write!(f, [empty_line()])?,
+                            }
 
-                                write!(f, [comment])
-                            })),
-                            expand_parent()
-                        ]
+                            write!(f, [comment])
+                        }))]
                     )?;
                 } else {
                     let content =
@@ -472,7 +470,7 @@ impl<'a> Format<'a> for Comment {
 
             // `is_alignable_comment` only returns `true` for multiline comments
             let first_line = lines.next().unwrap();
-            write!(f, [dynamic_text(first_line.trim_end())])?;
+            write!(f, [text(first_line.trim_end())])?;
 
             source_offset += first_line.len() as u32;
 
@@ -481,14 +479,14 @@ impl<'a> Format<'a> for Comment {
                 f,
                 [&format_once(|f| {
                     for line in lines {
-                        write!(f, [hard_line_break(), " ", dynamic_text(line.trim())])?;
+                        write!(f, [hard_line_break(), " ", text(line.trim())])?;
                         source_offset += line.len() as u32;
                     }
                     Ok(())
                 })]
             )
         } else {
-            write!(f, [dynamic_text(source_text)])
+            write!(f, [text(source_text)])
         }
     }
 }

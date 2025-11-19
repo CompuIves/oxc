@@ -3,6 +3,7 @@ use oxc_diagnostics::OxcDiagnostic;
 use oxc_macros::declare_oxc_lint;
 use oxc_semantic::Semantic;
 use oxc_span::{GetSpan, Span};
+use schemars::JsonSchema;
 use serde_json::Value;
 
 use crate::{
@@ -18,8 +19,10 @@ fn max_nested_callbacks_diagnostic(num: usize, max: usize, span: Span) -> OxcDia
         .with_label(span)
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, JsonSchema)]
+#[serde(rename_all = "camelCase", default)]
 pub struct MaxNestedCallbacks {
+    /// The `max` enforces a maximum depth that callbacks can be nested.
     max: usize,
 }
 
@@ -80,30 +83,10 @@ declare_oxc_lint!(
     ///     foo5();
     /// }
     /// ```
-    ///
-    /// ### Options
-    ///
-    /// #### max
-    ///
-    /// `{ type: number, default: 10 }`
-    ///
-    /// The `max` enforces a maximum depth that callbacks can be nested.
-    ///
-    /// Example:
-    ///
-    /// ```json
-    /// "eslint/max-nested-callbacks": ["error", 10]
-    ///
-    /// "eslint/max-nested-callbacks": [
-    ///   "error",
-    ///   {
-    ///     max: 10
-    ///   }
-    /// ]
-    /// ```
     MaxNestedCallbacks,
     eslint,
-    pedantic
+    pedantic,
+    config = MaxNestedCallbacks,
 );
 
 impl Rule for MaxNestedCallbacks {
@@ -146,7 +129,7 @@ fn is_callback<'a>(node: &AstNode<'a>, semantic: &Semantic<'a>) -> bool {
     is_function_node(node)
         && matches!(
             iter_outer_expressions(semantic.nodes(), node.id()).next(),
-            Some(AstKind::Argument(_))
+            Some(AstKind::CallExpression(_))
         )
 }
 

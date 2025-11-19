@@ -4,6 +4,76 @@ All notable changes to this package will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0).
 
+## [0.98.0] - 2025-11-17
+
+### 💥 BREAKING CHANGES
+
+- b2af6b5 ast: [**BREAKING**] Remove AstKind for Argument (#13902) (taearls)
+
+### 🚀 Features
+
+- 8a61cfd allocator, ast: Introduce `UnstableAddress` trait (#15700) (overlookmotel)
+
+### 🐛 Bug Fixes
+
+- e0728fa ast: Exclude comment end position from `is_inside_comment` check (#15753) (camc314)
+- 440a977 ast: Include rest properties when using `get_binding_identifiers` (#15710) (camc314)
+
+### ⚡ Performance
+
+- d8d4e31 ast: Use loop instead of recursion in `TSModuleDeclarationBody::as_module_block_mut` (#15713) (overlookmotel)
+
+### 📚 Documentation
+
+- e033d50 ast: Clarify behavior of `TSModuleDeclaration::has_use_strict_directive` (#15730) (overlookmotel)
+
+## [0.97.0] - 2025-11-11
+
+### 🚀 Features
+
+- 8d69661 allocator: Add `Address::from_ref` method (#15318) (overlookmotel)
+- 977a6a0 ast: Implement `GetAddress` for `ModuleDeclarationKind` and `PropertyKeyKind` (#15313) (overlookmotel)
+- 682dca2 parser: Add more helps to parser errors (#15186) (sapphi-red)
+
+### 🐛 Bug Fixes
+
+- 40231a6 linter/plugins, napi/parser: Add `parent` field to `FormalParameterRest` and `TSParameterProperty` in TS type defs (#15337) (overlookmotel)
+- 7f079ab ast/estree: Fix raw transfer deserializer for `AssignmentTargetPropertyIdentifier` (#15304) (overlookmotel)
+- d92451e ast/estree: Correct raw transfer deserializer for `FormalParameter` (#15302) (overlookmotel)
+- 75c9164 ast: Treat `TSEmptyBodyFunctionExpression` as expression in Function::is_expression (#14945) (Liang Mi)
+
+### 📚 Documentation
+
+- 3dc24b5 linter,minifier: Always refer as "ES Modules" instead of "ES6 Modules" (#15409) (sapphi-red)
+
+## [0.96.0] - 2025-10-30
+
+### 🚀 Features
+
+- b063e0e ast: Add `is_inside_comment` method (#14907) (camc314)
+- bec7a7d semantic: Add scope to `TSConstructorType` (#14676) (camc314)
+- f45d2f0 semantic: Add scope to `TSCallSignatureDeclaration` (#14672) (camc314)
+
+### 🐛 Bug Fixes
+
+- 47d8db1 linter/plugins: Prevent `comments` being accessed after file is linted (#14727) (overlookmotel)
+- be94bfd semantic: Add scope tracking for `with` statements (#14652) (Boshen)
+- 84b2605 linter/plugins: Remove `parent` property from comments (#14624) (overlookmotel)
+
+### 🚜 Refactor
+
+- 14de671 linter/plugins: Simplify `comments` getter (#14728) (overlookmotel)
+- 2b14abc napi/parser: Shorten raw transfer deserializer for `Comment` (#14623) (overlookmotel)
+
+### ⚡ Performance
+
+- 58ba6d6 linter/plugins: Lazy deserialize comments array (#14637) (Arsh)
+
+### 🎨 Styling
+
+- 3029dfb linter/plugins: Reorder code (#14725) (overlookmotel)
+
+
 ## [0.95.0] - 2025-10-15
 
 ### 🚀 Features

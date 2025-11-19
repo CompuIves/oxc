@@ -1,7 +1,7 @@
 import { writeFile } from 'node:fs/promises';
 import { join as pathJoin } from 'node:path';
 import { bench, describe } from 'vitest';
-import { parseSyncRaw } from './src-js/bindings.js';
+import { parseRawSync } from './src-js/bindings.js';
 import { parseAsync, parseSync } from './src-js/index.js';
 
 // Internals
@@ -23,7 +23,8 @@ let fixtureUrls = [
 ];
 
 // For sharding in CI - specify single fixture to run benchmarks on
-let benchStandard = bench, benchRaw = bench;
+let benchStandard = bench,
+  benchRaw = bench;
 let shard = process.env.SHARD;
 if (shard) {
   shard *= 1;
@@ -41,21 +42,23 @@ if (shard) {
 const cacheDirPath = pathJoin(import.meta.dirname, '../../target');
 
 // Load fixtures
-const fixtures = await Promise.all(fixtureUrls.map(async (url) => {
-  const filename = url.split('/').at(-1),
-    path = pathJoin(cacheDirPath, filename);
+const fixtures = await Promise.all(
+  fixtureUrls.map(async (url) => {
+    const filename = url.split('/').at(-1),
+      path = pathJoin(cacheDirPath, filename);
 
-  let code;
-  try {
-    code = await readFile(path, 'utf8');
-  } catch {
-    const res = await fetch(url);
-    code = await res.text();
-    await writeFile(path, code);
-  }
+    let code;
+    try {
+      code = await readFile(path, 'utf8');
+    } catch {
+      const res = await fetch(url);
+      code = await res.text();
+      await writeFile(path, code);
+    }
 
-  return { filename, code };
-}));
+    return { filename, code };
+  }),
+);
 
 // Run benchmarks
 for (const { filename, code } of fixtures) {
@@ -91,13 +94,13 @@ for (const { filename, code } of fixtures) {
 
     benchRaw('parser_napi_raw_no_deser', () => {
       const { buffer, sourceByteLen } = prepareRaw(code);
-      parseSyncRaw(filename, buffer, sourceByteLen, {});
+      parseRawSync(filename, buffer, sourceByteLen, {});
       returnBufferToCache(buffer);
     });
 
     // Prepare buffer but don't deserialize
     const { buffer, sourceByteLen } = prepareRaw(code);
-    parseSyncRaw(filename, buffer, sourceByteLen, {});
+    parseRawSync(filename, buffer, sourceByteLen, {});
     const deserialize = isJsAst(buffer) ? deserializeJS : deserializeTS;
 
     benchRaw('parser_napi_raw_deser_only', () => {

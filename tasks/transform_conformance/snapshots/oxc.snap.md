@@ -1,6 +1,6 @@
-commit: 41d96516
+commit: c92c4919
 
-Passed: 188/317
+Passed: 198/329
 
 # All Passed:
 * babel-plugin-transform-class-static-block
@@ -18,6 +18,7 @@ Passed: 188/317
 * babel-plugin-transform-react-jsx-self
 * babel-plugin-transform-react-jsx-source
 * regexp
+* plugin-tagged-template-transform
 
 
 # babel-plugin-transform-explicit-resource-management (2/4)
@@ -68,7 +69,7 @@ after transform: SymbolId(0): [ReferenceId(0), ReferenceId(2), ReferenceId(6), R
 rebuilt        : SymbolId(0): [ReferenceId(0), ReferenceId(2), ReferenceId(6), ReferenceId(10)]
 
 
-# babel-plugin-transform-typescript (6/28)
+# babel-plugin-transform-typescript (6/30)
 * allow-declare-fields-false/input.ts
 Unresolved references mismatch:
 after transform: ["dce"]
@@ -227,6 +228,52 @@ rebuilt        : SymbolId(2): [ReferenceId(7)]
 Symbol flags mismatch for "AnimalSize":
 after transform: SymbolId(6): SymbolFlags(RegularEnum)
 rebuilt        : SymbolId(4): SymbolFlags(FunctionScopedVariable)
+
+* enum-template-literal-number/input.ts
+Bindings mismatch:
+after transform: ScopeId(1): ["NUM_1", "NUM_2", "NUM_3", "NUM_4", "NumberEnum"]
+rebuilt        : ScopeId(1): ["NumberEnum"]
+Scope flags mismatch:
+after transform: ScopeId(1): ScopeFlags(0x0)
+rebuilt        : ScopeId(1): ScopeFlags(Function)
+Bindings mismatch:
+after transform: ScopeId(2): ["COMPUTED_1", "COMPUTED_2", "ComputedEnum"]
+rebuilt        : ScopeId(2): ["ComputedEnum"]
+Scope flags mismatch:
+after transform: ScopeId(2): ScopeFlags(0x0)
+rebuilt        : ScopeId(2): ScopeFlags(Function)
+Symbol flags mismatch for "NumberEnum":
+after transform: SymbolId(0): SymbolFlags(RegularEnum)
+rebuilt        : SymbolId(0): SymbolFlags(FunctionScopedVariable)
+Symbol reference IDs mismatch for "NumberEnum":
+after transform: SymbolId(0): [ReferenceId(0), ReferenceId(1), ReferenceId(2), ReferenceId(3), ReferenceId(13)]
+rebuilt        : SymbolId(0): [ReferenceId(9)]
+Symbol flags mismatch for "ComputedEnum":
+after transform: SymbolId(5): SymbolFlags(RegularEnum)
+rebuilt        : SymbolId(2): SymbolFlags(FunctionScopedVariable)
+
+* enum-template-literal-trailing-quasi/input.ts
+Bindings mismatch:
+after transform: ScopeId(1): ["A", "B", "NumberEnum"]
+rebuilt        : ScopeId(1): ["NumberEnum"]
+Scope flags mismatch:
+after transform: ScopeId(1): ScopeFlags(0x0)
+rebuilt        : ScopeId(1): ScopeFlags(Function)
+Bindings mismatch:
+after transform: ScopeId(2): ["C", "ComputedEnum", "D"]
+rebuilt        : ScopeId(2): ["ComputedEnum"]
+Scope flags mismatch:
+after transform: ScopeId(2): ScopeFlags(0x0)
+rebuilt        : ScopeId(2): ScopeFlags(Function)
+Symbol flags mismatch for "NumberEnum":
+after transform: SymbolId(0): SymbolFlags(RegularEnum)
+rebuilt        : SymbolId(0): SymbolFlags(FunctionScopedVariable)
+Symbol reference IDs mismatch for "NumberEnum":
+after transform: SymbolId(0): [ReferenceId(0), ReferenceId(1), ReferenceId(2), ReferenceId(8)]
+rebuilt        : SymbolId(0): [ReferenceId(5)]
+Symbol flags mismatch for "ComputedEnum":
+after transform: SymbolId(3): SymbolFlags(RegularEnum)
+rebuilt        : SymbolId(2): SymbolFlags(FunctionScopedVariable)
 
 * export-elimination/input.ts
 Bindings mismatch:
@@ -853,6 +900,7 @@ rebuilt        : SymbolId(1): Span { start: 6, end: 13 }
    :   ^^
  7 |   method();
    `----
+  help: Move this after all the overloads
 
 
 * oxc/metadata/unbound-type-reference/input.ts
@@ -1099,12 +1147,13 @@ rebuilt        : ["babelHelpers", "dec"]
 
 * typescript/constructor/parameter/decoratorOnClassConstructorParameter4/input.ts
 
-  x Expected `,` but found `@`
+  x Expected `,` or `)` but found `@`
    ,-[tasks/transform_conformance/tests/legacy-decorators/test/fixtures/typescript/constructor/parameter/decoratorOnClassConstructorParameter4/input.ts:6:24]
  5 | class C {
  6 |     constructor(public @dec p: number) {}
-   :                        |
-   :                        `-- `,` expected
+   :                |       |
+   :                |       `-- `,` or `)` expected
+   :                `-- Opened here
  7 | }
    `----
 
@@ -1520,6 +1569,7 @@ rebuilt        : ["babelHelpers", "dec"]
    :     ^^^^
  7 |     method()
    `----
+  help: Move this after all the overloads
 
 
 * typescript/method/decoratorOnClassMethodOverload2/input.ts

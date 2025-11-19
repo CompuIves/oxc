@@ -1,3 +1,6 @@
+use schemars::JsonSchema;
+use serde::Deserialize;
+
 use oxc_ast::{AstKind, ast::Expression};
 use oxc_diagnostics::OxcDiagnostic;
 use oxc_macros::declare_oxc_lint;
@@ -5,7 +8,7 @@ use oxc_span::{CompactStr, GetSpan, Span};
 
 use crate::{
     context::LintContext,
-    rule::Rule,
+    rule::{DefaultRuleConfig, Rule},
     utils::{JestFnKind, JestGeneralFnKind, PossibleJestNode, is_type_of_jest_fn_call},
 };
 
@@ -16,8 +19,10 @@ fn unexpected_hook_diagonsitc(span: Span) -> OxcDiagnostic {
 #[derive(Debug, Default, Clone)]
 pub struct NoHooks(Box<NoHooksConfig>);
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, JsonSchema, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
 pub struct NoHooksConfig {
+    /// An array of hook function names that are permitted for use.
     allow: Vec<CompactStr>,
 }
 
@@ -81,18 +86,15 @@ declare_oxc_lint!(
     NoHooks,
     jest,
     style,
+    config = NoHooksConfig,
 );
 
 impl Rule for NoHooks {
     fn from_configuration(value: serde_json::Value) -> Self {
-        let allow = value
-            .get(0)
-            .and_then(|config| config.get("allow"))
-            .and_then(serde_json::Value::as_array)
-            .map(|v| v.iter().filter_map(serde_json::Value::as_str).map(CompactStr::from).collect())
-            .unwrap_or_default();
-
-        Self(Box::new(NoHooksConfig { allow }))
+        let config = serde_json::from_value::<DefaultRuleConfig<NoHooksConfig>>(value)
+            .unwrap_or_default()
+            .into_inner();
+        Self(Box::new(config))
     }
 
     fn run_on_jest_node<'a, 'c>(

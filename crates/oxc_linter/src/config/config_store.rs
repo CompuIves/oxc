@@ -17,23 +17,13 @@ use super::{
 };
 
 // TODO: support `categories` et. al. in overrides.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ResolvedLinterState {
     // TODO: Arc + Vec -> SyncVec? It would save a pointer dereference.
     pub rules: Arc<[(RuleEnum, AllowWarnDeny)]>,
     pub config: Arc<LintConfig>,
 
     pub external_rules: Arc<[(ExternalRuleId, AllowWarnDeny)]>,
-}
-
-impl Clone for ResolvedLinterState {
-    fn clone(&self) -> Self {
-        Self {
-            rules: Arc::clone(&self.rules),
-            config: Arc::clone(&self.config),
-            external_rules: Arc::clone(&self.external_rules),
-        }
-    }
 }
 
 #[derive(Debug, Default, Clone)]
@@ -157,6 +147,7 @@ impl Config {
         let mut env = self.base.config.env.clone();
         let mut globals = self.base.config.globals.clone();
         let mut plugins = self.base.config.plugins;
+        let settings = self.base.config.settings.clone();
 
         for override_config in overrides_to_apply.clone() {
             if let Some(override_plugins) = override_config.plugins {
@@ -244,6 +235,7 @@ impl Config {
         let config: Arc<LintConfig> = if plugins == self.base.config.plugins
             && env == self.base.config.env
             && globals == self.base.config.globals
+            && settings == self.base.config.settings
         {
             Arc::clone(&self.base.config)
         } else {
@@ -252,6 +244,7 @@ impl Config {
             config.plugins = plugins;
             config.env = env;
             config.globals = globals;
+            config.settings = settings;
             Arc::new(config)
         };
 
@@ -1013,7 +1006,7 @@ mod test {
         let base_rules = vec![
             (RuleEnum::EslintCurly(EslintCurly::default()), AllowWarnDeny::Deny),
             (
-                RuleEnum::TypescriptNoMisusedPromises(TypescriptNoMisusedPromises),
+                RuleEnum::TypescriptNoMisusedPromises(TypescriptNoMisusedPromises::default()),
                 AllowWarnDeny::Deny,
             ),
         ];

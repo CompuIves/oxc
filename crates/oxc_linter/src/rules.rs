@@ -215,6 +215,7 @@ pub(crate) mod typescript {
     pub mod no_base_to_string;
     pub mod no_confusing_non_null_assertion;
     pub mod no_confusing_void_expression;
+    pub mod no_deprecated;
     pub mod no_duplicate_enum_values;
     pub mod no_duplicate_type_constituents;
     pub mod no_dynamic_delete;
@@ -265,6 +266,7 @@ pub(crate) mod typescript {
     pub mod prefer_enum_initializers;
     pub mod prefer_for_of;
     pub mod prefer_function_type;
+    pub mod prefer_includes;
     pub mod prefer_literal_enum_member;
     pub mod prefer_namespace_keyword;
     pub mod prefer_promise_reject_errors;
@@ -278,6 +280,7 @@ pub(crate) mod typescript {
     pub mod restrict_plus_operands;
     pub mod restrict_template_expressions;
     pub mod return_await;
+    pub mod strict_boolean_expressions;
     pub mod switch_exhaustiveness_check;
     pub mod triple_slash_reference;
     pub mod unbound_method;
@@ -378,6 +381,7 @@ pub(crate) mod react {
     pub mod require_render_return;
     pub mod rules_of_hooks;
     pub mod self_closing_comp;
+    pub mod state_in_constructor;
     pub mod style_prop_object;
     pub mod void_dom_elements_no_children;
 }
@@ -442,6 +446,7 @@ pub(crate) mod unicorn {
     pub mod no_unnecessary_slice_end;
     pub mod no_unreadable_array_destructuring;
     pub mod no_unreadable_iife;
+    pub mod no_useless_collection_argument;
     pub mod no_useless_error_capture_stack_trace;
     pub mod no_useless_fallback_in_spread;
     pub mod no_useless_length_check;
@@ -486,6 +491,7 @@ pub(crate) mod unicorn {
     pub mod prefer_query_selector;
     pub mod prefer_reflect_apply;
     pub mod prefer_regexp_test;
+    pub mod prefer_response_static_json;
     pub mod prefer_set_has;
     pub mod prefer_set_size;
     pub mod prefer_spread;
@@ -1051,6 +1057,7 @@ oxc_macros::declare_all_lint_rules! {
     react::require_render_return,
     react::rules_of_hooks,
     react::self_closing_comp,
+    react::state_in_constructor,
     react::style_prop_object,
     react::void_dom_elements_no_children,
     react_perf::jsx_no_jsx_as_prop,
@@ -1076,6 +1083,7 @@ oxc_macros::declare_all_lint_rules! {
     typescript::no_base_to_string,
     typescript::no_confusing_non_null_assertion,
     typescript::no_confusing_void_expression,
+    typescript::no_deprecated,
     typescript::no_duplicate_enum_values,
     typescript::no_duplicate_type_constituents,
     typescript::no_dynamic_delete,
@@ -1123,6 +1131,7 @@ oxc_macros::declare_all_lint_rules! {
     typescript::prefer_enum_initializers,
     typescript::prefer_for_of,
     typescript::prefer_function_type,
+    typescript::prefer_includes,
     typescript::prefer_literal_enum_member,
     typescript::prefer_namespace_keyword,
     typescript::prefer_promise_reject_errors,
@@ -1136,6 +1145,7 @@ oxc_macros::declare_all_lint_rules! {
     typescript::restrict_plus_operands,
     typescript::restrict_template_expressions,
     typescript::return_await,
+    typescript::strict_boolean_expressions,
     typescript::switch_exhaustiveness_check,
     typescript::triple_slash_reference,
     typescript::unbound_method,
@@ -1154,6 +1164,7 @@ oxc_macros::declare_all_lint_rules! {
     unicorn::new_for_builtins,
     unicorn::no_unnecessary_array_splice_count,
     unicorn::no_array_callback_reference,
+    unicorn::no_useless_collection_argument,
     unicorn::no_useless_error_capture_stack_trace,
     unicorn::no_array_sort,
     unicorn::no_array_reverse,
@@ -1204,6 +1215,7 @@ oxc_macros::declare_all_lint_rules! {
     unicorn::numeric_separators_style,
     unicorn::prefer_classlist_toggle,
     unicorn::prefer_class_fields,
+    unicorn::prefer_response_static_json,
     unicorn::prefer_top_level_await,
     unicorn::prefer_at,
     unicorn::prefer_global_this,
@@ -1260,12 +1272,12 @@ oxc_macros::declare_all_lint_rules! {
     vitest::prefer_to_be_object,
     vitest::prefer_to_be_truthy,
     vitest::require_local_test_context_for_concurrent_snapshots,
-    vue::define_props_destructuring,
     vue::define_emits_declaration,
     vue::define_props_declaration,
+    vue::define_props_destructuring,
     vue::max_props,
-    vue::no_import_compiler_macros,
     vue::no_export_in_script_setup,
+    vue::no_import_compiler_macros,
     vue::no_multiple_slot_args,
     vue::no_required_prop_with_default,
     vue::prefer_import_from_vue,

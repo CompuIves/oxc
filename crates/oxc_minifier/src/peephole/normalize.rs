@@ -15,6 +15,7 @@ use crate::{
 pub struct NormalizeOptions {
     pub convert_while_to_fors: bool,
     pub convert_const_to_let: bool,
+    pub remove_unnecessary_use_strict: bool,
 }
 
 /// Normalize AST
@@ -53,7 +54,7 @@ impl<'a> Normalize {
 
 impl<'a> Traverse<'a, MinifierState<'a>> for Normalize {
     fn exit_program(&mut self, node: &mut Program<'a>, _ctx: &mut TraverseCtx<'a>) {
-        if node.source_type.is_module() {
+        if self.options.remove_unnecessary_use_strict && node.source_type.is_module() {
             node.directives.drain_filter(|d| d.directive.as_str() == "use strict");
         }
     }
@@ -118,7 +119,9 @@ impl<'a> Traverse<'a, MinifierState<'a>> for Normalize {
     }
 
     fn exit_function_body(&mut self, body: &mut FunctionBody<'a>, ctx: &mut TraverseCtx<'a>) {
-        Self::remove_unused_use_strict_directive(body, ctx);
+        if self.options.remove_unnecessary_use_strict {
+            Self::remove_unused_use_strict_directive(body, ctx);
+        }
     }
 }
 
@@ -178,7 +181,11 @@ impl<'a> Normalize {
     fn convert_const_to_let(decl: &mut VariableDeclaration<'a>, ctx: &TraverseCtx<'a>) {
         // checking whether the current scope is the root scope instead of
         // checking whether any variables are exposed to outside (e.g. `export` in ESM)
-        if decl.kind.is_const() && ctx.current_scope_id() != ctx.scoping().root_scope_id() {
+        if decl.kind.is_const()
+            && ctx.current_scope_id() != ctx.scoping().root_scope_id()
+            // direct eval may have a assignment inside
+            && !ctx.current_scope_flags().contains_direct_eval()
+        {
             let all_declarations_are_only_read =
                 decl.declarations.iter().flat_map(|d| d.id.get_binding_identifiers()).all(|id| {
                     ctx.scoping()
@@ -429,6 +436,7 @@ mod test {
         test_same("const x = 1"); // keep top-level (can be replaced with "let" if it's ESM and not exported)
         test("{ const x = 1 }", "{ let x = 1 }");
         test_same("{ const x = 1; x = 2 }"); // keep assign error
+        test_same("{ const x = 1; eval('x = 2') }"); // keep assign error
         test("{ const x = 1, y = 2 }", "{ let x = 1, y = 2 }");
         test("{ const { x } = { x: 1 } }", "{ let { x } = { x: 1 } }");
         test("{ const [x] = [1] }", "{ let [x] = [1] }");
@@ -436,6 +444,8 @@ mod test {
         test("for (const x in y);", "for (let x in y);");
         // TypeError: Assignment to constant variable.
         test_same("for (const i = 0; i < 1; i++);");
+        test_same("{ const { a, ...b } = foo; b = 123; }");
+        test_same("{ const [a, ...b] = foo; b = 123; }");
         test_same("for (const x in [1, 2, 3]) x++");
         test_same("for (const x of [1, 2, 3]) x++");
         test("{ let foo; const bar = undefined; }", "{ let foo, bar; }");

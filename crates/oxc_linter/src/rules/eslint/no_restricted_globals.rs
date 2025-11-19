@@ -3,6 +3,7 @@ use oxc_diagnostics::OxcDiagnostic;
 use oxc_macros::declare_oxc_lint;
 use oxc_span::Span;
 use rustc_hash::FxHashMap;
+use schemars::JsonSchema;
 use serde_json::Value;
 
 use crate::{AstNode, context::LintContext, rule::Rule};
@@ -17,8 +18,12 @@ fn no_restricted_globals(global_name: &str, suffix: &str, span: Span) -> OxcDiag
     OxcDiagnostic::warn(warn_text).with_label(span)
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, JsonSchema)]
+#[serde(rename_all = "camelCase", default)]
 pub struct NoRestrictedGlobals {
+    /// Objects in the format
+    /// `{ "name": "event", "message": "Use local parameter instead." }`, which define what globals
+    /// are restricted from use.
     restricted_globals: Box<FxHashMap<String, String>>,
 }
 
@@ -54,6 +59,7 @@ declare_oxc_lint!(
     NoRestrictedGlobals,
     eslint,
     restriction,
+    config = NoRestrictedGlobals,
 );
 
 impl Rule for NoRestrictedGlobals {
@@ -62,7 +68,7 @@ impl Rule for NoRestrictedGlobals {
             Value::Array(arr) => arr.iter().fold(FxHashMap::default(), |mut acc, v| match v {
                 // "no-restricted-globals": ["error", "event"]
                 Value::String(name) => {
-                    acc.insert(name.to_string(), String::new());
+                    acc.insert(name.clone(), String::new());
                     acc
                 }
                 // "no-restricted-globals": ["error", { "name": "event", "message": "Use local parameter instead." }]

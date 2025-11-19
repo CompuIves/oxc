@@ -1,8 +1,11 @@
+use std::fmt::Display;
+
 use bitflags::bitflags;
+use cow_utils::CowUtils;
 use oxc_allocator::Vec;
 use oxc_ast::ast::TSAccessibility;
 use oxc_diagnostics::OxcDiagnostic;
-use oxc_span::{GetSpan, SPAN, Span};
+use oxc_span::Span;
 
 use crate::{
     ParserImpl, diagnostics,
@@ -30,10 +33,11 @@ bitflags! {
       const ACCESSOR      = 1 << 14;
       const EXPORT        = 1 << 15;
       const ACCESSIBILITY = Self::PRIVATE.bits() | Self::PROTECTED.bits() | Self::PUBLIC.bits();
+      const TYPE_PARAM    = Self::CONST.bits() | Self::IN.bits() | Self::OUT.bits();
   }
 }
 
-/// It is the caller's safety to always check by `Kind::is_modifier_kind`
+/// It is the caller's responsibility to always check by `Kind::is_modifier_kind`
 /// before converting [`Kind`] to [`ModifierFlags`] so that we can assume here that
 /// the conversion always succeeds.
 impl From<Kind> for ModifierFlags {
@@ -94,6 +98,18 @@ impl ModifierFlags {
             return Some(TSAccessibility::Private);
         }
         None
+    }
+}
+
+impl Display for ModifierFlags {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for (i, (name, _)) in self.iter_names().enumerate() {
+            if i != 0 {
+                write!(f, ", ")?;
+            }
+            write!(f, "{}", name.cow_to_lowercase())?;
+        }
+        Ok(())
     }
 }
 
@@ -159,7 +175,22 @@ impl<'a> Modifiers<'a> {
     ///  `modifiers`. E.g., if `modifiers` is empty, then so is `flags``.
     #[must_use]
     pub(crate) fn new(modifiers: Option<Vec<'a, Modifier>>, flags: ModifierFlags) -> Self {
-        debug_assert_eq!(modifiers.is_none(), flags.is_empty());
+        // Debug check that `modifiers` and `flags` are consistent with each other
+        #[cfg(debug_assertions)]
+        {
+            if let Some(modifiers) = &modifiers {
+                assert!(!modifiers.is_empty());
+
+                let mut found_flags = ModifierFlags::empty();
+                for modifier in modifiers {
+                    found_flags |= ModifierFlags::from(modifier.kind);
+                }
+                assert_eq!(found_flags, flags);
+            } else {
+                assert!(flags.is_empty());
+            }
+        }
+
         Self { modifiers, flags }
     }
 
@@ -169,6 +200,10 @@ impl<'a> Modifiers<'a> {
 
     pub fn contains(&self, target: ModifierKind) -> bool {
         self.flags.contains(target.into())
+    }
+
+    pub fn contains_all_flags(&self, flags: ModifierFlags) -> bool {
+        self.flags.contains(flags)
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &Modifier> + '_ {
@@ -207,16 +242,6 @@ impl<'a> Modifiers<'a> {
     #[inline]
     pub fn contains_override(&self) -> bool {
         self.flags.contains(ModifierFlags::OVERRIDE)
-    }
-}
-
-impl GetSpan for Modifiers<'_> {
-    fn span(&self) -> Span {
-        let Some(modifiers) = &self.modifiers else { return SPAN };
-        debug_assert!(!modifiers.is_empty());
-        // SAFETY: One of Modifier's invariants is that Some(modifiers) always
-        // contains a non-empty Vec; otherwise it must be `None`.
-        unsafe { modifiers.iter().map(|m| m.span).reduce(Span::merge).unwrap_unchecked() }
     }
 }
 
@@ -260,6 +285,7 @@ impl ModifierKind {
         }
     }
 }
+
 impl TryFrom<Kind> for ModifierKind {
     type Error = ();
 
@@ -479,18 +505,42 @@ impl<'a> ParserImpl<'a> {
         }
     }
 
+    #[inline]
     pub(crate) fn verify_modifiers<F>(
         &mut self,
         modifiers: &Modifiers<'a>,
         allowed: ModifierFlags,
-        diagnose: F,
+        // If `true`, `allowed` is exact match; if `false`, `allowed` is a superset.
+        // Used for whether to pass `allowed` to `create_diagnostic` function.
+        strict: bool,
+        create_diagnostic: F,
     ) where
-        F: Fn(&Modifier) -> OxcDiagnostic,
+        F: Fn(&Modifier, Option<ModifierFlags>) -> OxcDiagnostic,
     {
-        for modifier in modifiers.iter() {
-            if !allowed.contains(modifier.kind.into()) {
-                self.error(diagnose(modifier));
+        if modifiers.flags.intersects(!allowed) {
+            // Invalid modifiers are rare, so handle this case in `#[cold]` function.
+            // Also `#[inline(never)]` to help `verify_modifiers` to get inlined.
+            #[cold]
+            #[inline(never)]
+            fn report<'a, F>(
+                parser: &mut ParserImpl<'a>,
+                modifiers: &Modifiers<'a>,
+                allowed: ModifierFlags,
+                strict: bool,
+                create_diagnostic: F,
+            ) where
+                F: Fn(&Modifier, Option<ModifierFlags>) -> OxcDiagnostic,
+            {
+                let mut found_invalid_modifier = false;
+                for modifier in modifiers.iter() {
+                    if !allowed.contains(ModifierFlags::from(modifier.kind)) {
+                        parser.error(create_diagnostic(modifier, strict.then_some(allowed)));
+                        found_invalid_modifier = true;
+                    }
+                }
+                debug_assert!(found_invalid_modifier);
             }
+            report(self, modifiers, allowed, strict, create_diagnostic);
         }
     }
 }

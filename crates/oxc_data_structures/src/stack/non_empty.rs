@@ -1,5 +1,5 @@
 use std::{
-    mem::size_of,
+    marker::PhantomData,
     ops::{Deref, DerefMut},
     ptr::NonNull,
 };
@@ -77,6 +77,8 @@ pub struct NonEmptyStack<T> {
     start: NonNull<T>,
     /// Pointer to end of allocation
     end: NonNull<T>,
+    /// Inform compiler that `NonEmptyStack<T>` owns `T`s
+    _marker: PhantomData<T>,
 }
 
 impl<T> StackCapacity<T> for NonEmptyStack<T> {}
@@ -122,9 +124,8 @@ impl<T> StackCommon<T> for NonEmptyStack<T> {
         // When stack has 1 entry, `start - cursor == 0`, so add 1 to get number of entries.
         // SAFETY: Capacity cannot exceed `Self::MAX_CAPACITY`, which is `<= isize::MAX`,
         // and offset can't exceed capacity, so `+ 1` cannot wrap around.
-        // `checked_add(1).unwrap_unchecked()` instead of just `+ 1` to hint to compiler
-        // that return value can never be zero.
-        unsafe { offset.checked_add(1).unwrap_unchecked() }
+        // `unchecked_add(1)` instead of just `+ 1` to hint to compiler that return value can never be zero.
+        unsafe { offset.unchecked_add(1) }
     }
 }
 
@@ -197,7 +198,7 @@ impl<T> NonEmptyStack<T> {
     ///
     /// # SAFETY
     /// * `capacity_bytes` must not be 0.
-    /// * `capacity_bytes` must be a multiple of `mem::size_of::<T>()`.
+    /// * `capacity_bytes` must be a multiple of `size_of::<T>()`.
     /// * `capacity_bytes` must not exceed [`Self::MAX_CAPACITY_BYTES`].
     #[inline]
     unsafe fn new_with_capacity_bytes_unchecked(capacity_bytes: usize, initial_value: T) -> Self {
@@ -213,7 +214,7 @@ impl<T> NonEmptyStack<T> {
         unsafe { start.as_ptr().write(initial_value) };
 
         // `cursor` is positioned at start i.e. pointing at initial value
-        Self { cursor: start, start, end }
+        Self { cursor: start, start, end, _marker: PhantomData }
     }
 
     /// Get reference to first value on stack.

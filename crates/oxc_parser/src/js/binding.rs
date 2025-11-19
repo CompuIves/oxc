@@ -41,9 +41,11 @@ impl<'a> ParserImpl<'a> {
     /// Section 14.3.3 Object Binding Pattern
     fn parse_object_binding_pattern(&mut self) -> BindingPatternKind<'a> {
         let span = self.start_span();
+        let opening_span = self.cur_token().span();
         self.expect(Kind::LCurly);
         let (list, rest) = self.parse_delimited_list_with_rest(
             Kind::RCurly,
+            opening_span,
             Self::parse_binding_property,
             diagnostics::binding_rest_element_last,
         );
@@ -67,9 +69,11 @@ impl<'a> ParserImpl<'a> {
     /// Section 14.3.3 Array Binding Pattern
     fn parse_array_binding_pattern(&mut self) -> BindingPatternKind<'a> {
         let span = self.start_span();
+        let opening_span = self.cur_token().span();
         self.expect(Kind::LBrack);
         let (list, rest) = self.parse_delimited_list_with_rest(
             Kind::RBrack,
+            opening_span,
             Self::parse_array_binding_element,
             diagnostics::binding_rest_element_last,
         );
@@ -130,6 +134,7 @@ impl<'a> ParserImpl<'a> {
 
         let mut shorthand = false;
         let is_binding_identifier = self.cur_kind().is_binding_identifier();
+        let key_cur_kind = self.cur_kind();
         let (key, computed) = self.parse_property_name();
 
         let value = if is_binding_identifier && !self.at(Kind::Colon) {
@@ -138,6 +143,7 @@ impl<'a> ParserImpl<'a> {
             //       ^ BindingIdentifier
             if let PropertyKey::StaticIdentifier(ident) = &key {
                 shorthand = true;
+                self.check_identifier_with_span(key_cur_kind, self.ctx, ident.span);
                 let identifier =
                     self.ast.binding_pattern_kind_binding_identifier(ident.span, ident.name);
                 let left = self.ast.binding_pattern(identifier, NONE, false);

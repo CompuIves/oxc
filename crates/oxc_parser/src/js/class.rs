@@ -96,6 +96,7 @@ impl<'a> ParserImpl<'a> {
         self.verify_modifiers(
             modifiers,
             ModifierFlags::DECLARE | ModifierFlags::ABSTRACT,
+            true,
             diagnostics::modifier_cannot_be_used_here,
         );
 
@@ -127,17 +128,19 @@ impl<'a> ParserImpl<'a> {
                         self.error(diagnostics::extends_clause_already_seen(
                             self.cur_token().span(),
                         ));
-                    } else if implements.is_some() {
+                    } else if let Some((implements_span, _)) = implements {
                         self.error(diagnostics::extends_clause_must_precede_implements(
                             self.cur_token().span(),
+                            implements_span,
                         ));
                     }
                     extends = Some(self.parse_extends_clause());
                 }
                 Kind::Implements => {
-                    if implements.is_some() {
+                    if let Some((implements_span, _)) = implements {
                         self.error(diagnostics::implements_clause_already_seen(
                             self.cur_token().span(),
+                            implements_span,
                         ));
                     }
                     let implements_kw_span = self.cur_token().span();
@@ -221,22 +224,27 @@ impl<'a> ParserImpl<'a> {
             /* permit_const_as_modifier */ true,
             /* stop_on_start_of_class_static_block */ true,
         );
-        self.verify_modifiers(
-            &modifiers,
-            ModifierFlags::all() - ModifierFlags::EXPORT,
-            diagnostics::cannot_appear_on_class_elements,
-        );
 
         // static { block }
         if self.at(Kind::Static) && self.lexer.peek_token().kind() == Kind::LCurly {
             for decorator in decorators {
                 self.error(diagnostics::decorators_are_not_valid_here(decorator.span));
             }
-            for modifier in modifiers.iter() {
-                self.error(diagnostics::modifiers_cannot_appear_here(modifier.span));
-            }
+            self.verify_modifiers(
+                &modifiers,
+                ModifierFlags::empty(),
+                false,
+                diagnostics::modifiers_cannot_appear_here,
+            );
             return self.parse_class_static_block(span);
         }
+
+        self.verify_modifiers(
+            &modifiers,
+            !ModifierFlags::EXPORT,
+            false,
+            diagnostics::cannot_appear_on_class_elements,
+        );
 
         let r#abstract = modifiers.contains(ModifierKind::Abstract);
 
@@ -278,19 +286,29 @@ impl<'a> ParserImpl<'a> {
                 self.error(diagnostics::decorators_are_not_valid_here(decorator.span));
             }
 
-            let mut has_seen_readonly_modifier = false;
-            for modifier in modifiers.iter() {
-                match modifier.kind {
-                    ModifierKind::Readonly => has_seen_readonly_modifier = true,
-                    ModifierKind::Static => {
-                        if has_seen_readonly_modifier {
-                            self.error(diagnostics::modifier_must_precede_other_modifier(
-                                modifier,
-                                ModifierKind::Readonly,
-                            ));
+            // No modifiers except `static` and `readonly` are valid here, and they must appear in that order
+            self.verify_modifiers(
+                &modifiers,
+                ModifierFlags::READONLY | ModifierFlags::STATIC,
+                true,
+                diagnostics::cannot_appear_on_an_index_signature,
+            );
+            if modifiers.contains_all_flags(ModifierFlags::READONLY | ModifierFlags::STATIC) {
+                // Has both `readonly` and `static` modifiers. Make sure `static` comes before `readonly`.
+                let mut has_seen_readonly_modifier = false;
+                for modifier in modifiers.iter() {
+                    match modifier.kind {
+                        ModifierKind::Readonly => has_seen_readonly_modifier = true,
+                        ModifierKind::Static => {
+                            if has_seen_readonly_modifier {
+                                self.error(diagnostics::modifier_must_precede_other_modifier(
+                                    modifier,
+                                    ModifierKind::Readonly,
+                                ));
+                            }
                         }
+                        _ => {}
                     }
-                    _ => self.error(diagnostics::cannot_appear_on_an_index_signature(modifier)),
                 }
             }
 
@@ -315,9 +333,21 @@ impl<'a> ParserImpl<'a> {
     }
 
     fn parse_class_element_name(&mut self, modifiers: &Modifiers<'a>) -> (PropertyKey<'a>, bool) {
-        if let Some(modifier) = modifiers.iter().find(|m| m.kind == ModifierKind::Const) {
-            self.error(diagnostics::const_class_member(modifier.span));
-        }
+        self.verify_modifiers(
+            modifiers,
+            !(ModifierFlags::CONST | ModifierFlags::IN | ModifierFlags::OUT),
+            false,
+            |modifier, _| {
+                match modifier.kind {
+                    ModifierKind::Const => diagnostics::const_class_member(modifier.span),
+                    ModifierKind::In | ModifierKind::Out => {
+                        diagnostics::can_only_appear_on_a_type_parameter_of_a_class_interface_or_type_alias(modifier.kind, modifier.span)
+                    }
+                    _ => unreachable!(),
+                }
+            },
+        );
+
         match self.cur_kind() {
             Kind::PrivateIdentifier => {
                 let private_ident = self.parse_private_identifier();
@@ -325,7 +355,8 @@ impl<'a> ParserImpl<'a> {
                 if self.is_ts {
                     self.verify_modifiers(
                         modifiers,
-                        ModifierFlags::all() - ModifierFlags::ACCESSIBILITY,
+                        !ModifierFlags::ACCESSIBILITY,
+                        false,
                         diagnostics::accessibility_modifier_on_private_property,
                     );
                 }
@@ -372,6 +403,7 @@ impl<'a> ParserImpl<'a> {
                 | ModifierFlags::STATIC
                 | ModifierFlags::ABSTRACT
                 | ModifierFlags::OVERRIDE,
+            true,
             diagnostics::accessor_modifier,
         );
         self.ast.class_element_accessor_property(
@@ -419,7 +451,8 @@ impl<'a> ParserImpl<'a> {
         self.check_method_definition_accessor(&method_definition);
         self.verify_modifiers(
             modifiers,
-            ModifierFlags::all() - ModifierFlags::ASYNC - ModifierFlags::DECLARE,
+            !(ModifierFlags::ASYNC | ModifierFlags::DECLARE),
+            false,
             diagnostics::modifier_cannot_be_used_here,
         );
         ClassElement::MethodDefinition(method_definition)
@@ -492,21 +525,36 @@ impl<'a> ParserImpl<'a> {
         let optional = optional_span.is_some();
 
         if generator || matches!(self.cur_kind(), Kind::LParen | Kind::LAngle) {
-            for modifier in modifiers.iter() {
-                match modifier.kind {
-                    ModifierKind::Declare => {
-                        self.error(diagnostics::cannot_appear_on_class_elements(modifier));
-                    }
+            self.verify_modifiers(
+                modifiers,
+                !(ModifierFlags::DECLARE | ModifierFlags::READONLY),
+                false,
+                |modifier, _| match modifier.kind {
+                    ModifierKind::Declare => diagnostics::cannot_appear_on_class_elements(
+                        modifier,
+                        Some(
+                            ModifierFlags::ACCESSIBILITY
+                                | ModifierFlags::STATIC
+                                | ModifierFlags::ABSTRACT
+                                | ModifierFlags::OVERRIDE
+                                | ModifierFlags::ASYNC,
+                        ),
+                    ),
                     ModifierKind::Readonly => {
-                        self.error(
-                            diagnostics::modifier_only_on_property_declaration_or_index_signature(
-                                modifier,
+                        diagnostics::modifier_only_on_property_declaration_or_index_signature(
+                            modifier,
+                            Some(
+                                ModifierFlags::ACCESSIBILITY
+                                    | ModifierFlags::STATIC
+                                    | ModifierFlags::ABSTRACT
+                                    | ModifierFlags::OVERRIDE
+                                    | ModifierFlags::ASYNC,
                             ),
-                        );
+                        )
                     }
-                    _ => {}
-                }
-            }
+                    _ => unreachable!(),
+                },
+            );
             return self.parse_method_declaration(
                 span, r#type, generator, name, computed, optional, modifiers, decorators,
             );
@@ -651,7 +699,10 @@ impl<'a> ParserImpl<'a> {
         if let Some(rest) = &function.params.rest {
             self.error(diagnostics::setter_with_rest_parameter(rest.span));
         } else if function.params.parameters_count() != 1 {
-            self.error(diagnostics::setter_with_parameters(function.params.span));
+            self.error(diagnostics::setter_with_parameters(
+                function.params.span,
+                function.params.parameters_count(),
+            ));
         } else if self.is_ts
             && function.params.items.first().unwrap().pattern.kind.is_assignment_pattern()
         {

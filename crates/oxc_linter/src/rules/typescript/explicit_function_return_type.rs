@@ -10,6 +10,8 @@ use oxc_macros::declare_oxc_lint;
 use oxc_span::{CompactStr, GetSpan, Span};
 use oxc_syntax::operator::UnaryOperator;
 use rustc_hash::FxHashSet;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     AstNode,
@@ -24,15 +26,24 @@ use crate::{
 #[derive(Debug, Default, Clone)]
 pub struct ExplicitFunctionReturnType(Box<ExplicitFunctionReturnTypeConfig>);
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", default)]
 pub struct ExplicitFunctionReturnTypeConfig {
+    /// Whether to allow expressions as function return types. When `true`, allows functions that immediately return an expression without a return type annotation.
     allow_expressions: bool,
+    /// Whether to allow typed function expressions. When `true`, allows function expressions that are assigned to a typed variable or parameter.
     allow_typed_function_expressions: bool,
+    /// Whether to allow arrow functions that use `as const` assertion on their return value.
     allow_direct_const_assertion_in_arrow_functions: bool,
+    /// Whether to allow concise arrow functions that start with the `void` keyword.
     allow_concise_arrow_function_expressions_starting_with_void: bool,
+    /// Whether to allow functions that do not have generic type parameters.
     allow_functions_without_type_parameters: bool,
+    /// Array of function names that are exempt from requiring return type annotations.
     allowed_names: FxHashSet<CompactStr>,
+    /// Whether to allow higher-order functions (functions that return another function) without return type annotations.
     allow_higher_order_functions: bool,
+    /// Whether to allow immediately invoked function expressions (IIFEs) without return type annotations.
     allow_iifes: bool,
 }
 
@@ -123,6 +134,7 @@ declare_oxc_lint!(
     ExplicitFunctionReturnType,
     typescript,
     restriction,
+    config = ExplicitFunctionReturnTypeConfig,
 );
 
 fn explicit_function_return_type_diagnostic(span: Span) -> OxcDiagnostic {
@@ -207,7 +219,7 @@ impl Rule for ExplicitFunctionReturnType {
                     }
                 }
 
-                if let Some(parent) = get_parent_node(node, ctx) {
+                if let Some(parent) = outermost_paren_parent(node, ctx) {
                     match parent.kind() {
                         AstKind::MethodDefinition(def) => {
                             ctx.diagnostic(explicit_function_return_type_diagnostic(Span::new(
@@ -276,7 +288,7 @@ impl Rule for ExplicitFunctionReturnType {
                     return;
                 }
 
-                if let Some(parent) = get_parent_node(node, ctx) {
+                if let Some(parent) = outermost_paren_parent(node, ctx) {
                     match parent.kind() {
                         AstKind::MethodDefinition(def) => {
                             ctx.diagnostic(explicit_function_return_type_diagnostic(Span::new(
@@ -370,7 +382,7 @@ impl ExplicitFunctionReturnType {
         node: &AstNode<'a>,
         ctx: &LintContext<'a>,
     ) -> bool {
-        let Some(parent) = get_parent_node(node, ctx) else { return false };
+        let Some(parent) = outermost_paren_parent(node, ctx) else { return false };
         match parent.kind() {
             AstKind::VariableDeclarator(decl) => {
                 let BindingPatternKind::BindingIdentifier(id) = &decl.id.kind else {
@@ -528,19 +540,8 @@ fn is_setter(node: &AstNode) -> bool {
     }
 }
 
-fn get_parent_node<'a, 'b>(
-    node: &'b AstNode<'a>,
-    ctx: &'b LintContext<'a>,
-) -> Option<&'b AstNode<'a>> {
-    let parent = outermost_paren_parent(node, ctx)?;
-    match parent.kind() {
-        AstKind::Argument(_) => outermost_paren_parent(parent, ctx),
-        _ => Some(parent),
-    }
-}
-
 fn check_typed_function_expression<'a>(node: &AstNode<'a>, ctx: &LintContext<'a>) -> bool {
-    let Some(parent) = get_parent_node(node, ctx) else { return false };
+    let Some(parent) = outermost_paren_parent(node, ctx) else { return false };
     is_typed_parent(parent, Some(node))
         || is_property_of_object_with_type(parent, ctx)
         || is_constructor_argument(parent)
@@ -624,7 +625,7 @@ fn is_function(expr: &Expression) -> bool {
 }
 
 fn ancestor_has_return_type<'a>(node: &AstNode<'a>, ctx: &LintContext<'a>) -> bool {
-    let Some(parent) = get_parent_node(node, ctx) else { return false };
+    let Some(parent) = outermost_paren_parent(node, ctx) else { return false };
 
     if let AstKind::ObjectProperty(prop) = parent.kind()
         && let Expression::ArrowFunctionExpression(func) = &prop.value
@@ -729,7 +730,7 @@ fn is_property_of_object_with_type(node: &AstNode, ctx: &LintContext) -> bool {
     if !matches!(parent.kind(), AstKind::ObjectExpression(_)) {
         return false;
     }
-    let Some(obj_expr_parent) = get_parent_node(parent, ctx) else {
+    let Some(obj_expr_parent) = outermost_paren_parent(parent, ctx) else {
         return false;
     };
     is_typed_parent(obj_expr_parent, None) || is_property_of_object_with_type(obj_expr_parent, ctx)

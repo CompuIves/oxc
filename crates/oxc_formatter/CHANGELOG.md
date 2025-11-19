@@ -4,6 +4,131 @@ All notable changes to this package will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0).
 
+## [0.14.0] - 2025-11-17
+
+### 🚀 Features
+
+- 84de1ca oxlint,oxfmt: Allow comments and also commas for vscode-json-ls (#15612) (leaysgur)
+- 25a0163 formatter/sort_imports: Sort imports by `Array<Array<string>>` groups (#15578) (leaysgur)
+
+### 🐛 Bug Fixes
+
+- bf20cf5 formatter: `CRLF` issue in the member chain (#15764) (Dunqing)
+- 5d688a0 formatter: Measuring multiline text in `fits_text` is incorrect (#15762) (Dunqing)
+- e306958 formatter: Regression case for test call (#15760) (Dunqing)
+- c42d983 formatter: Re-fix all cases that fail after `AstNode::Argument` was removed (#15676) (Dunqing)
+
+### ⚡ Performance
+
+- 128e186 formatter/sort_imports: Precompute import metadata (#15580) (leaysgur)
+- cd31cc1 formatter/sort_imports: Use `Vec::with_capacity` for `next_elements` (#15579) (leaysgur)
+
+## [0.12.0] - 2025-11-10
+
+### 🚀 Features
+
+- 33ad374 oxfmt: Disable embedded formatting by default for alpha (#15402) (leaysgur)
+- 5708126 formatter/sort_imports: Add `options.newlinesBetween` (#15369) (leaysgur)
+- 2dfc3bd formatter: Remove `Tag::StartVerbatim` and `Tag::EndVerbatim` (#15370) (Dunqing)
+- 88c7530 formatter: Remove `FormatElement::LocatedTokenText` (#15367) (Dunqing)
+
+### 🐛 Bug Fixes
+
+- d32d22e formatter: Correct `FormatElement` size check (#15461) (Dunqing)
+- b0f43f9 formatter: Test call difference (#15356) (Dunqing)
+- 01f20f3 formatter: Incorrect comment checking logic for grouping argument (#15354) (Dunqing)
+
+### ⚡ Performance
+
+- f4b75b6 formatter: Pre-allocate enough space for the FormatElement buffer (#15422) (Dunqing)
+- 5a61189 formatter: Avoid unnecessary allocation for `BinaryLikeExpression` (#15467) (Dunqing)
+- 064f835 formatter: Optimize printing call arguments (#15464) (Dunqing)
+- 29f35b2 formatter: Reuse previous indent stack in `FitsMeasurer` (#15416) (Dunqing)
+- 2515045 formatter: Use CodeBuffer's built-in print_indent to print indentation (#15406) (Dunqing)
+- 681607b formatter: Check the `Text` to see whether it has multiple lines based on its width (#15405) (Dunqing)
+- b92deb4 formatter: Replace String buffer with byte-oriented CodeBuffer (#14752) (Boshen)
+- 963b87f formatter: Add `text_without_whitespace` for text that can never have whitespace (#15403) (Dunqing)
+- f30ce4b formatter: Optimize formatting literal string (#15380) (Dunqing)
+- 8f25a0e formatter: Memorize text width for `FormatElement::Text` (#15372) (Dunqing)
+- f913543 formatter: Avoid allocation for `SyntaxTokenCowSlice` (#15366) (Dunqing)
+- 98c9234 formatter: Optimize `FormatElement::Token` printing (#15365) (Dunqing)
+
+
+## [0.10.0] - 2025-11-04
+
+### 🚀 Features
+
+- 505252c formatter: Wrap parenthesis for AssignmentExpression that is a key of `PropertyDefinition` (#15243) (Dunqing)
+- 880b259 formatter: Align import-like formatting the same as Prettier (#15238) (Dunqing)
+- b77f254 oxfmt,formatter: Support `embeddedLanguageFormatting` option (#15216) (leaysgur)
+- 898d6fe oxfmt: Add embedded language formatting with Prettier integration (#14820) (Boshen)
+- e77a48e formatter: Detect code removal feature (#15059) (leaysgur)
+
+### 🐛 Bug Fixes
+
+- 46793d7 formatter: Correct printing comments for `LabeledStatement` (#15260) (Dunqing)
+- 831ae99 formatter: Multiple comments in `LogicalExpression` and `TSIntersectionType` (#15253) (Dunqing)
+- 5fa9b1e formatter: Should not indent `BinaryLikeExpression` when it is an argument of `Boolean` (#15250) (Dunqing)
+- 99e520f formatter: Handle chain expression for `JSXExpressionContainer` (#15242) (Dunqing)
+- a600bf5 formatter: Correct printing comments for `TaggedTemplateExpression` (#15241) (Dunqing)
+- a7289e7 formatter: Handle member chain for the call's parent is a chain expression (#15237) (Dunqing)
+
+### 🚜 Refactor
+
+- 36ae721 formatter: Simplify the use of `indent` with `soft_line_break_or_space` (#15254) (Dunqing)
+- cdd8e2f formatter/sort-imports: Split sort_imports modules (#15189) (leaysgur)
+- 85fb8e8 formatter/sort-imports: Pass options to is_ignored() (#15181) (leaysgur)
+
+### 🧪 Testing
+
+- 9d5b34b formatter/sort-imports: Refactor sort_imports tests (#15188) (leaysgur)
+
+
+## [0.9.0] - 2025-10-30
+
+### 🚀 Features
+
+- 8fe7e85 formatter: Support printing Formatter IR (#14855) (Dunqing)
+
+### 🐛 Bug Fixes
+
+- a6b6ef8 formatter: Correct calculating layout for `TSNonNullExpression` in `StaticMemberExpression` (#15065) (Dunqing)
+- 99bd995 formatter: Print parenthesis for sequence expression in `ReturnStatement` and `ExpressionStatement` (#15062) (Dunqing)
+- f3fb998 formatter: Correct printing comments for `TSAsExpression` (#15061) (Dunqing)
+- 1e4a018 formatter: Correct checking of the short argument for `CallArguments` (#15055) (Dunqing)
+- c0dfd9b formatter: Print comments before fat arrow as-is for `ArrowFunctionExpression` (#15050) (Dunqing)
+- 206b519 formatter: Should hug parameter with `TSMappedType` type annotation (#15049) (Dunqing)
+- e48c604 formatter: Incorrect formatting of a function with `this` parameter (#15031) (Dunqing)
+- a9f0c45 formatter: Decorators and class method on the same line shouldn't be broken by a leading comment of the method (#15029) (Dunqing)
+- 43d74e4 formatter: Handle `<CRLF>` for `SourceText` (#15016) (leaysgur)
+- 34fab40 formatter: Correct calculating layout for `ChainExpression` in `StaticMemberExpression` (#14986) (Dunqing)
+- 68dc101 formatter: Should not break when the parent of root of `StaticMemberExpression` is used as the `Argument` of `NewExpression` (#14985) (Dunqing)
+- 071b739 formatter: Align the short argument handling for UnaryExpression with Prettier (#14984) (Dunqing)
+- 3940f3a formatter: `BestFitting` doesn't exactly matches the `conditinalGroup` behavior in Prettier (#14983) (Dunqing)
+- 4a84e44 formatter: Align the logic of printing type parameters, parameters, and return type for functions with Prettier (#14942) (Dunqing)
+- 68c1f2a formatter: Non-nested static member expressions will never break (#14929) (Dunqing)
+- 42adc47 formatter: Check whether a type alias is complex when its right hand side never break (#14928) (Dunqing)
+- e501f13 formatter: Should not add a trailing comma for long curried calls when `trailingComma` is es5 (#14913) (Dunqing)
+
+### 🚜 Refactor
+
+- 7d64291 formatter: Simplify printing ClassElement with a semicolon (#15030) (Dunqing)
+- 5de99c2 formatter: Export unified way to get_parse_options (#15027) (leaysgur)
+- f6f22e2 formatter: Clean up unneeded implementations for printing comments (#14935) (Dunqing)
+- 7a2b9d1 formatter: Improve printing trailing comments (#14934) (Dunqing)
+- ba10caa formatter: Align printing trailing comments with Prettier (#14927) (Dunqing)
+- 597c9e8 formatter: Remove redundunt public API (#14915) (leaysgur)
+
+### ⚡ Performance
+
+- 467b3a1 formatter: Optimize grouping logic for call arguments (#15033) (Dunqing)
+
+### 💼 Other
+
+- aceff66 oxfmt: V0.9.0 (#15088) (Boshen)
+
+
+
 ## [0.8.0] - 2025-10-22
 
 ### 🚀 Features

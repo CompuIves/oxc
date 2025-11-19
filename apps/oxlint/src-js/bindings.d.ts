@@ -2,11 +2,11 @@
 /* eslint-disable */
 /** JS callback to lint a file. */
 export type JsLintFileCb =
-  ((arg0: string, arg1: number, arg2: Uint8Array | undefined | null, arg3: Array<number>) => string)
+  ((arg0: string, arg1: number, arg2: Uint8Array | undefined | null, arg3: Array<number>, arg4: string) => string)
 
 /** JS callback to load a JS plugin. */
 export type JsLoadPluginCb =
-  ((arg: string) => Promise<string>)
+  ((arg0: string, arg1?: string | undefined | null) => Promise<string>)
 
 /**
  * NAPI entry point.

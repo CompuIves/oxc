@@ -10,6 +10,9 @@
 )] // FIXME: all these needs to be fixed.
 
 mod ast_nodes;
+#[cfg(feature = "detect_code_removal")]
+mod detect_code_removal;
+mod embedded_formatter;
 mod formatter;
 mod ir_transform;
 mod options;
@@ -31,16 +34,16 @@ use oxc_ast::{AstKind, ast::*};
 use rustc_hash::{FxHashMap, FxHashSet};
 use write::FormatWrite;
 
+pub use crate::embedded_formatter::{EmbeddedFormatter, EmbeddedFormatterCallback};
 pub use crate::options::*;
-pub use crate::service::{
-    oxfmtrc::Oxfmtrc,
-    source_type::{enable_jsx_source_type, get_supported_source_type},
-};
+pub use crate::service::{oxfmtrc::Oxfmtrc, parse_utils::*};
 use crate::{
     ast_nodes::{AstNode, AstNodes},
     formatter::{FormatContext, Formatted, format_element::document::Document},
     ir_transform::SortImportsTransform,
 };
+#[cfg(feature = "detect_code_removal")]
+pub use detect_code_removal::detect_code_removal;
 
 use self::formatter::prelude::tag::Label;
 
@@ -48,17 +51,22 @@ pub struct Formatter<'a> {
     allocator: &'a Allocator,
     source_text: &'a str,
     options: FormatOptions,
+    embedded_formatter: Option<EmbeddedFormatter>,
 }
 
 impl<'a> Formatter<'a> {
     pub fn new(allocator: &'a Allocator, options: FormatOptions) -> Self {
-        Self { allocator, source_text: "", options }
+        Self { allocator, source_text: "", options, embedded_formatter: None }
     }
 
-    /// Formats the given AST `Program` and returns the IR before printing.
-    pub fn doc(mut self, program: &'a Program<'a>) -> Document<'a> {
-        let formatted = self.format(program);
-        formatted.into_document()
+    /// Set the embedded formatter for handling embedded languages in templates
+    #[must_use]
+    pub fn with_embedded_formatter(
+        mut self,
+        embedded_formatter: Option<EmbeddedFormatter>,
+    ) -> Self {
+        self.embedded_formatter = embedded_formatter;
+        self
     }
 
     /// Formats the given AST `Program` and returns the formatted string.
@@ -74,15 +82,17 @@ impl<'a> Formatter<'a> {
         let source_text = program.source_text;
         self.source_text = source_text;
 
-        let experimental_sort_imports = self.options.experimental_sort_imports;
+        let experimental_sort_imports = self.options.experimental_sort_imports.clone();
 
-        let context = FormatContext::new(
+        let mut context = FormatContext::new(
             program.source_text,
             program.source_type,
             &program.comments,
             self.allocator,
             self.options,
         );
+        context.set_embedded_formatter(self.embedded_formatter);
+
         let mut formatted = formatter::format(
             context,
             formatter::Arguments::new(&[formatter::Argument::new(&program_node)]),
@@ -93,7 +103,7 @@ impl<'a> Formatter<'a> {
         // Now apply additional transforms if enabled.
         if let Some(sort_imports_options) = experimental_sort_imports {
             let sort_imports = SortImportsTransform::new(sort_imports_options);
-            formatted.apply_transform(|doc| sort_imports.transform(doc));
+            formatted.apply_transform(|doc| sort_imports.transform(doc, self.allocator));
         }
 
         formatted

@@ -4,8 +4,8 @@ import url from 'node:url';
 
 import { createFsRequire } from 'fs-require';
 import { Volume } from 'memfs';
-import { minify as oxcMinify } from 'oxc-minify';
-import { transform as oxcTransform } from 'oxc-transform';
+import { minifySync as oxcMinify } from 'oxc-minify';
+import { transformSync as oxcTransform } from 'oxc-transform';
 
 const nodeModulesPath = path.resolve(path.dirname(url.fileURLToPath(import.meta.url)), '../node_modules');
 
@@ -38,14 +38,13 @@ export async function getModules(
   let code = fs.readFileSync(p, 'utf8');
   code = modifyCode ? modifyCode(code) : code;
   return Promise.all(
-    minifyOptions.concat(transformOptions)
-      .map(async ({ type, ...options }) => {
-        const modifiedCode = {
-          minify: oxcMinify,
-          transform: oxcTransform,
-        }[type](fileName, code).code;
-        return { module: await fsRequire(modifiedCode, format), type, options };
-      }),
+    minifyOptions.concat(transformOptions).map(async ({ type, ...options }) => {
+      const modifiedCode = {
+        minify: oxcMinify,
+        transform: oxcTransform,
+      }[type](fileName, code).code;
+      return { module: await fsRequire(modifiedCode, format), type, options };
+    }),
   );
 }
 

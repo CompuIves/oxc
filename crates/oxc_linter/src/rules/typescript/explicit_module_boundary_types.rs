@@ -1,6 +1,6 @@
 use std::{borrow::Cow, ops::Deref};
 
-use oxc_allocator::Address;
+use oxc_allocator::{Address, UnstableAddress};
 use oxc_ast::{AstKind, ast::*};
 use oxc_ast_visit::{
     Visit,
@@ -167,6 +167,7 @@ declare_oxc_lint!(
     ExplicitModuleBoundaryTypes,
     typescript,
     restriction,
+    config = Config,
 );
 
 impl Rule for ExplicitModuleBoundaryTypes {
@@ -296,11 +297,13 @@ enum Fn<'a> {
     Arrow(&'a ArrowFunctionExpression<'a>),
     None,
 }
+
 impl Fn<'_> {
     fn address(self) -> Option<Address> {
+        // AST is immutable in linter, so `unstable_address` produces stable `Address`es
         match self {
-            Fn::Fn(f) => Some(Address::from_ptr(f)),
-            Fn::Arrow(a) => Some(Address::from_ptr(a)),
+            Fn::Fn(f) => Some(f.unstable_address()),
+            Fn::Arrow(a) => Some(a.unstable_address()),
             Fn::None => None,
         }
     }
@@ -391,8 +394,11 @@ impl<'a, 'c> ExplicitTypesChecker<'a, 'c> {
         let Some(body) = func.body.as_deref() else {
             return;
         };
+
         walk::walk_function_body(self, body);
-        let is_hof = self.is_higher_order_function(Address::from_ptr(func));
+
+        // AST is immutable in linter, so `unstable_address` produces stable `Address`es
+        let is_hof = self.is_higher_order_function(func.unstable_address());
         if !is_hof && !is_allowed() {
             self.ctx.diagnostic(func_missing_return_type(span));
         }
@@ -449,7 +455,9 @@ impl<'a, 'c> ExplicitTypesChecker<'a, 'c> {
             }
         } else {
             walk::walk_function_body(self, &arrow.body);
-            let is_hof = self.is_higher_order_function(Address::from_ptr(arrow));
+
+            // AST is immutable in linter, so `unstable_address` produces stable `Address`es
+            let is_hof = self.is_higher_order_function(arrow.unstable_address());
             if !is_hof && !is_allowed() {
                 self.ctx.diagnostic(func_missing_return_type(span));
             }

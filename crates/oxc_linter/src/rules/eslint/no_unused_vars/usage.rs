@@ -315,6 +315,7 @@ impl<'a> Symbol<'_, 'a> {
                 // - `type Foo = { bar(): Foo }`
                 // - `class Foo { static factory(): Foo { return new Foo() } }`
                 AstKind::TSModuleDeclaration(_)
+                | AstKind::TSGlobalDeclaration(_)
                 | AstKind::VariableDeclaration(_)
                 | AstKind::VariableDeclarator(_)
                 | AstKind::ExportNamedDeclaration(_)
@@ -416,9 +417,15 @@ impl<'a> Symbol<'_, 'a> {
                 // used by others
                 AstKind::VariableDeclarator(_)
                 | AstKind::JSXExpressionContainer(_)
-                | AstKind::Argument(_)
                 | AstKind::PropertyDefinition(_) => {
                     // definitely used, short-circuit
+                    return false;
+                }
+                AstKind::CallExpression(call_expr)
+                    if call_expr.arguments_span().is_some_and(|span| {
+                        span.contains_inclusive(self.nodes().get_node(reference.node_id()).span())
+                    }) =>
+                {
                     return false;
                 }
                 // When symbol is being assigned a new value, we flag the reference
@@ -643,7 +650,18 @@ impl<'a> Symbol<'_, 'a> {
                     }
                     break;
                 }
-                (_, AstKind::CallExpression(_) | AstKind::NewExpression(_)) => break,
+                (_, AstKind::CallExpression(_) | AstKind::NewExpression(_))
+                | (
+                    // in `(acc[item.action]++, acc)`, reference to `item` should still be considered
+                    // used, even though it's not in the last position of the sequence.
+                    // However, in `(a++, 0)`, `a` should be considered discarded.
+                    // We detect this by checking if there's a MemberExpression in the parent chain.
+                    AstKind::ComputedMemberExpression(_)
+                    | AstKind::StaticMemberExpression(_)
+                    | AstKind::PrivateFieldExpression(_),
+                    // Note: AssignmentExpression is NOT needed here because we already handle it.
+                    AstKind::UpdateExpression(_),
+                ) => break,
                 // (AstKind::FunctionBody(_), _) => return true,
                 // in `(x = a, 0)`, reference to `a` should still be considered
                 // used. Note that this branch must come before the sequence

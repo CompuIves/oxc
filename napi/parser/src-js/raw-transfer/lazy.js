@@ -44,7 +44,7 @@ export function parseSyncLazy(filename, sourceText, options) {
  * e.g. `program` in returned object is an instance of `Program` class, with getters for `start`, `end`,
  * `body` etc.
  *
- * Because this function does not deserialize the AST, unlike `parseAsyncRaw`, very little work happens
+ * Because this function does not deserialize the AST, unlike `parse`, very little work happens
  * on current thread in this function. Deserialization work only occurs when properties of the objects
  * are accessed.
  *
@@ -62,7 +62,7 @@ export function parseSyncLazy(filename, sourceText, options) {
  * @returns {Object} - Object with property getters for `program`, `module`, `comments`, and `errors`,
  *   and `dispose` and `visit` methods
  */
-export function parseAsyncLazy(filename, sourceText, options) {
+export function parse(filename, sourceText, options) {
   let _;
   ({ experimentalLazy: _, ...options } = options);
   return parseAsyncRawImpl(filename, sourceText, options, construct);
@@ -75,9 +75,8 @@ export function parseAsyncLazy(filename, sourceText, options) {
 // which don't support it. e.g. Prettier supports NodeJS v14.
 // Raw transfer is disabled on NodeJS before v22, so it doesn't matter if this is `null` on old NodeJS
 // - it'll never be accessed in that case.
-const bufferRecycleRegistry = typeof FinalizationRegistry === 'undefined'
-  ? null
-  : new FinalizationRegistry(returnBufferToCache);
+const bufferRecycleRegistry =
+  typeof FinalizationRegistry === 'undefined' ? null : new FinalizationRegistry(returnBufferToCache);
 
 /**
  * Get an object with getters which lazy deserialize AST and other data from buffer.

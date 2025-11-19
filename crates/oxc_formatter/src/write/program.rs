@@ -1,4 +1,4 @@
-use std::ops::Deref;
+use std::{ops::Deref, ptr::dangling};
 
 use oxc_allocator::{Address, Vec};
 use oxc_ast::{ast::*, match_expression};
@@ -14,7 +14,7 @@ use crate::{
         call_expression::is_test_call_expression,
         is_long_curried_call,
         member_chain::simple_argument::SimpleArgument,
-        string_utils::{FormatLiteralStringToken, StringLiteralParentKind},
+        string::{FormatLiteralStringToken, StringLiteralParentKind},
     },
     write,
     write::semicolon::OptionalSemicolon,
@@ -25,15 +25,18 @@ use super::FormatWrite;
 impl<'a> FormatWrite<'a> for AstNode<'a, Program<'a>> {
     fn write(&self, f: &mut Formatter<'_, 'a>) -> FormatResult<()> {
         let format_trailing_comments = format_once(|f| {
-            let comments = f.context().comments().comments_before(self.span.end);
-            write!(f, FormatTrailingComments::Comments(comments))
+            write!(f, FormatTrailingComments::Comments(f.context().comments().unprinted_comments()))
         });
 
         write!(
             f,
             [
                 // BOM
-                f.source_text().chars().next().is_some_and(|c| c == ZWNBSP).then_some("\u{feff}"),
+                f.source_text()
+                    .chars()
+                    .next()
+                    .is_some_and(|c| c == ZWNBSP)
+                    .then_some(text("\u{feff}")),
                 self.hashbang(),
                 self.directives(),
                 FormatProgramBody(self.body()),
@@ -147,7 +150,7 @@ impl<'a> FormatWrite<'a> for AstNode<'a, Directive<'a>> {
 
 impl<'a> FormatWrite<'a> for AstNode<'a, Hashbang<'a>> {
     fn write(&self, f: &mut Formatter<'_, 'a>) -> FormatResult<()> {
-        write!(f, ["#!", dynamic_text(self.value().as_str().trim_end())])?;
+        write!(f, ["#!", text(self.value().as_str().trim_end())])?;
 
         if f.source_text().lines_after(self.span.end) > 1 {
             write!(f, [empty_line()])

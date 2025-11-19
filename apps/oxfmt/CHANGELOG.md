@@ -4,6 +4,62 @@ All notable changes to this package will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0).
 
+## [0.14.0] - 2025-11-17
+
+### 🚀 Features
+
+- 99823ad oxfmt: Print nothing for default(write) mode (#15583) (leaysgur)
+
+### ⚡ Performance
+
+- d99a83f oxfmt: Use simdutf8 based read_to_string (#15614) (leaysgur)
+
+### 📚 Documentation
+
+- 3d15805 linter: Reformat doc comments (#15670) (overlookmotel)
+
+## [0.12.0] - 2025-11-10
+
+### 🚀 Features
+
+- 3251000 oxfmt: Use `prettier` directly and bundle `prettier` (#15544) (Dunqing)
+- 7b1e6f3 apps: Add pure rust binaries and release to github (#15469) (Boshen)
+- 33ad374 oxfmt: Disable embedded formatting by default for alpha (#15402) (leaysgur)
+
+### ⚡ Performance
+
+- a6808a0 oxfmt: Use `AllocatorPool` to reuse allocator between threads (#15412) (leaysgur)
+
+
+## [0.10.0] - 2025-11-04
+
+### 🚀 Features
+
+- b77f254 oxfmt,formatter: Support `embeddedLanguageFormatting` option (#15216) (leaysgur)
+- 898d6fe oxfmt: Add embedded language formatting with Prettier integration (#14820) (Boshen)
+
+### 🐛 Bug Fixes
+
+- daacf85 oxfmt: Release build fails (#15262) (Dunqing)
+- f5d0348 oxfmt: Sync `dependencies` with `npm/oxfmt` and `apps/oxfmt` (#15261) (leaysgur)
+
+### 🚜 Refactor
+
+- 27b4f36 diagnostic: Remove `path` from sender (#15130) (camc314)
+
+
+## [0.9.0] - 2025-10-30
+
+### 🚜 Refactor
+
+- 5de99c2 formatter: Export unified way to get_parse_options (#15027) (leaysgur)
+
+### 💼 Other
+
+- aceff66 oxfmt: V0.9.0 (#15088) (Boshen)
+
+
+
 ## [0.8.0] - 2025-10-22
 
 ### 🚀 Features

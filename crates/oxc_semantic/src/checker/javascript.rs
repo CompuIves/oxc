@@ -13,7 +13,7 @@ use oxc_syntax::{
     number::NumberBase,
     operator::{AssignmentOperator, UnaryOperator},
     scope::{ScopeFlags, ScopeId},
-    symbol::SymbolFlags,
+    symbol::{SymbolFlags, SymbolId},
 };
 
 use crate::{IsGlobalReference, builder::SemanticBuilder, diagnostics::redeclaration};
@@ -98,9 +98,15 @@ pub const STRICT_MODE_NAMES: Set<&'static str> = phf_set! {
     "yield",
 };
 
-pub fn check_identifier(name: &str, span: Span, ctx: &SemanticBuilder<'_>) {
-    // ts module block allows revered keywords
-    if ctx.current_scope_flags().is_ts_module_block() {
+pub fn check_identifier(
+    name: &str,
+    span: Span,
+    symbol_id: Option<SymbolId>,
+    ctx: &SemanticBuilder<'_>,
+) {
+    // reserved keywords are allowed in ambient contexts
+    if ctx.source_type.is_typescript_definition() || is_current_node_ambient_binding(symbol_id, ctx)
+    {
         return;
     }
     if name == "await" {
@@ -117,6 +123,24 @@ pub fn check_identifier(name: &str, span: Span, ctx: &SemanticBuilder<'_>) {
     // It is a Syntax Error if this phrase is contained in strict mode code and the StringValue of IdentifierName is: "implements", "interface", "let", "package", "private", "protected", "public", "static", or "yield".
     if ctx.strict_mode() && STRICT_MODE_NAMES.contains(name) {
         ctx.error(reserved_keyword(name, span));
+    }
+}
+
+fn is_current_node_ambient_binding(symbol_id: Option<SymbolId>, ctx: &SemanticBuilder<'_>) -> bool {
+    if ctx.current_scope_flags().is_ts_module_block() {
+        return true;
+    }
+
+    if let Some(symbol_id) = symbol_id
+        && ctx.scoping.symbol_flags(symbol_id).contains(SymbolFlags::Ambient)
+    {
+        true
+    } else if let AstKind::BindingIdentifier(id) = ctx.nodes.kind(ctx.current_node_id)
+        && let Some(symbol_id) = id.symbol_id.get()
+    {
+        ctx.scoping.symbol_flags(symbol_id).contains(SymbolFlags::Ambient)
+    } else {
+        false
     }
 }
 
@@ -204,7 +228,9 @@ pub fn check_binding_identifier(ident: &BindingIdentifier, ctx: &SemanticBuilder
 }
 
 fn unexpected_arguments(x0: &str, span1: Span) -> OxcDiagnostic {
-    OxcDiagnostic::error(format!("'arguments' is not allowed in {x0}")).with_label(span1)
+    OxcDiagnostic::error(format!("'arguments' is not allowed in {x0}"))
+        .with_label(span1)
+        .with_help("Assign the 'arguments' variable to a temporary variable outside")
 }
 
 pub fn check_identifier_reference(ident: &IdentifierReference, ctx: &SemanticBuilder<'_>) {
@@ -243,11 +269,19 @@ pub fn check_identifier_reference(ident: &IdentifierReference, ctx: &SemanticBui
     //   It is a Syntax Error if ContainsArguments of ClassStaticBlockStatementList is true.
 
     if ident.name == "arguments" {
+        let mut previous_node_address = ctx.nodes.get_node(ctx.current_node_id).address();
         for node_kind in ctx.nodes.ancestor_kinds(ctx.current_node_id) {
             match node_kind {
                 AstKind::Function(_) => break,
-                AstKind::PropertyDefinition(_) => {
-                    return ctx.error(unexpected_arguments("class field initializer", ident.span));
+                AstKind::PropertyDefinition(prop) => {
+                    if prop
+                        .value
+                        .as_ref()
+                        .is_some_and(|value| value.address() == previous_node_address)
+                    {
+                        return ctx
+                            .error(unexpected_arguments("class field initializer", ident.span));
+                    }
                 }
                 AstKind::StaticBlock(_) => {
                     return ctx
@@ -255,6 +289,7 @@ pub fn check_identifier_reference(ident: &IdentifierReference, ctx: &SemanticBui
                 }
                 _ => {}
             }
+            previous_node_address = node_kind.address();
         }
     }
 }
@@ -350,7 +385,7 @@ pub fn check_string_literal(lit: &StringLiteral, ctx: &SemanticBuilder<'_>) {
             if c == '\\' {
                 match chars.next() {
                     Some('0') => {
-                        if chars.peek().is_some_and(|c| ('1'..='9').contains(c)) {
+                        if chars.peek().is_some_and(char::is_ascii_digit) {
                             return ctx.error(legacy_octal(lit.span));
                         }
                     }
@@ -372,6 +407,9 @@ fn illegal_use_strict(span: Span) -> OxcDiagnostic {
         "Illegal 'use strict' directive in function with non-simple parameter list",
     )
     .with_label(span)
+    .with_help(
+        "Wrap this function with an IIFE with a 'use strict' directive that returns this function",
+    )
 }
 
 // It is a Syntax Error if FunctionBodyContainsUseStrict of AsyncFunctionBody is true and IsSimpleParameterList of FormalParameters is false.
@@ -442,8 +480,8 @@ pub fn check_module_declaration(decl: &ModuleDeclarationKind, ctx: &SemanticBuil
 
 fn new_target(span: Span) -> OxcDiagnostic {
     OxcDiagnostic::error("Unexpected new.target expression")
-.with_help("new.target is only allowed in constructors and functions invoked using thew `new` operator")
-.with_label(span)
+        .with_help("new.target is only allowed in constructors and functions invoked using the `new` operator")
+        .with_label(span)
 }
 
 fn import_meta(span: Span) -> OxcDiagnostic {

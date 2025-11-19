@@ -94,16 +94,18 @@ impl<'a> Format<'a> for FormatAdjacentArgument<'a, '_> {
         if !matches!(argument.as_ref(), Expression::JSXElement(_) | Expression::JSXFragment(_))
             && has_argument_leading_comments(argument, f)
         {
-            write!(f, [text("("), &block_indent(&argument), text(")")])
-        } else if is_binary_or_sequence_argument(argument) {
+            write!(f, [token("("), &block_indent(&argument), token(")")])
+        } else if argument.is_binaryish() {
             write!(
                 f,
                 [group(&format_args!(
-                    if_group_breaks(&text("(")),
+                    if_group_breaks(&token("(")),
                     soft_block_indent(&argument),
-                    if_group_breaks(&text(")"))
+                    if_group_breaks(&token(")"))
                 ))]
             )
+        } else if matches!(argument.as_ref(), Expression::SequenceExpression(_)) {
+            write!(f, [group(&format_args!(token("("), soft_block_indent(&argument), token(")")))])
         } else {
             write!(f, argument)
         }
@@ -168,11 +170,7 @@ fn has_argument_leading_comments(argument: &AstNode<Expression>, f: &Formatter<'
     false
 }
 
+#[inline]
 fn is_binary_or_sequence_argument(argument: &Expression) -> bool {
-    matches!(
-        argument,
-        Expression::BinaryExpression(_)
-            | Expression::LogicalExpression(_)
-            | Expression::SequenceExpression(_)
-    )
+    matches!(argument, Expression::BinaryExpression(_) | Expression::LogicalExpression(_))
 }

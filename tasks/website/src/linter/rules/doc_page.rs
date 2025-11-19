@@ -141,10 +141,29 @@ const source = `{}`;
             return rendered;
         }
 
+        // Check if this is an enum-based config (oneOf with single-value enums)
+        let is_enum_config =
+            schema.subschemas.as_ref().and_then(|s| s.one_of.as_ref()).is_some_and(|variants| {
+                variants.iter().all(|variant| {
+                    if let Schema::Object(obj) = variant {
+                        obj.enum_values.as_ref().is_some_and(|vals| vals.len() == 1)
+                    } else {
+                        false
+                    }
+                })
+            });
+
         if schema.instance_type.as_ref().is_some_and(|it| it.contains(&InstanceType::Object)) {
             rendered = format!(
                 "\nThis rule accepts a configuration object with the following properties:\n{rendered}\n"
             );
+        } else if is_enum_config
+            || (schema.instance_type.as_ref().is_some_and(|it| it.contains(&InstanceType::String))
+                && schema.enum_values.is_some())
+        {
+            // Handle enum-based configurations (either direct enum or oneOf variants)
+            rendered =
+                format!("\nThis rule accepts one of the following string values:\n{rendered}\n");
         }
 
         rendered
@@ -196,10 +215,16 @@ fn how_to_use(rule: &RuleTableRow) -> String {
         format!("{}/{}", normalized_plugin_name, rule.name)
     };
     let is_default_plugin = is_default_plugin(plugin);
+    let is_tsgolint_rule = rule.is_tsgolint_rule;
+
+    let type_aware_flag = if is_tsgolint_rule { "--type-aware " } else { "" };
+
     let enable_bash_example = if is_default_plugin {
-        format!(r"oxlint --deny {rule_full_name}")
+        format!(r"oxlint {type_aware_flag}--deny {rule_full_name}")
     } else {
-        format!(r"oxlint --deny {rule_full_name} --{normalized_plugin_name}-plugin")
+        format!(
+            r"oxlint {type_aware_flag}--deny {rule_full_name} --{normalized_plugin_name}-plugin"
+        )
     };
     let enable_config_example = if is_default_plugin {
         format!(

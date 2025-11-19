@@ -33,6 +33,17 @@ expression: json
         "null"
       ]
     },
+    "embeddedLanguageFormatting": {
+      "description": "Control whether formats quoted code embedded in the file. (Default: \"auto\")",
+      "anyOf": [
+        {
+          "$ref": "#/definitions/EmbeddedLanguageFormattingConfig"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
     "endOfLine": {
       "description": "Which end of line characters to apply. (Default: \"lf\")",
       "anyOf": [
@@ -163,12 +174,21 @@ expression: json
       ]
     }
   },
+  "allowComments": true,
+  "allowTrailingCommas": true,
   "definitions": {
     "ArrowParensConfig": {
       "type": "string",
       "enum": [
         "always",
         "avoid"
+      ]
+    },
+    "EmbeddedLanguageFormattingConfig": {
+      "type": "string",
+      "enum": [
+        "auto",
+        "off"
       ]
     },
     "EndOfLineConfig": {
@@ -205,6 +225,10 @@ expression: json
       "type": "object",
       "properties": {
         "ignoreCase": {
+          "default": true,
+          "type": "boolean"
+        },
+        "newlinesBetween": {
           "default": true,
           "type": "boolean"
         },

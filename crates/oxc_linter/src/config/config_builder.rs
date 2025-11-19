@@ -137,7 +137,7 @@ impl ConfigStoreBuilder {
 
                 let (extends, extends_paths) = resolve_oxlintrc_config(extends_oxlintrc)?;
 
-                oxlintrc = oxlintrc.merge(extends);
+                oxlintrc = oxlintrc.merge(&extends);
                 extended_paths.extend(extends_paths);
             }
 
@@ -173,8 +173,7 @@ impl ConfigStoreBuilder {
             };
 
             let resolver = Resolver::new(ResolveOptions {
-                main_fields: vec!["module".into(), "main".into()],
-                condition_names: vec!["module".into(), "import".into()],
+                condition_names: vec!["module-sync".into(), "node".into(), "import".into()],
                 ..Default::default()
             });
 
@@ -538,9 +537,12 @@ impl ConfigStoreBuilder {
             return Ok(());
         }
 
+        // Extract package name from package.json if available
+        let package_name = resolved.package_json().and_then(|pkg| pkg.name().map(String::from));
+
         let result = {
             let plugin_path = plugin_path.clone();
-            (external_linter.load_plugin)(plugin_path).map_err(|e| {
+            (external_linter.load_plugin)(plugin_path, package_name).map_err(|e| {
                 ConfigBuilderError::PluginLoadFailed {
                     plugin_specifier: plugin_specifier.to_string(),
                     error: e.to_string(),
@@ -550,11 +552,22 @@ impl ConfigStoreBuilder {
 
         match result {
             PluginLoadResult::Success { name, offset, rule_names } => {
-                if LintPlugins::try_from(name.as_str()).is_err() {
-                    external_plugin_store.register_plugin(plugin_path, name, offset, rule_names);
+                // Normalize plugin name (e.g., "eslint-plugin-foo" -> "foo", "@foo/eslint-plugin" -> "@foo")
+                use crate::config::plugins::normalize_plugin_name;
+                let normalized_name = normalize_plugin_name(&name).into_owned();
+
+                if LintPlugins::try_from(normalized_name.as_str()).is_err() {
+                    external_plugin_store.register_plugin(
+                        plugin_path,
+                        normalized_name,
+                        offset,
+                        rule_names,
+                    );
                     Ok(())
                 } else {
-                    Err(ConfigBuilderError::ReservedExternalPluginName { plugin_name: name })
+                    Err(ConfigBuilderError::ReservedExternalPluginName {
+                        plugin_name: normalized_name,
+                    })
                 }
             }
             PluginLoadResult::Failure(e) => Err(ConfigBuilderError::PluginLoadFailed {
@@ -1225,6 +1238,44 @@ mod test {
         );
         assert_eq!(config.plugins(), LintPlugins::default());
         assert!(config.rules().is_empty());
+    }
+
+    #[test]
+    fn test_extends_overrides_precedence() {
+        // Test that current config's overrides take priority over extended config's overrides
+        // This is consistent with how base-level rules work (current overrides extended)
+
+        // Load the oxlintrc that extends a base config
+        let current_oxlintrc = Oxlintrc::from_file(&PathBuf::from(
+            "fixtures/extends_config/overrides/current_override.json",
+        ))
+        .unwrap();
+
+        // Build the config with from_oxlintrc which will handle extends
+        let mut external_plugin_store = ExternalPluginStore::default();
+        let builder = ConfigStoreBuilder::from_oxlintrc(
+            false, // start_empty = false to get default rules
+            current_oxlintrc,
+            None,
+            &mut external_plugin_store,
+        )
+        .unwrap();
+
+        let config = builder.build(&external_plugin_store).unwrap();
+
+        // Apply overrides for a foo.test.ts file (matches both overrides)
+        let resolved = config.apply_overrides(Path::new("foo.test.ts"));
+
+        // The no-const-assign rule should be "off" (disabled, not present in rules)
+        // because current config's override sets it to "off", which should take priority
+        // over the extended config's override which sets it to "error"
+        let no_const_assign_rule =
+            resolved.rules.iter().find(|(rule, _)| rule.name() == "no-const-assign");
+
+        assert!(
+            no_const_assign_rule.is_none(),
+            "no-const-assign should be disabled (off) by current config's override, not error from extended config"
+        );
     }
 
     fn config_store_from_path(path: &str) -> Config {

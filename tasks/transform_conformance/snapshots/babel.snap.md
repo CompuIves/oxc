@@ -1,6 +1,6 @@
-commit: 41d96516
+commit: c92c4919
 
-Passed: 712/1217
+Passed: 712/1220
 
 # All Passed:
 * babel-plugin-transform-logical-assignment-operators
@@ -268,7 +268,7 @@ x Output mismatch
 x Output mismatch
 
 
-# babel-plugin-transform-explicit-resource-management (21/29)
+# babel-plugin-transform-explicit-resource-management (20/29)
 * integration/commonjs-transform/input.js
 x Output mismatch
 
@@ -285,6 +285,28 @@ rebuilt        : ScopeId(2): ["x"]
 Symbol scope ID mismatch for "x":
 after transform: SymbolId(1): ScopeId(1)
 rebuilt        : SymbolId(2): ScopeId(2)
+
+* transform-sync/invalid-switch-bare-case/input.js
+
+  x Using declaration cannot appear in the bare case statement.
+   ,-[tasks/coverage/babel/packages/babel-plugin-transform-explicit-resource-management/test/fixtures/transform-sync/invalid-switch-bare-case/input.js:4:7]
+ 3 |     case 0:
+ 4 |       using x = 0;
+   :       ^^^^^^^^^^^^
+ 5 |       break;
+   `----
+  help: Wrap this declaration in a block statement
+
+
+  x Using declaration cannot appear in the bare case statement.
+   ,-[tasks/coverage/babel/packages/babel-plugin-transform-explicit-resource-management/test/fixtures/transform-sync/invalid-switch-bare-case/input.js:7:7]
+ 6 |     default:
+ 7 |       using y = 1;
+   :       ^^^^^^^^^^^^
+ 8 |       break;
+   `----
+  help: Wrap this declaration in a block statement
+
 
 * transform-sync/multiple-nested/input.js
 Bindings mismatch:
@@ -1067,7 +1089,7 @@ rebuilt        : ["o"]
 x Output mismatch
 
 
-# babel-plugin-transform-object-rest-spread (28/39)
+# babel-plugin-transform-object-rest-spread (27/40)
 * object-rest/for-x/input.js
 Bindings mismatch:
 after transform: ScopeId(0): ["_excluded", "_excluded2", "_excluded3", "_ref", "a", "b"]
@@ -1202,6 +1224,9 @@ Unresolved references mismatch:
 after transform: ["babelHelpers", "d"]
 rebuilt        : ["_ref3", "babelHelpers", "d"]
 
+* object-rest/object-ref-computed/input.js
+x Output mismatch
+
 * object-rest/parameters-object-rest-used-in-default/input.js
 Symbol reference IDs mismatch for "R":
 after transform: SymbolId(0): [ReferenceId(0)]
@@ -1271,6 +1296,9 @@ rebuilt        : ["Symbol", "_Symbol$for3", "_ref3", "babelHelpers"]
 Unresolved reference IDs mismatch for "Symbol":
 after transform: [ReferenceId(0), ReferenceId(1), ReferenceId(4)]
 rebuilt        : [ReferenceId(0), ReferenceId(7)]
+
+* regression/gh-17274/input.js
+x Output mismatch
 
 * regression/gh-8323/input.js
 
@@ -1456,6 +1484,8 @@ rebuilt        : ["x"]
    :   ^^^^^^^
  9 | 
    `----
+  help: Private identifiers are enforced at runtime, while accessibility
+        modifiers only affect type checking, so using both is redundant.
 
 
   x TS(1243): 'accessor' modifier cannot be used with 'readonly' modifier.
@@ -1465,6 +1495,8 @@ rebuilt        : ["x"]
     :   ^^^^^^^^
  15 | }
     `----
+  help: Allowed modifiers are: private, protected, public, static, abstract,
+        override
 
 
 * class/accessor-allowDeclareFields-true/input.ts
@@ -1477,6 +1509,8 @@ rebuilt        : ["x"]
    :   ^^^^^^^
  9 | 
    `----
+  help: Private identifiers are enforced at runtime, while accessibility
+        modifiers only affect type checking, so using both is redundant.
 
 
   x TS(1243): 'accessor' modifier cannot be used with 'readonly' modifier.
@@ -1486,6 +1520,8 @@ rebuilt        : ["x"]
     :   ^^^^^^^^
  15 | }
     `----
+  help: Allowed modifiers are: private, protected, public, static, abstract,
+        override
 
 
 * class/head/input.ts
@@ -2794,7 +2830,7 @@ x Output mismatch
 x Output mismatch
 
 
-# babel-plugin-transform-react-jsx (132/144)
+# babel-plugin-transform-react-jsx (134/146)
 * autoImport/after-polyfills-compiled-to-cjs/input.mjs
 x Output mismatch
 

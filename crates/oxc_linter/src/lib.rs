@@ -48,6 +48,7 @@ mod tester;
 
 mod lint_runner;
 
+pub use crate::config::plugins::normalize_plugin_name;
 pub use crate::disable_directives::{
     DisableDirectives, DisableRuleComment, RuleCommentRule, RuleCommentType,
     create_unused_directives_diagnostics,
@@ -71,7 +72,7 @@ pub use crate::{
     options::LintOptions,
     options::{AllowWarnDeny, InvalidFilterKind, LintFilter, LintFilterKind},
     rule::{RuleCategory, RuleFixMeta, RuleMeta, RuleRunFunctionsImplemented, RuleRunner},
-    service::{LintService, LintServiceOptions, RuntimeFileSystem},
+    service::{LintService, LintServiceOptions, OsFileSystem, RuntimeFileSystem},
     tsgolint::TsGoLintState,
     utils::{read_to_arena_str, read_to_string},
 };
@@ -93,7 +94,7 @@ fn size_asserts() {
     assert_eq!(size_of::<RuleEnum>(), 16);
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 #[expect(clippy::struct_field_names)]
 pub struct Linter {
     options: LintOptions,
@@ -172,32 +173,32 @@ impl Linter {
             .is_some_and(|ext| LINT_PARTIAL_LOADER_EXTENSIONS.iter().any(|e| e == &ext));
 
         loop {
-            let mut rules = rules
+            let semantic = ctx_host.semantic();
+            let rules = rules
                 .iter()
-                .filter(|(rule, _)| rule.should_run(&ctx_host) && !rule.is_tsgolint_rule())
+                .filter(|(rule, _)| {
+                    if rule.is_tsgolint_rule() {
+                        return false;
+                    }
+
+                    // If only the `run` function is implemented, we can skip running the file entirely if the current
+                    // file does not contain any of the relevant AST node types.
+                    if rule.run_info() == RuleRunFunctionsImplemented::Run
+                        && let Some(ast_types) = rule.types_info()
+                        && !semantic.nodes().contains_any(ast_types)
+                    {
+                        return false;
+                    }
+
+                    rule.should_run(&ctx_host)
+                })
                 .map(|(rule, severity)| (rule, Rc::clone(&ctx_host).spawn(rule, *severity)))
                 .collect::<Vec<_>>();
-
-            let semantic = ctx_host.semantic();
 
             let should_run_on_jest_node =
                 ctx_host.plugins().has_test() && ctx_host.frameworks().is_test();
 
-            let mut execute_rules = |with_runtime_optimization: bool| {
-                // If only the `run` function is implemented, we can skip running the file entirely if the current
-                // file does not contain any of the relevant AST node types.
-                if with_runtime_optimization {
-                    rules.retain(|(rule, _)| {
-                        let run_info = rule.run_info();
-                        if run_info == RuleRunFunctionsImplemented::Run
-                            && let Some(ast_types) = rule.types_info()
-                        {
-                            semantic.nodes().contains_any(ast_types)
-                        } else {
-                            true
-                        }
-                    });
-                }
+            let execute_rules = |with_runtime_optimization: bool| {
                 // IMPORTANT: We have two branches here for performance reasons:
                 //
                 // 1) Branch where we iterate over each node, then each rule
@@ -447,10 +448,23 @@ impl Linter {
         // for a `RawTransferMetadata`. `end_ptr` is aligned for `RawTransferMetadata`.
         unsafe { metadata_ptr.write(metadata) };
 
-        // Pass AST and rule IDs to JS
+        let settings_json = match &ctx_host.settings().json {
+            Some(json) => serde_json::to_string(&json).unwrap_or_else(|e| {
+                let path = path.to_string_lossy();
+                let message = format!("Error serializing settings.\nFile path: {path}\n{e}");
+                ctx_host.push_diagnostic(Message::new(
+                    OxcDiagnostic::error(message),
+                    PossibleFixes::None,
+                ));
+                "{}".to_string()
+            }),
+            None => "{}".to_string(),
+        };
+
         let result = (external_linter.lint_file)(
             path.to_str().unwrap().to_string(),
             external_rules.iter().map(|(rule_id, _)| rule_id.raw()).collect(),
+            settings_json,
             allocator,
         );
         match result {
@@ -565,13 +579,12 @@ mod test {
 
     use project_root::get_project_root;
 
-    use super::Oxlintrc;
+    use crate::Oxlintrc;
 
     #[test]
     fn test_schema_json() {
         let path = get_project_root().unwrap().join("npm/oxlint/configuration_schema.json");
-        let schema = schemars::schema_for!(Oxlintrc);
-        let json = serde_json::to_string_pretty(&schema).unwrap();
+        let json = Oxlintrc::generate_schema_json();
         let existing_json = fs::read_to_string(&path).unwrap_or_default();
         if existing_json.trim() != json.trim() {
             std::fs::write(&path, &json).unwrap();

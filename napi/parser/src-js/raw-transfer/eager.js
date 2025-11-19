@@ -35,7 +35,7 @@ export function parseSyncRaw(filename, sourceText, options) {
  * @param {Object} options - Parsing options
  * @returns {Object} - Object with property getters for `program`, `module`, `comments`, and `errors`
  */
-export function parseAsyncRaw(filename, sourceText, options) {
+export function parse(filename, sourceText, options) {
   let _;
   ({ experimentalRawTransfer: _, ...options } = options);
   return parseAsyncRawImpl(filename, sourceText, options, deserialize);
@@ -71,7 +71,7 @@ function deserialize(buffer, sourceText, sourceByteLen, options) {
     parent = !!options.experimentalParent;
 
   // Lazy load deserializer, and deserialize buffer to JS objects
-  const deserializerIndex = (+isJs) | ((+range) << 1) | ((+parent) << 2);
+  const deserializerIndex = +isJs | (+range << 1) | (+parent << 2);
   let deserializeThis = deserializers[deserializerIndex];
   if (deserializeThis === null) {
     deserializeThis = deserializers[deserializerIndex] = require(

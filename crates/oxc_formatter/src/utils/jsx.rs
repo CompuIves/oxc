@@ -1,5 +1,8 @@
-use std::iter::{FusedIterator, Peekable};
-use std::str::Chars;
+use std::{
+    iter::{FusedIterator, Peekable},
+    mem,
+    str::Chars,
+};
 
 use oxc_allocator::Vec as ArenaVec;
 use oxc_ast::ast::*;
@@ -68,43 +71,6 @@ pub enum WrapState {
     WrapOnBreak,
 }
 
-/// Checks if a JSX Element should be wrapped in parentheses. Returns a [WrapState] which
-/// indicates when the element should be wrapped in parentheses.
-pub fn get_wrap_state(parent: &AstNodes<'_>) -> WrapState {
-    // Call site has ensures that only non-nested JSX elements are passed.
-    debug_assert!(!matches!(parent, AstNodes::JSXElement(_) | AstNodes::JSXFragment(_)));
-
-    match parent {
-        AstNodes::ArrayExpression(_)
-        | AstNodes::JSXAttribute(_)
-        | AstNodes::JSXExpressionContainer(_)
-        | AstNodes::ConditionalExpression(_) => WrapState::NoWrap,
-        AstNodes::StaticMemberExpression(member) => {
-            if member.optional {
-                WrapState::NoWrap
-            } else {
-                WrapState::WrapOnBreak
-            }
-        }
-        AstNodes::Argument(argument) if matches!(argument.parent, AstNodes::CallExpression(_)) => {
-            WrapState::NoWrap
-        }
-        AstNodes::ExpressionStatement(stmt) => {
-            // `() => <div></div>`
-            //        ^^^^^^^^^^^
-            if stmt.is_arrow_function_body() { WrapState::WrapOnBreak } else { WrapState::NoWrap }
-        }
-        AstNodes::ComputedMemberExpression(member) => {
-            if member.optional {
-                WrapState::NoWrap
-            } else {
-                WrapState::WrapOnBreak
-            }
-        }
-        _ => WrapState::WrapOnBreak,
-    }
-}
-
 /// Creates either a space using an expression child and a string literal,
 /// or a regular space, depending on whether the group breaks or not.
 ///
@@ -143,7 +109,7 @@ impl<'a> Format<'a> for JsxRawSpace {
             QuoteStyle::Single => "{' '}",
         };
 
-        write!(f, [text(jsx_space)])
+        write!(f, [token(jsx_space)])
     }
 }
 
@@ -215,7 +181,7 @@ impl PartialEq for JsxChild<'_, '_> {
         match (self, other) {
             (Self::Word(l0), Self::Word(r0)) => l0 == r0,
             (Self::NonText(_), Self::NonText(_)) => false, // Never equal by structural comparison
-            _ => core::mem::discriminant(self) == core::mem::discriminant(other),
+            _ => mem::discriminant(self) == mem::discriminant(other),
         }
     }
 }
@@ -246,7 +212,7 @@ impl<'a> JsxWord<'a> {
 
 impl<'a> Format<'a> for JsxWord<'a> {
     fn fmt(&self, f: &mut Formatter<'_, 'a>) -> FormatResult<()> {
-        write!(f, [dynamic_text(self.text)])
+        write!(f, [text_without_whitespace(self.text)])
     }
 }
 

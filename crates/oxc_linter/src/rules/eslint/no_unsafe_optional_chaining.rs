@@ -1,14 +1,12 @@
 use oxc_ast::{
     AstKind,
-    ast::{
-        Argument, ArrayExpressionElement, AssignmentTarget, Expression,
-        match_assignment_target_pattern,
-    },
+    ast::{ArrayExpressionElement, AssignmentTarget, Expression, match_assignment_target_pattern},
 };
 use oxc_diagnostics::OxcDiagnostic;
 use oxc_macros::declare_oxc_lint;
 use oxc_span::Span;
 use oxc_syntax::operator::LogicalOperator;
+use schemars::JsonSchema;
 
 use crate::{AstNode, context::LintContext, rule::Rule};
 
@@ -24,9 +22,10 @@ fn no_unsafe_arithmetic_diagnostic(span: Span) -> OxcDiagnostic {
         .with_label(span)
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, JsonSchema)]
+#[serde(rename_all = "camelCase", default)]
 pub struct NoUnsafeOptionalChaining {
-    /// Disallow arithmetic operations on optional chaining expressions (Default false).
+    /// Disallow arithmetic operations on optional chaining expressions.
     /// If this is true, this rule warns arithmetic operations on optional chaining expressions, which possibly result in NaN.
     disallow_arithmetic_operators: bool,
 }
@@ -38,7 +37,7 @@ declare_oxc_lint!(
     ///
     /// ### Why is this bad?
     ///
-    /// The optional chaining (?.) expression can short-circuit with a return value of undefined.
+    /// The optional chaining (`?.`) expression can short-circuit with a return value of undefined.
     /// Therefore, treating an evaluated optional chaining expression as a function, object, number, etc.,
     /// can cause TypeError or unexpected results. For example:
     ///
@@ -55,7 +54,8 @@ declare_oxc_lint!(
     /// ```
     NoUnsafeOptionalChaining,
     eslint,
-    correctness
+    correctness,
+    config = NoUnsafeOptionalChaining,
 );
 
 impl Rule for NoUnsafeOptionalChaining {
@@ -121,9 +121,6 @@ impl Rule for NoUnsafeOptionalChaining {
             }
             AstKind::AssignmentPattern(pat) if pat.left.kind.is_destructuring_pattern() => {
                 Self::check_unsafe_usage(&pat.right, ctx);
-            }
-            AstKind::Argument(Argument::SpreadElement(elem)) => {
-                Self::check_unsafe_usage(&elem.argument, ctx);
             }
             AstKind::VariableDeclarator(decl) if decl.id.kind.is_destructuring_pattern() => {
                 if let Some(expr) = &decl.init {

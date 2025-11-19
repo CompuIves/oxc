@@ -14,7 +14,7 @@ interface TestOptions {
   // Supply a different name when there are multiple tests for a single fixture.
   snapshotName?: string;
   // Function to get extra data to include in the snapshot
-  getExtraSnapshotData?: (dirPath: string) => Promise<{ [key: string]: string }>;
+  getExtraSnapshotData?: (dirPath: string) => Promise<Record<string, string>>;
 
   /**
    * Override the `files` directory within the fixture to lint.
@@ -40,6 +40,7 @@ async function testFixture(fixtureName: string, options?: TestOptions): Promise<
     fixtureName,
     snapshotName: options?.snapshotName ?? 'output',
     getExtraSnapshotData: options?.getExtraSnapshotData,
+    isESLint: false,
   });
 }
 
@@ -169,12 +170,28 @@ describe('oxlint CLI', () => {
     await testFixture('sourceCode');
   });
 
+  it('should give access to settings via `context.settings`', async () => {
+    await testFixture('settings');
+  });
+
   it('should get source text and AST from `context.sourceCode` when accessed late', async () => {
     await testFixture('sourceCode_late_access');
   });
 
   it('should get source text and AST from `context.sourceCode` when accessed in `after` hook only', async () => {
     await testFixture('sourceCode_late_access_after_only');
+  });
+
+  it('should support scopeManager', async () => {
+    await testFixture('scope_manager');
+  });
+
+  it('should support scope helper methods in `context.sourceCode`', async () => {
+    await testFixture('sourceCode_scope_methods');
+  });
+
+  it('should support languageOptions', async () => {
+    await testFixture('languageOptions');
   });
 
   it('should support selectors', async () => {
@@ -240,6 +257,18 @@ describe('oxlint CLI', () => {
   });
 
   it('should support UTF16 characters in source code and comments with correct spans', async () => {
-    await testFixture('unicode-comments');
+    await testFixture('unicode_comments');
+  });
+
+  it('should return empty object for `parserServices` without throwing', async () => {
+    await testFixture('parser_services');
+  });
+
+  it('wrapping context should work', async () => {
+    await testFixture('context_wrapping');
+  });
+
+  it('should support `isSpaceBetween` in `context.sourceCode`', async () => {
+    await testFixture('isSpaceBetween');
   });
 });

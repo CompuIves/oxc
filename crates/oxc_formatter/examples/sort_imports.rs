@@ -3,8 +3,8 @@
 use std::{fs, path::Path};
 
 use oxc_allocator::Allocator;
-use oxc_formatter::{FormatOptions, Formatter, SortImports, SortOrder};
-use oxc_parser::{ParseOptions, Parser};
+use oxc_formatter::{FormatOptions, Formatter, SortImports, SortOrder, get_parse_options};
+use oxc_parser::Parser;
 use oxc_span::SourceType;
 use pico_args::Arguments;
 
@@ -19,6 +19,7 @@ fn main() -> Result<(), String> {
     let sort_side_effects = args.contains("--sort_side_effects");
     let order = args.opt_value_from_str("--order").unwrap_or(None).unwrap_or(SortOrder::Asc);
     let ignore_case = !args.contains("--no_ignore_case");
+    let newlines_between = !args.contains("--no_newlines_between");
 
     let sort_imports_options = SortImports {
         order,
@@ -26,6 +27,8 @@ fn main() -> Result<(), String> {
         partition_by_comment,
         sort_side_effects,
         ignore_case,
+        newlines_between,
+        groups: SortImports::default_groups(),
     };
 
     // Read source file
@@ -36,14 +39,7 @@ fn main() -> Result<(), String> {
 
     // Parse the source code
     let ret = Parser::new(&allocator, &source_text, source_type)
-        .with_options(ParseOptions {
-            parse_regular_expression: false,
-            // Enable all syntax features
-            allow_v8_intrinsics: true,
-            allow_return_outside_function: true,
-            // `oxc_formatter` expects this to be false
-            preserve_parens: false,
-        })
+        .with_options(get_parse_options())
         .parse();
 
     // Report any parsing errors
@@ -55,20 +51,21 @@ fn main() -> Result<(), String> {
 
     // Format the parsed code
     let options = FormatOptions {
-        experimental_sort_imports: Some(sort_imports_options),
+        experimental_sort_imports: Some(sort_imports_options.clone()),
         ..Default::default()
     };
 
     let formatter = Formatter::new(&allocator, options);
+    let formatted = formatter.format(&ret.program);
     if show_ir {
-        let doc = formatter.doc(&ret.program);
+        // Do not rely on `Display` of `Document` here, as it shows Prettier IR
         println!("[");
-        for el in doc.iter() {
+        for el in formatted.document().iter() {
             println!("  {el:?},");
         }
         println!("]");
     } else {
-        let code = formatter.build(&ret.program);
+        let code = formatted.print().map_err(|e| e.to_string())?.into_code();
         println!("{code}");
     }
 

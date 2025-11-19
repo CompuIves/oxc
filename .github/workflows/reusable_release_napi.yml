@@ -15,24 +15,16 @@ jobs:
     name: Check version
     runs-on: ubuntu-latest
     outputs:
-      version_changed: ${{ steps.version.outputs.changed }}
+      version_changed: ${{ steps.check.outputs.version_changed }}
     env:
       name: ${{ inputs.name }}
     steps:
       - uses: taiki-e/checkout-action@b13d20b7cda4e2f325ef19895128f7ff735c0b3d # v1.3.1
-
-      - uses: EndBug/version-check@5102328418c0130d66ca712d755c303e93368ce2 # v2.1.7
-        id: version
+      - uses: ./.github/actions/check-version
+        id: check
         with:
-          static-checking: localIsNew
-          file-url: https://unpkg.com/oxc-${{ inputs.name }}@latest/package.json
           file-name: napi/${{ inputs.name }}/package.json
-
-      - name: Show version
-        if: steps.version.outputs.changed == 'true'
-        env:
-          version: ${{ steps.version.outputs.version }}
-        run: echo "version=${version}"
+          file-url: https://unpkg.com/oxc-${{ inputs.name }}@latest/package.json
 
   build:
     needs: check
@@ -130,7 +122,7 @@ jobs:
         env:
           TARGET_CC: clang # for mimalloc
 
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
           if-no-files-found: error
           name: bindings-${{ matrix.target }}
@@ -148,7 +140,7 @@ jobs:
       - uses: taiki-e/checkout-action@b13d20b7cda4e2f325ef19895128f7ff735c0b3d # v1.3.1
       - name: Build
         id: build
-        uses: cross-platform-actions/action@e8a7b572196ff79ded1979dc2bb9ee67d1ddb252 # v0.29.0
+        uses: cross-platform-actions/action@46e8d7fb25520a8d6c64fd2b7a1192611da98eda # v0.30.0
         env:
           DEBUG: napi:*
           RUSTUP_IO_THREADS: 1
@@ -175,12 +167,12 @@ jobs:
             cd napi/${{ inputs.name }}
             export COREPACK_INTEGRITY_KEYS=0
             sudo corepack enable
-            pnpm install
+            pnpm install --ignore-scripts # postinstall: The current platform (freebsd) and architecture (x64) is not supported.
             pnpm build --target x86_64-unknown-freebsd
             rm -rf node_modules
             rm -rf target
       - name: Upload artifact
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
           if-no-files-found: error
           name: bindings-freebsd
@@ -205,7 +197,7 @@ jobs:
 
       - uses: oxc-project/setup-node@fdbf0dfd334c4e6d56ceeb77d91c76339c2a0885 # v1.0.4
 
-      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+      - uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
         with:
           path: artifacts
 

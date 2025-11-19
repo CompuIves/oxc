@@ -71,6 +71,7 @@ expression: json
       ]
     },
     "plugins": {
+      "description": "Enabled built-in plugins for Oxlint.\nYou can view the list of available plugins on\n[the website](https://oxc.rs/docs/guide/usage/linter/plugins.html#supported-plugins).\n\nNOTE: Setting the `plugins` field will overwrite the base set of plugins.\nThe `plugins` array should reflect all of the plugins you want to use.",
       "default": null,
       "anyOf": [
         {
@@ -113,6 +114,9 @@ expression: json
           "implementsReplacesDocs": false,
           "exemptDestructuredRootsFromChecks": false,
           "tagNamePreference": {}
+        },
+        "vitest": {
+          "typecheck": false
         }
       },
       "allOf": [
@@ -122,6 +126,8 @@ expression: json
       ]
     }
   },
+  "allowComments": true,
+  "allowTrailingCommas": true,
   "definitions": {
     "AllowWarnDeny": {
       "oneOf": [
@@ -324,9 +330,6 @@ expression: json
         "anyOf": [
           {
             "$ref": "#/definitions/LintPluginOptionsSchema"
-          },
-          {
-            "type": "string"
           }
         ]
       }
@@ -390,10 +393,11 @@ expression: json
         "suspicious": {
           "$ref": "#/definitions/AllowWarnDeny"
         }
-      }
+      },
+      "additionalProperties": false
     },
     "OxlintEnv": {
-      "description": "Predefine global variables.\n\nEnvironments specify what global variables are predefined. See [ESLint's\nlist of\nenvironments](https://eslint.org/docs/v8.x/use/configure/language-options#specifying-environments)\nfor what environments are available and what each one provides.",
+      "description": "Predefine global variables.\n\nEnvironments specify what global variables are predefined.\nSee [ESLint's list of environments](https://eslint.org/docs/v8.x/use/configure/language-options#specifying-environments)\nfor what environments are available and what each one provides.",
       "type": "object",
       "additionalProperties": {
         "type": "boolean"
@@ -538,6 +542,16 @@ expression: json
               "$ref": "#/definitions/ReactPluginSettings"
             }
           ]
+        },
+        "vitest": {
+          "default": {
+            "typecheck": false
+          },
+          "allOf": [
+            {
+              "$ref": "#/definitions/VitestPluginSettings"
+            }
+          ]
         }
       }
     },
@@ -598,6 +612,17 @@ expression: json
           "type": "boolean"
         }
       ]
+    },
+    "VitestPluginSettings": {
+      "description": "Configure Vitest plugin rules.\n\nSee [eslint-plugin-vitest](https://github.com/veritem/eslint-plugin-vitest)'s\nconfiguration for a full reference.",
+      "type": "object",
+      "properties": {
+        "typecheck": {
+          "description": "Whether to enable typecheck mode for Vitest rules.\nWhen enabled, some rules will skip certain checks for describe blocks\nto accommodate TypeScript type checking scenarios.",
+          "default": false,
+          "type": "boolean"
+        }
+      }
     }
   }
 }

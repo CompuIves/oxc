@@ -65,7 +65,7 @@ fn reset_global_allocs() {
 
 // SAFETY: Methods simply delegate to `MiMalloc` allocator to ensure that the allocator
 // is the same across different platforms for the purposes of tracking allocations.
-#[expect(unsafe_code, clippy::undocumented_unsafe_blocks)]
+#[expect(clippy::undocumented_unsafe_blocks)]
 unsafe impl GlobalAlloc for TrackedAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         let ret = unsafe { MiMalloc.alloc(layout) };
@@ -145,6 +145,7 @@ pub fn run() -> Result<(), io::Error> {
         let mut parsed = Parser::new(&allocator, &file.source_text, file.source_type)
             .with_options(parse_options)
             .parse();
+        assert!(parsed.errors.is_empty());
 
         // Transform TypeScript to ESNext before minifying (minifier only works on esnext)
         let scoping = SemanticBuilder::new().build(&parsed.program).semantic.into_scoping();
@@ -165,6 +166,7 @@ pub fn run() -> Result<(), io::Error> {
         let mut parsed = Parser::new(&allocator, &file.source_text, file.source_type)
             .with_options(parse_options)
             .parse();
+        assert!(parsed.errors.is_empty());
 
         let parser_stats = record_stats(&allocator);
 

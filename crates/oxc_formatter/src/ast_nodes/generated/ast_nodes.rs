@@ -47,7 +47,6 @@ pub enum AstNodes<'a> {
     NewExpression(&'a AstNode<'a, NewExpression<'a>>),
     MetaProperty(&'a AstNode<'a, MetaProperty<'a>>),
     SpreadElement(&'a AstNode<'a, SpreadElement<'a>>),
-    Argument(&'a AstNode<'a, Argument<'a>>),
     UpdateExpression(&'a AstNode<'a, UpdateExpression<'a>>),
     UnaryExpression(&'a AstNode<'a, UnaryExpression<'a>>),
     BinaryExpression(&'a AstNode<'a, BinaryExpression<'a>>),
@@ -191,6 +190,7 @@ pub enum AstNodes<'a> {
     TSInterfaceHeritage(&'a AstNode<'a, TSInterfaceHeritage<'a>>),
     TSTypePredicate(&'a AstNode<'a, TSTypePredicate<'a>>),
     TSModuleDeclaration(&'a AstNode<'a, TSModuleDeclaration<'a>>),
+    TSGlobalDeclaration(&'a AstNode<'a, TSGlobalDeclaration<'a>>),
     TSModuleBlock(&'a AstNode<'a, TSModuleBlock<'a>>),
     TSTypeLiteral(&'a AstNode<'a, TSTypeLiteral<'a>>),
     TSInferType(&'a AstNode<'a, TSInferType<'a>>),
@@ -240,7 +240,6 @@ impl<'a> AstNodes<'a> {
             Self::NewExpression(n) => n.span(),
             Self::MetaProperty(n) => n.span(),
             Self::SpreadElement(n) => n.span(),
-            Self::Argument(n) => n.parent.span(),
             Self::UpdateExpression(n) => n.span(),
             Self::UnaryExpression(n) => n.span(),
             Self::BinaryExpression(n) => n.span(),
@@ -384,6 +383,7 @@ impl<'a> AstNodes<'a> {
             Self::TSInterfaceHeritage(n) => n.span(),
             Self::TSTypePredicate(n) => n.span(),
             Self::TSModuleDeclaration(n) => n.span(),
+            Self::TSGlobalDeclaration(n) => n.span(),
             Self::TSModuleBlock(n) => n.span(),
             Self::TSTypeLiteral(n) => n.span(),
             Self::TSInferType(n) => n.span(),
@@ -433,7 +433,6 @@ impl<'a> AstNodes<'a> {
             Self::NewExpression(n) => n.parent,
             Self::MetaProperty(n) => n.parent,
             Self::SpreadElement(n) => n.parent,
-            Self::Argument(n) => n.parent,
             Self::UpdateExpression(n) => n.parent,
             Self::UnaryExpression(n) => n.parent,
             Self::BinaryExpression(n) => n.parent,
@@ -577,6 +576,7 @@ impl<'a> AstNodes<'a> {
             Self::TSInterfaceHeritage(n) => n.parent,
             Self::TSTypePredicate(n) => n.parent,
             Self::TSModuleDeclaration(n) => n.parent,
+            Self::TSGlobalDeclaration(n) => n.parent,
             Self::TSModuleBlock(n) => n.parent,
             Self::TSTypeLiteral(n) => n.parent,
             Self::TSInferType(n) => n.parent,
@@ -626,7 +626,6 @@ impl<'a> AstNodes<'a> {
             Self::NewExpression(_) => "NewExpression",
             Self::MetaProperty(_) => "MetaProperty",
             Self::SpreadElement(_) => "SpreadElement",
-            Self::Argument(_) => "Argument",
             Self::UpdateExpression(_) => "UpdateExpression",
             Self::UnaryExpression(_) => "UnaryExpression",
             Self::BinaryExpression(_) => "BinaryExpression",
@@ -770,6 +769,7 @@ impl<'a> AstNodes<'a> {
             Self::TSInterfaceHeritage(_) => "TSInterfaceHeritage",
             Self::TSTypePredicate(_) => "TSTypePredicate",
             Self::TSModuleDeclaration(_) => "TSModuleDeclaration",
+            Self::TSGlobalDeclaration(_) => "TSGlobalDeclaration",
             Self::TSModuleBlock(_) => "TSModuleBlock",
             Self::TSTypeLiteral(_) => "TSTypeLiteral",
             Self::TSInferType(_) => "TSInferType",
@@ -1396,7 +1396,7 @@ impl<'a> AstNode<'a, ObjectProperty<'a>> {
 
     #[inline]
     pub fn value(&self) -> &AstNode<'a, Expression<'a>> {
-        let following_span = None;
+        let following_span = self.following_span;
         self.allocator.alloc(AstNode {
             inner: &self.inner.value,
             allocator: self.allocator,
@@ -1623,7 +1623,7 @@ impl<'a> AstNode<'a, ComputedMemberExpression<'a>> {
 
     #[inline]
     pub fn expression(&self) -> &AstNode<'a, Expression<'a>> {
-        let following_span = None;
+        let following_span = self.following_span;
         self.allocator.alloc(AstNode {
             inner: &self.inner.expression,
             allocator: self.allocator,
@@ -1660,7 +1660,7 @@ impl<'a> AstNode<'a, StaticMemberExpression<'a>> {
 
     #[inline]
     pub fn property(&self) -> &AstNode<'a, IdentifierName<'a>> {
-        let following_span = None;
+        let following_span = self.following_span;
         self.allocator.alloc(AstNode {
             inner: &self.inner.property,
             allocator: self.allocator,
@@ -1895,7 +1895,7 @@ impl<'a> AstNode<'a, SpreadElement<'a>> {
 impl<'a> AstNode<'a, Argument<'a>> {
     #[inline]
     pub fn as_ast_nodes(&self) -> &AstNodes<'a> {
-        let parent = self.allocator.alloc(AstNodes::Argument(transmute_self(self)));
+        let parent = self.parent;
         let node = match self.inner {
             Argument::SpreadElement(s) => AstNodes::SpreadElement(self.allocator.alloc(AstNode {
                 inner: s.as_ref(),
@@ -2144,7 +2144,7 @@ impl<'a> AstNode<'a, AssignmentExpression<'a>> {
 
     #[inline]
     pub fn right(&self) -> &AstNode<'a, Expression<'a>> {
-        let following_span = None;
+        let following_span = self.following_span;
         self.allocator.alloc(AstNode {
             inner: &self.inner.right,
             allocator: self.allocator,
@@ -2957,6 +2957,14 @@ impl<'a> AstNode<'a, Declaration<'a>> {
             }
             Declaration::TSModuleDeclaration(s) => {
                 AstNodes::TSModuleDeclaration(self.allocator.alloc(AstNode {
+                    inner: s.as_ref(),
+                    parent,
+                    allocator: self.allocator,
+                    following_span: self.following_span,
+                }))
+            }
+            Declaration::TSGlobalDeclaration(s) => {
+                AstNodes::TSGlobalDeclaration(self.allocator.alloc(AstNode {
                     inner: s.as_ref(),
                     parent,
                     allocator: self.allocator,
@@ -4131,7 +4139,7 @@ impl<'a> AstNode<'a, FormalParameters<'a>> {
 
     #[inline]
     pub fn items(&self) -> &AstNode<'a, Vec<'a, FormalParameter<'a>>> {
-        let following_span = self.inner.rest.as_deref().map(GetSpan::span);
+        let following_span = self.inner.rest.as_deref().map(GetSpan::span).or(self.following_span);
         self.allocator.alloc(AstNode {
             inner: &self.inner.items,
             allocator: self.allocator,
@@ -4142,7 +4150,7 @@ impl<'a> AstNode<'a, FormalParameters<'a>> {
 
     #[inline]
     pub fn rest(&self) -> Option<&AstNode<'a, BindingRestElement<'a>>> {
-        let following_span = None;
+        let following_span = self.following_span;
         self.allocator
             .alloc(self.inner.rest.as_ref().map(|inner| AstNode {
                 inner: inner.as_ref(),
@@ -8305,6 +8313,37 @@ impl<'a> AstNode<'a, TSModuleDeclarationBody<'a>> {
             }
         };
         self.allocator.alloc(node)
+    }
+}
+
+impl<'a> AstNode<'a, TSGlobalDeclaration<'a>> {
+    #[inline]
+    pub fn global_span(&self) -> Span {
+        self.inner.global_span
+    }
+
+    #[inline]
+    pub fn body(&self) -> &AstNode<'a, TSModuleBlock<'a>> {
+        let following_span = None;
+        self.allocator.alloc(AstNode {
+            inner: &self.inner.body,
+            allocator: self.allocator,
+            parent: self.allocator.alloc(AstNodes::TSGlobalDeclaration(transmute_self(self))),
+            following_span,
+        })
+    }
+
+    #[inline]
+    pub fn declare(&self) -> bool {
+        self.inner.declare
+    }
+
+    pub fn format_leading_comments(&self, f: &mut Formatter<'_, 'a>) -> FormatResult<()> {
+        format_leading_comments(self.span()).fmt(f)
+    }
+
+    pub fn format_trailing_comments(&self, f: &mut Formatter<'_, 'a>) -> FormatResult<()> {
+        format_trailing_comments(self.parent.span(), self.inner.span(), self.following_span).fmt(f)
     }
 }
 

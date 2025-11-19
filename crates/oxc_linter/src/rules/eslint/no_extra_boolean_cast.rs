@@ -42,7 +42,7 @@ declare_oxc_lint!(
     /// ### Why is this bad?
     ///
     /// In contexts such as an if statement's test where the result of the expression will already be coerced to a Boolean,
-    /// casting to a Boolean via double negation (!!) or a Boolean call is unnecessary.
+    /// casting to a Boolean via double negation (`!!`) or a `Boolean` call is unnecessary.
     ///
     /// ### Examples
     ///
@@ -72,7 +72,8 @@ declare_oxc_lint!(
     NoExtraBooleanCast,
     eslint,
     correctness,
-    conditional_fix_or_conditional_suggestion
+    conditional_fix_or_conditional_suggestion,
+    config = NoExtraBooleanCast,
 );
 
 impl Rule for NoExtraBooleanCast {
@@ -210,12 +211,7 @@ fn is_unary_negation(node: &AstNode) -> bool {
 
 fn get_real_parent<'a, 'b>(node: &AstNode, ctx: &'a LintContext<'b>) -> Option<&'a AstNode<'b>> {
     ctx.nodes().ancestors(node.id()).find(|parent| {
-        !matches!(
-            parent.kind(),
-            AstKind::Argument(_)
-                | AstKind::ParenthesizedExpression(_)
-                | AstKind::ChainExpression(_)
-        )
+        !matches!(parent.kind(), AstKind::ParenthesizedExpression(_) | AstKind::ChainExpression(_))
     })
 }
 

@@ -4,6 +4,46 @@ All notable changes to this package will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0).
 
+## [0.98.0] - 2025-11-17
+
+### 🐛 Bug Fixes
+
+- c023ba6 semantic: Do not duplicate statements in temp `Vec` when binding `TSModuleDeclaration`s (#15724) (overlookmotel)
+- 9f54a36 semantic: Error on `\00` in strict mode (#15743) (sapphi-red)
+
+## [0.97.0] - 2025-11-11
+
+### 🚀 Features
+
+- 5616ad5 parser,semantic: Add TS1274 error (#15441) (sapphi-red)
+- 8d69661 allocator: Add `Address::from_ref` method (#15318) (overlookmotel)
+- 682dca2 parser: Add more helps to parser errors (#15186) (sapphi-red)
+
+### 🐛 Bug Fixes
+
+- 4a54107 semantic: Allow `arguments` in the class field keys (#15227) (sapphi-red)
+
+## [0.96.0] - 2025-10-30
+
+### 🚀 Features
+
+- 1611b4f semantic: Add `is_inside_comment` method (#14908) (camc314)
+- ae2003c semantic: Add `symbol_id` to ts function type binding idents (#14673) (camc314)
+- bec7a7d semantic: Add scope to `TSConstructorType` (#14676) (camc314)
+- f45d2f0 semantic: Add scope to `TSCallSignatureDeclaration` (#14672) (camc314)
+
+### 🐛 Bug Fixes
+
+- 7e888d2 cfg: Append switch case condition to correct block (#14810) (camc314)
+- aec04f2 semantic/cfg: Update example docs + code (#14809) (camc314)
+- cdf2d07 semantic: Add condition basic blocks to CFG for logical expressions (#14671) (camc314)
+- be94bfd semantic: Add scope tracking for `with` statements (#14652) (Boshen)
+
+### 🚜 Refactor
+
+- 109f452 semantic: Eliminate manual current_node_ix manipulation in try statements (#14858) (camc314)
+
+
 ## [0.95.0] - 2025-10-15
 
 ### 🐛 Bug Fixes

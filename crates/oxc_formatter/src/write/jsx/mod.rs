@@ -19,7 +19,6 @@ use crate::{
         prelude::*,
         trivia::{DanglingIndentMode, FormatDanglingComments, FormatTrailingComments},
     },
-    utils::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments,
     write,
 };
 
@@ -206,20 +205,14 @@ impl<'a> FormatWrite<'a> for AstNode<'a, JSXExpressionContainer<'a>> {
             // JSXAttributeValue
             let should_inline = !has_comment(f) && should_inline_jsx_expression(self, f.comments());
 
-            let format_expression = format_once(|f| {
-                write!(f, FormatNodeWithoutTrailingComments(&self.expression()));
-                let comments = f.context().comments().comments_before(self.span.end);
-                write!(f, FormatTrailingComments::Comments(comments))
-            });
-
             if should_inline {
-                write!(f, ["{", format_expression, line_suffix_boundary(), "}"])
+                write!(f, ["{", self.expression(), line_suffix_boundary(), "}"])
             } else {
                 write!(
                     f,
                     [group(&format_args!(
                         "{",
-                        soft_block_indent(&format_expression),
+                        soft_block_indent(&self.expression()),
                         line_suffix_boundary(),
                         "}"
                     ))]
@@ -344,7 +337,7 @@ impl<'a> FormatWrite<'a> for AstNode<'a, JSXSpreadAttribute<'a>> {
 
 impl<'a> FormatWrite<'a> for AstNode<'a, JSXIdentifier<'a>> {
     fn write(&self, f: &mut Formatter<'_, 'a>) -> FormatResult<()> {
-        write!(f, dynamic_text(self.name().as_str()))
+        write!(f, text_without_whitespace(self.name().as_str()))
     }
 }
 
@@ -372,6 +365,6 @@ impl<'a> FormatWrite<'a> for AstNode<'a, JSXSpreadChild<'a>> {
 
 impl<'a> FormatWrite<'a> for AstNode<'a, JSXText<'a>> {
     fn write(&self, f: &mut Formatter<'_, 'a>) -> FormatResult<()> {
-        write!(f, dynamic_text(self.value().as_str()))
+        write!(f, text(self.value().as_str()))
     }
 }

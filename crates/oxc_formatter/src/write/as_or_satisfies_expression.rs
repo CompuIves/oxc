@@ -43,7 +43,7 @@ fn format_as_or_satisfies_expression<'a>(
     f: &mut Formatter<'_, 'a>,
 ) -> FormatResult<()> {
     let format_inner = format_with(|f| {
-        write!(f, [expression, space(), text(operation)])?;
+        write!(f, [expression, space(), token(operation)])?;
         write!(f, [space(), type_annotation])
     });
 
@@ -56,13 +56,9 @@ fn format_as_or_satisfies_expression<'a>(
 
 fn is_callee_or_object_context(span: Span, parent: &AstNodes<'_>) -> bool {
     match parent {
-        // Callee
-        AstNodes::CallExpression(_) | AstNodes::NewExpression(_)
         // Static member
-        | AstNodes::StaticMemberExpression(_) => true,
-        AstNodes::ComputedMemberExpression(member) => {
-            member.object.span() == span
-        }
-        _ => false,
+        AstNodes::StaticMemberExpression(_) => true,
+        AstNodes::ComputedMemberExpression(member) => member.object.span() == span,
+        _ => parent.is_call_like_callee_span(span),
     }
 }

@@ -27,7 +27,7 @@ use crate::{
     },
 };
 
-use super::string_utils::{FormatLiteralStringToken, StringLiteralParentKind};
+use super::string::{FormatLiteralStringToken, StringLiteralParentKind};
 
 #[derive(Clone, Copy)]
 pub enum AssignmentLike<'a, 'b> {
@@ -233,6 +233,8 @@ impl<'a> AssignmentLike<'a, '_> {
                 }
             }
             AssignmentLike::PropertyDefinition(property) => {
+                write!(f, [property.decorators()])?;
+
                 if property.declare {
                     write!(f, ["declare", space()])?;
                 }
@@ -387,11 +389,15 @@ impl<'a> AssignmentLike<'a, '_> {
             }
         }
 
+        if self.should_break_left_hand_side(left_may_break) {
+            return AssignmentLikeLayout::BreakLeftHandSide;
+        }
+
         if self.should_break_after_operator(right_expression, f) {
             return AssignmentLikeLayout::BreakAfterOperator;
         }
 
-        if self.should_break_left_hand_side(left_may_break) {
+        if self.is_complex_type_alias() {
             return AssignmentLikeLayout::BreakLeftHandSide;
         }
 
@@ -519,10 +525,6 @@ impl<'a> AssignmentLike<'a, '_> {
     /// be broken on multiple lines
     fn should_break_left_hand_side(&self, left_may_break: bool) -> bool {
         if self.is_complex_destructuring() {
-            return true;
-        }
-
-        if self.is_complex_type_alias() {
             return true;
         }
 
@@ -783,7 +785,7 @@ impl<'a> Format<'a> for AssignmentLike<'a, '_> {
                         write!(f, [soft_line_break_or_space(), right])
                     }
                     AssignmentLikeLayout::ChainTail => {
-                        write!(f, [&indent(&format_args!(soft_line_break_or_space(), right))])
+                        write!(f, [soft_line_indent_or_space(&right)])
                     }
                     AssignmentLikeLayout::ChainTailArrowFunction => {
                         write!(f, [space(), right])
@@ -918,7 +920,9 @@ fn is_poorly_breakable_member_or_call_chain<'a>(
         let is_breakable_call = match args.len() {
             0 => false,
             1 => match args.iter().next() {
-                Some(first_argument) => !is_short_argument(first_argument, threshold, f),
+                Some(first_argument) => first_argument
+                    .as_expression()
+                    .is_none_or(|e| !is_short_argument(e, threshold, f)),
                 None => false,
             },
             _ => true,
@@ -945,15 +949,14 @@ fn is_poorly_breakable_member_or_call_chain<'a>(
 /// We need it to decide if `JsCallExpression` with the argument is breakable or not
 /// If the argument is short the function call isn't breakable
 /// [Prettier applies]: <https://github.com/prettier/prettier/blob/a043ac0d733c4d53f980aa73807a63fc914f23bd/src/language-js/print/assignment.js#L374>
-fn is_short_argument(argument: &Argument, threshold: u16, f: &Formatter) -> bool {
-    match argument {
-        Argument::Identifier(identifier) => identifier.name.len() <= threshold as usize,
-        Argument::UnaryExpression(unary_expression) => {
-            unary_expression.operator.is_arithmetic()
-                && matches!(unary_expression.argument, Expression::NumericLiteral(_))
+fn is_short_argument(expression: &Expression, threshold: u16, f: &Formatter) -> bool {
+    match expression {
+        Expression::Identifier(identifier) => identifier.name.len() <= threshold as usize,
+        Expression::UnaryExpression(unary_expression) => {
+            is_short_argument(&unary_expression.argument, threshold, f)
         }
-        Argument::RegExpLiteral(regex) => regex.regex.pattern.text.len() <= threshold as usize,
-        Argument::StringLiteral(literal) => {
+        Expression::RegExpLiteral(regex) => regex.regex.pattern.text.len() <= threshold as usize,
+        Expression::StringLiteral(literal) => {
             let formatter = FormatLiteralStringToken::new(
                 f.source_text().text_for(literal.as_ref()),
                 literal.span,
@@ -964,7 +967,7 @@ fn is_short_argument(argument: &Argument, threshold: u16, f: &Formatter) -> bool
             formatter.clean_text(f.context().source_type(), f.options()).width()
                 <= threshold as usize
         }
-        Argument::TemplateLiteral(literal) => {
+        Expression::TemplateLiteral(literal) => {
             let elements = &literal.expressions;
 
             // Besides checking length exceed we also need to check that the template doesn't have any expressions.
@@ -975,11 +978,11 @@ fn is_short_argument(argument: &Argument, threshold: u16, f: &Formatter) -> bool
                 raw.len() <= threshold as usize && !raw.contains('\n')
             }
         }
-        Argument::ThisExpression(_)
-        | Argument::NullLiteral(_)
-        | Argument::BigIntLiteral(_)
-        | Argument::BooleanLiteral(_)
-        | Argument::NumericLiteral(_) => true,
+        Expression::ThisExpression(_)
+        | Expression::NullLiteral(_)
+        | Expression::BigIntLiteral(_)
+        | Expression::BooleanLiteral(_)
+        | Expression::NumericLiteral(_) => true,
         _ => false,
     }
 }

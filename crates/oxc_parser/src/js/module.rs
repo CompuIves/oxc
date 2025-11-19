@@ -154,13 +154,12 @@ impl<'a> ParserImpl<'a> {
                     has_default_specifier = true;
                     should_parse_specifiers = false;
                 }
-            } else if self.at(Kind::From) {
+            } else {
+                self.expect_without_advance(Kind::From);
                 // `import source something from ...`
                 identifier_after_import = Some(identifier_after_source);
                 phase = Some(ImportPhase::Source);
                 has_default_specifier = true;
-            } else {
-                return self.unexpected();
             }
         }
 
@@ -179,6 +178,10 @@ impl<'a> ParserImpl<'a> {
                     None => unreachable!(),
                 }
             } else {
+                if has_default_specifier {
+                    // `import something 'source'`
+                    self.expect_without_advance(Kind::From);
+                }
                 None
             }
         } else {
@@ -280,9 +283,10 @@ impl<'a> ParserImpl<'a> {
         &mut self,
         import_kind: ImportOrExportKind,
     ) -> Vec<'a, ImportDeclarationSpecifier<'a>> {
+        let opening_span = self.cur_token().span();
         self.expect(Kind::LCurly);
         let (list, _) = self.context_remove(self.ctx, |p| {
-            p.parse_delimited_list(Kind::RCurly, Kind::Comma, |parser| {
+            p.parse_delimited_list(Kind::RCurly, Kind::Comma, opening_span, |parser| {
                 parser.parse_import_specifier(import_kind)
             })
         });
@@ -301,9 +305,15 @@ impl<'a> ParserImpl<'a> {
         self.bump_remap(keyword_kind);
 
         let span = self.start_span();
+        let opening_span = self.cur_token().span();
         self.expect(Kind::LCurly);
         let (with_entries, _) = self.context_remove(self.ctx, |p| {
-            p.parse_delimited_list(Kind::RCurly, Kind::Comma, Self::parse_import_attribute)
+            p.parse_delimited_list(
+                Kind::RCurly,
+                Kind::Comma,
+                opening_span,
+                Self::parse_import_attribute,
+            )
         });
         self.expect(Kind::RCurly);
 
@@ -477,9 +487,10 @@ impl<'a> ParserImpl<'a> {
         stmt_ctx: StatementContext,
     ) -> Box<'a, ExportNamedDeclaration<'a>> {
         let export_kind = self.parse_import_or_export_kind();
+        let opening_span = self.cur_token().span();
         self.expect(Kind::LCurly);
         let (mut specifiers, _) = self.context_remove(self.ctx, |p| {
-            p.parse_delimited_list(Kind::RCurly, Kind::Comma, |parser| {
+            p.parse_delimited_list(Kind::RCurly, Kind::Comma, opening_span, |parser| {
                 parser.parse_export_specifier(export_kind)
             })
         });

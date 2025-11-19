@@ -2,8 +2,15 @@ use oxc_ast::{AstKind, ast::Statement};
 use oxc_diagnostics::OxcDiagnostic;
 use oxc_macros::declare_oxc_lint;
 use oxc_span::{GetSpan, Span};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 
-use crate::{AstNode, ast_util::get_preceding_indent_str, context::LintContext, rule::Rule};
+use crate::{
+    AstNode,
+    ast_util::get_preceding_indent_str,
+    context::LintContext,
+    rule::{DefaultRuleConfig, Rule},
+};
 
 fn switch_case_braces_diagnostic_empty_clause(span: Span) -> OxcDiagnostic {
     OxcDiagnostic::warn("Unexpected braces in empty case clause.")
@@ -24,14 +31,22 @@ fn switch_case_braces_diagnostic_unnecessary_braces(span: Span) -> OxcDiagnostic
 }
 
 #[derive(Debug, Clone)]
-pub struct SwitchCaseBraces {
-    always_braces: bool,
-}
+pub struct SwitchCaseBraces(Box<SwitchCaseBracesConfig>);
 
 impl Default for SwitchCaseBraces {
     fn default() -> Self {
-        Self { always_braces: true }
+        Self(Box::new(SwitchCaseBracesConfig::Always))
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum SwitchCaseBracesConfig {
+    /// Always require braces in case clauses (except empty cases).
+    #[default]
+    Always,
+    /// Allow braces only when needed for scoping (e.g., variable or function declarations).
+    Avoid,
 }
 
 declare_oxc_lint!(
@@ -68,30 +83,24 @@ declare_oxc_lint!(
     /// }
     /// ```
     ///
-    /// ### Options
-    ///
-    /// `{ type: "always" | "avoid", default: "always" }`
-    ///
-    /// - `"always"`
-    ///   Always report when clause is not a `BlockStatement`.
-    ///
-    /// - `"avoid"`
-    ///   Allows braces only when needed for scoping (e.g., variable or function declarations).
-    ///
-    /// Example:
+    /// Example config:
     /// ```json
     /// "unicorn/switch-case-braces": ["error", "avoid"]
     /// ```
     SwitchCaseBraces,
     unicorn,
     style,
-    fix
+    fix,
+    config = SwitchCaseBracesConfig,
 );
 
 impl Rule for SwitchCaseBraces {
     fn from_configuration(value: serde_json::Value) -> Self {
-        let always_braces = value.get(0).is_none_or(|v| v.as_str() != Some("avoid"));
-        Self { always_braces }
+        Self(Box::new(
+            serde_json::from_value::<DefaultRuleConfig<SwitchCaseBracesConfig>>(value)
+                .unwrap_or_default()
+                .into_inner(),
+        ))
     }
 
     fn run<'a>(&self, node: &AstNode<'a>, ctx: &LintContext<'a>) {
@@ -116,7 +125,7 @@ impl Rule for SwitchCaseBraces {
                         );
                         continue;
                     }
-                    if !self.always_braces
+                    if *self.0 == SwitchCaseBracesConfig::Avoid
                         && !block_stmt.body.iter().any(|stmt| {
                             matches!(
                                 stmt,
@@ -141,14 +150,12 @@ impl Rule for SwitchCaseBraces {
                 _ => true,
             };
 
-            if self.always_braces && missing_braces {
-                let colon = u32::try_from(
-                    ctx.source_range(Span::new(case.span.start, case.consequent[0].span().start))
-                        .rfind(':')
-                        .unwrap(),
-                )
-                .unwrap();
-                let span = Span::sized(case.span.start, colon + 1);
+            if *self.0 == SwitchCaseBracesConfig::Always && missing_braces {
+                let test_end = case.test.as_ref().map_or(case.span.start, |t| t.span().end);
+                let colon_offset = ctx.find_next_token_from(test_end, ":").unwrap();
+                let colon_pos = test_end + colon_offset;
+                let span = Span::new(case.span.start, colon_pos + 1);
+
                 ctx.diagnostic_with_fix(
                     switch_case_braces_diagnostic_missing_braces(span),
                     |fixer| {
@@ -269,6 +276,32 @@ fn test() {
         (
             "switch(something) { case 'scope:type': doSomething();}",
             "switch(something) { case 'scope:type': { doSomething();}}",
+            None,
+        ),
+        (
+            "switch(something) {
+                case 'scope:type':
+                // HACK: this is a hack
+                    doSomething();
+            }",
+            "switch(something) {
+                case 'scope:type': {
+                // HACK: this is a hack
+                    doSomething();
+                }
+            }",
+            None,
+        ),
+        (
+            "switch(something) {
+                case 'a'/* Get a model by its ID */:
+                    doSomething({ a: b});
+            }",
+            "switch(something) {
+                case 'a'/* Get a model by its ID */: {
+                    doSomething({ a: b});
+                }
+            }",
             None,
         ),
     ];

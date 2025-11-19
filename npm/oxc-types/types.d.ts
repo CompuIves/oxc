@@ -427,6 +427,7 @@ export type Declaration =
   | TSInterfaceDeclaration
   | TSEnumDeclaration
   | TSModuleDeclaration
+  | TSGlobalDeclaration
   | TSImportEqualsDeclaration;
 
 export interface VariableDeclaration extends Span {
@@ -583,12 +584,10 @@ export interface DebuggerStatement extends Span {
   parent?: Node;
 }
 
-export type BindingPattern =
-  & ({
-    optional?: boolean;
-    typeAnnotation?: TSTypeAnnotation | null;
-  })
-  & (BindingIdentifier | ObjectPattern | ArrayPattern | AssignmentPattern);
+export type BindingPattern = {
+  optional?: boolean;
+  typeAnnotation?: TSTypeAnnotation | null;
+} & (BindingIdentifier | ObjectPattern | ArrayPattern | AssignmentPattern);
 
 export type BindingPatternKind = BindingIdentifier | ObjectPattern | ArrayPattern | AssignmentPattern;
 
@@ -671,13 +670,12 @@ export interface FormalParameterRest extends Span {
   optional?: boolean;
   typeAnnotation?: TSTypeAnnotation | null;
   value?: null;
+  parent?: Node;
 }
 
-export type FormalParameter =
-  & ({
-    decorators?: Array<Decorator>;
-  })
-  & BindingPattern;
+export type FormalParameter = {
+  decorators?: Array<Decorator>;
+} & BindingPattern;
 
 export interface TSParameterProperty extends Span {
   type: 'TSParameterProperty';
@@ -687,6 +685,7 @@ export interface TSParameterProperty extends Span {
   parameter: FormalParameter;
   readonly: boolean;
   static: boolean;
+  parent?: Node;
 }
 
 export interface FunctionBody extends Span {
@@ -1476,11 +1475,21 @@ export interface TSModuleDeclaration extends Span {
   body: TSModuleBlock | null;
   kind: TSModuleDeclarationKind;
   declare: boolean;
-  global: boolean;
+  global: false;
   parent?: Node;
 }
 
-export type TSModuleDeclarationKind = 'global' | 'module' | 'namespace';
+export type TSModuleDeclarationKind = 'module' | 'namespace';
+
+export interface TSGlobalDeclaration extends Span {
+  type: 'TSModuleDeclaration';
+  id: IdentifierName;
+  body: TSModuleBlock;
+  kind: 'global';
+  declare: boolean;
+  global: true;
+  parent?: Node;
+}
 
 export interface TSModuleBlock extends Span {
   type: 'TSModuleBlock';
@@ -1868,6 +1877,7 @@ export type Node =
   | TSInterfaceHeritage
   | TSTypePredicate
   | TSModuleDeclaration
+  | TSGlobalDeclaration
   | TSModuleBlock
   | TSTypeLiteral
   | TSInferType

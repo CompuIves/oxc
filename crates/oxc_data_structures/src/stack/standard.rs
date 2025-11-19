@@ -1,5 +1,5 @@
 use std::{
-    mem::size_of,
+    marker::PhantomData,
     ops::{Deref, DerefMut},
     ptr::NonNull,
 };
@@ -44,12 +44,14 @@ use super::{StackCapacity, StackCommon};
 /// [`NonEmptyStack::new`]: super::NonEmptyStack::new
 /// [`std`'s slice iterators]: std::slice::Iter
 pub struct Stack<T> {
-    // Pointer to *after* last entry on stack.
+    /// Pointer to *after* last entry on stack
     cursor: NonNull<T>,
-    // Pointer to start of allocation containing stack
+    /// Pointer to start of allocation containing stack
     start: NonNull<T>,
-    // Pointer to end of allocation containing stack
+    /// Pointer to end of allocation containing stack
     end: NonNull<T>,
+    /// Inform compiler that `Stack<T>` owns `T`s
+    _marker: PhantomData<T>,
 }
 
 impl<T> Default for Stack<T> {
@@ -116,7 +118,7 @@ impl<T> Stack<T> {
 
         // Create stack with equal `start` and `end`
         let dangling = NonNull::dangling();
-        Self { cursor: dangling, start: dangling, end: dangling }
+        Self { cursor: dangling, start: dangling, end: dangling, _marker: PhantomData }
     }
 
     /// Create new `Stack` with pre-allocated capacity for `capacity` entries.
@@ -170,7 +172,7 @@ impl<T> Stack<T> {
     ///
     /// # SAFETY
     /// * `capacity_bytes` must not be 0.
-    /// * `capacity_bytes` must be a multiple of `mem::size_of::<T>()`.
+    /// * `capacity_bytes` must be a multiple of `size_of::<T>()`.
     /// * `capacity_bytes` must not exceed [`Self::MAX_CAPACITY_BYTES`].
     #[inline]
     unsafe fn new_with_capacity_bytes_unchecked(capacity_bytes: usize) -> Self {
@@ -181,7 +183,7 @@ impl<T> Stack<T> {
         let (start, end) = unsafe { Self::allocate(capacity_bytes) };
 
         // `cursor` is positioned at start
-        Self { cursor: start, start, end }
+        Self { cursor: start, start, end, _marker: PhantomData }
     }
 
     // Note: There is no need to implement `first` and `first_mut` methods.

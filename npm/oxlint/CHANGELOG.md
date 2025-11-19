@@ -4,6 +4,35 @@ All notable changes to this package will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0).
 
+## [1.29.0] - 2025-11-17
+
+### 🚀 Features
+
+- 84de1ca oxlint,oxfmt: Allow comments and also commas for vscode-json-ls (#15612) (leaysgur)
+
+## [1.26.0] - 2025-11-05
+
+### 🚀 Features
+
+- 26f24d5 linter: Permit comments in `.oxlintrc.json` via json schema file (#15249) (Martin Leduc)
+
+### 🐛 Bug Fixes
+
+- d6996d0 linter: Fix JSON schema to deny additional properties for categories enum. (#15257) (Connor Shea)
+- 9304f9f linter: Fix JSON schema to deny additional properties for plugins enum. (#15259) (Connor Shea)
+
+### 📚 Documentation
+
+- 84ef5ab linter: Avoid linebreaks for markdown links and update plugins docs in the configuration schema. (#15246) (Connor Shea)
+
+
+## [1.25.0] - 2025-10-30
+
+### 🚀 Features
+
+- bd74603 linter: Add support for vitest/valid-title rule (#12085) (Tyler Earls)
+
+
 ## [1.24.0] - 2025-10-22
 
 ### 🐛 Bug Fixes

@@ -1,6 +1,6 @@
 {
   "name": "oxc-transform",
-  "version": "0.95.0",
+  "version": "0.98.0",
   "type": "module",
   "main": "index.js",
   "browser": "browser.js",
@@ -43,6 +43,7 @@
     "access": "public"
   },
   "devDependencies": {
+    "@types/node": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"
   },

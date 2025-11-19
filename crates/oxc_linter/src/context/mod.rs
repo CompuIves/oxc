@@ -135,6 +135,34 @@ impl<'a> LintContext<'a> {
         span.source_text(self.parent.semantic().source_text())
     }
 
+    /// Finds the next occurrence of the given token in the source code,
+    /// starting from the specified position, skipping over comments.
+    #[expect(clippy::cast_possible_truncation)]
+    pub fn find_next_token_from(&self, start: u32, token: &str) -> Option<u32> {
+        let source =
+            self.source_range(Span::new(start, self.parent.semantic().source_text().len() as u32));
+
+        source
+            .match_indices(token)
+            .find(|(a, _)| !self.is_inside_comment(start + *a as u32))
+            .map(|(a, _)| a as u32)
+    }
+
+    /// Finds the next occurrence of the given token within a bounded span,
+    /// starting from the specified position, skipping over comments.
+    ///
+    /// Returns the offset from `start` if the token is found before `end`,
+    /// otherwise returns `None`.
+    #[expect(clippy::cast_possible_truncation)]
+    pub fn find_next_token_within(&self, start: u32, end: u32, token: &str) -> Option<u32> {
+        let source = self.source_range(Span::new(start, end));
+
+        source
+            .match_indices(token)
+            .find(|(a, _)| !self.is_inside_comment(start + *a as u32))
+            .map(|(a, _)| a as u32)
+    }
+
     /// Path to the file currently being linted.
     #[inline]
     pub fn file_path(&self) -> &Path {
@@ -253,10 +281,6 @@ impl<'a> LintContext<'a> {
     /// Use [`LintContext::diagnostic_with_fix`] to provide an automatic fix.
     #[inline]
     pub fn diagnostic(&self, diagnostic: OxcDiagnostic) {
-        #[cfg(not(feature = "language_server"))]
-        self.add_diagnostic(Message::new(diagnostic, PossibleFixes::None));
-
-        #[cfg(feature = "language_server")]
         self.add_diagnostic(
             Message::new(diagnostic, PossibleFixes::None)
                 .with_section_offset(self.parent.current_sub_host().source_text_offset),
@@ -371,10 +395,6 @@ impl<'a> LintContext<'a> {
     {
         let (diagnostic, fix) = self.create_fix(fix_kind, fix, diagnostic);
         if let Some(fix) = fix {
-            #[cfg(not(feature = "language_server"))]
-            self.add_diagnostic(Message::new(diagnostic, PossibleFixes::Single(fix)));
-
-            #[cfg(feature = "language_server")]
             self.add_diagnostic(
                 Message::new(diagnostic, PossibleFixes::Single(fix))
                     .with_section_offset(self.parent.current_sub_host().source_text_offset),
@@ -407,10 +427,6 @@ impl<'a> LintContext<'a> {
         if fixes_result.is_empty() {
             self.diagnostic(diagnostic);
         } else {
-            #[cfg(not(feature = "language_server"))]
-            self.add_diagnostic(Message::new(diagnostic, PossibleFixes::Multiple(fixes_result)));
-
-            #[cfg(feature = "language_server")]
             self.add_diagnostic(
                 Message::new(diagnostic, PossibleFixes::Multiple(fixes_result))
                     .with_section_offset(self.parent.current_sub_host().source_text_offset),

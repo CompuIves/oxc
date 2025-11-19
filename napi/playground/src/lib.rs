@@ -4,7 +4,6 @@ use std::{
     sync::Arc,
 };
 
-use options::OxcCodegenOptions;
 use rustc_hash::FxHashMap;
 
 use napi::Either;
@@ -32,7 +31,7 @@ use oxc::{
 use oxc_formatter::{
     ArrowParentheses, AttributePosition, BracketSameLine, BracketSpacing, Expand, FormatOptions,
     Formatter, IndentStyle, IndentWidth, LineEnding, LineWidth, OperatorPosition, QuoteProperties,
-    QuoteStyle, Semicolons, SortImports, SortOrder, TrailingCommas,
+    QuoteStyle, Semicolons, SortImports, SortOrder, TrailingCommas, get_parse_options,
 };
 use oxc_linter::{
     ConfigStore, ConfigStoreBuilder, ContextSubHost, ExternalPluginStore, LintOptions, Linter,
@@ -44,13 +43,8 @@ use oxc_transformer_plugins::{
     ReplaceGlobalDefinesConfig,
 };
 
-use crate::options::{
-    OxcControlFlowOptions, OxcDefineOptions, OxcFormatterOptions, OxcInjectOptions,
-    OxcIsolatedDeclarationsOptions, OxcLinterOptions, OxcOptions, OxcParserOptions, OxcRunOptions,
-    OxcTransformerOptions,
-};
-
 mod options;
+pub use options::*;
 
 #[derive(Default)]
 #[napi]
@@ -386,7 +380,7 @@ impl Oxc {
             let semantic = semantic_ret.semantic;
             let lint_config = if linter_options.config.is_some() {
                 let oxlintrc =
-                    Oxlintrc::from_string(&linter_options.config.as_ref().unwrap().to_string())
+                    Oxlintrc::from_string(&linter_options.config.as_ref().unwrap().clone())
                         .unwrap_or_default();
                 let config_builder = ConfigStoreBuilder::from_oxlintrc(
                     false,
@@ -514,6 +508,8 @@ impl Oxc {
                 .as_ref()
                 .and_then(|o| o.parse::<SortOrder>().ok())
                 .unwrap_or_default();
+            // TODO: support from options
+            let groups = SortImports::default_groups();
 
             format_options.experimental_sort_imports = Some(SortImports {
                 partition_by_newline: sort_imports_config.partition_by_newline.unwrap_or(false),
@@ -521,6 +517,8 @@ impl Oxc {
                 sort_side_effects: sort_imports_config.sort_side_effects.unwrap_or(false),
                 order,
                 ignore_case: sort_imports_config.ignore_case.unwrap_or(true),
+                newlines_between: sort_imports_config.newlines_between.unwrap_or(true),
+                groups,
             });
         }
 
@@ -537,12 +535,7 @@ impl Oxc {
         let allocator = Allocator::default();
         if run_options.formatter {
             let ret = Parser::new(&allocator, source_text, source_type)
-                .with_options(ParseOptions {
-                    preserve_parens: false,
-                    allow_return_outside_function: true,
-                    allow_v8_intrinsics: true,
-                    parse_regular_expression: false,
-                })
+                .with_options(get_parse_options())
                 .parse();
 
             let format_options = Self::convert_formatter_options(formatter_options);

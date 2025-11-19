@@ -43,7 +43,6 @@ impl<'a> Format<'a> for AstNode<'a, ArenaVec<'a, Argument<'a>>> {
     fn fmt(&self, f: &mut Formatter<'_, 'a>) -> FormatResult<()> {
         let l_paren_token = "(";
         let r_paren_token = ")";
-        let call_like_span = self.parent.span();
 
         let arguments = self.as_ref();
 
@@ -53,33 +52,37 @@ impl<'a> Format<'a> for AstNode<'a, ArenaVec<'a, Argument<'a>>> {
                 [
                     l_paren_token,
                     // `call/* comment1 */(/* comment2 */)` Both comments are dangling comments.
-                    format_dangling_comments(call_like_span).with_soft_block_indent(),
+                    format_dangling_comments(self.parent.span()).with_soft_block_indent(),
                     r_paren_token
                 ]
             );
         }
 
+        let is_simple_module_import = is_simple_module_import(self, f.comments());
+
         let call_expression =
-            if let AstNodes::CallExpression(call) = self.parent { Some(call) } else { None };
+            if !is_simple_module_import && let AstNodes::CallExpression(call) = self.parent {
+                Some(call)
+            } else {
+                None
+            };
 
-        let (is_commonjs_or_amd_call, is_test_call) = call_expression
-            .map(|call| (is_commonjs_or_amd_call(self, call), is_test_call_expression(call)))
-            .unwrap_or_default();
-
-        if is_commonjs_or_amd_call
+        if is_simple_module_import
+            || call_expression.is_some_and(|call| {
+                is_commonjs_or_amd_call(self, call, f)
+                    || ((self.len() != 2
+                        || matches!(
+                            arguments.first(),
+                            Some(
+                                Argument::StringLiteral(_)
+                                    | Argument::TemplateLiteral(_)
+                                    | Argument::TaggedTemplateExpression(_)
+                            )
+                        ))
+                        && is_test_call_expression(call))
+            })
             || is_multiline_template_only_args(self, f.source_text())
             || is_react_hook_with_deps_array(self, f.comments())
-            || (is_test_call && {
-                self.len() != 2
-                    || matches!(
-                        arguments.first(),
-                        Some(
-                            Argument::StringLiteral(_)
-                                | Argument::TemplateLiteral(_)
-                                | Argument::TaggedTemplateExpression(_)
-                        )
-                    )
-            })
         {
             return write!(
                 f,
@@ -121,20 +124,17 @@ impl<'a> Format<'a> for AstNode<'a, ArenaVec<'a, Argument<'a>>> {
             return format_all_args_broken_out(self, true, f);
         }
 
-        if let Some(group_layout) = arguments_grouped_layout(call_like_span, self, f) {
+        if let Some(group_layout) = arguments_grouped_layout(self, f) {
             write_grouped_arguments(self, group_layout, f)
         } else if call_expression.is_some_and(|call| is_long_curried_call(call)) {
+            let trailing_operator = FormatTrailingCommas::All.trailing_separator(f.options());
             write!(
                 f,
                 [
                     l_paren_token,
                     soft_block_indent(&format_once(|f| {
                         f.join_with(soft_line_break_or_space())
-                            .entries_with_trailing_separator(
-                                self.iter(),
-                                ",",
-                                TrailingSeparator::Allowed,
-                            )
+                            .entries_with_trailing_separator(self.iter(), ",", trailing_operator)
                             .finish()
                     })),
                     r_paren_token,
@@ -263,111 +263,161 @@ fn format_all_args_broken_out<'a, 'b>(
 }
 
 pub fn arguments_grouped_layout(
-    call_like_span: Span,
     args: &[Argument],
     f: &Formatter<'_, '_>,
 ) -> Option<GroupedCallArgumentLayout> {
-    if should_group_first_argument(call_like_span, args, f) {
-        Some(GroupedCallArgumentLayout::GroupedFirstArgument)
-    } else if should_group_last_argument(call_like_span, args, f) {
-        Some(GroupedCallArgumentLayout::GroupedLastArgument)
+    // For exactly 2 arguments, we need to check both grouping strategies.
+    // To avoid redundant `can_group_expression_argument` calls, we handle this case specially.
+    if args.len() == 2 {
+        let [first, second] = args else { unreachable!("args.len() == 2 guarantees two elements") };
+        let first = first.as_expression()?;
+        let second = second.as_expression()?;
+
+        // Call `can_group_expression_argument` only once for the second argument
+        let second_can_group = can_group_expression_argument(second, f);
+        let second_can_group_fn = || second_can_group;
+
+        // Check if we should group the last argument (second)
+        if should_group_last_argument_impl(Some(first), second, second_can_group_fn, f) {
+            return Some(GroupedCallArgumentLayout::GroupedLastArgument);
+        }
+
+        // Check if we should group the first argument instead
+        // Reuse the already-computed `second_can_group` value
+        should_group_first_argument(first, second, second_can_group, f)
+            .then_some(GroupedCallArgumentLayout::GroupedFirstArgument)
     } else {
-        None
+        // For other cases (not exactly 2 arguments), only check last argument grouping
+        should_group_last_argument(args, f)
+            .then_some(GroupedCallArgumentLayout::GroupedLastArgument)
     }
 }
 
 /// Checks if the first argument requires grouping
 fn should_group_first_argument(
-    call_like_span: Span,
-    args: &[Argument],
+    first: &Expression,
+    second: &Expression,
+    second_can_group: bool,
     f: &Formatter<'_, '_>,
 ) -> bool {
-    let mut iter = args.iter();
-    match (iter.next().and_then(|a| a.as_expression()), iter.next().and_then(|a| a.as_expression()))
-    {
-        (Some(first), Some(second)) if iter.next().is_none() => {
-            match &first {
-                Expression::FunctionExpression(_) => {}
-                // Arrow expressions that are a plain expression or are a chain
-                // don't get grouped as the first argument, since they'll either
-                // fit entirely on the line or break fully. Only a single arrow
-                // with a block body can be grouped to collapse the braces.
-                Expression::ArrowFunctionExpression(arrow) => {
-                    if arrow.expression {
-                        return false;
-                    }
-                }
-                _ => return false,
+    match first {
+        Expression::FunctionExpression(_) => {}
+        // Arrow expressions that are a plain expression or are a chain
+        // don't get grouped as the first argument, since they'll either
+        // fit entirely on the line or break fully. Only a single arrow
+        // with a block body can be grouped to collapse the braces.
+        Expression::ArrowFunctionExpression(arrow) => {
+            if arrow.expression {
+                return false;
             }
+        }
+        _ => return false,
+    }
 
-            if matches!(
-                second,
-                Expression::ArrowFunctionExpression(_)
-                    | Expression::FunctionExpression(_)
-                    | Expression::ConditionalExpression(_)
-            ) {
+    if matches!(
+        second,
+        Expression::ArrowFunctionExpression(_)
+            | Expression::FunctionExpression(_)
+            | Expression::ConditionalExpression(_)
+    ) {
+        return false;
+    }
+
+    let first_span = first.span();
+
+    // Don't group if there are comments around the first argument:
+    // - Before the first argument
+    // - After the first argument (next non-whitespace is not a comma)
+    // - End-of-line comments between the first and second argument
+    if f.comments().has_comment_before(first_span.start)
+        || !f.source_text().next_non_whitespace_byte_is(first_span.end, b',')
+        || f.comments()
+            .comments_in_range(first_span.end, second.span().start)
+            .iter()
+            .any(|c| f.comments().is_end_of_line_comment(c))
+    {
+        return false;
+    }
+
+    !second_can_group && is_relatively_short_argument(second)
+}
+
+/// Core logic for checking if the last argument should be grouped.
+/// Takes the penultimate argument as an Expression for the 2-argument case,
+/// or extracts it from the arguments array for other cases.
+fn should_group_last_argument_impl(
+    penultimate: Option<&Expression>,
+    last: &Expression,
+    last_can_group_fn: impl FnOnce() -> bool,
+    f: &Formatter<'_, '_>,
+) -> bool {
+    // Check if penultimate and last are the same type (both Object or both Array)
+    if let Some(penultimate) = penultimate
+        && matches!(
+            (penultimate, last),
+            (Expression::ObjectExpression(_), Expression::ObjectExpression(_))
+                | (Expression::ArrayExpression(_), Expression::ArrayExpression(_))
+                | (Expression::TSAsExpression(_), Expression::TSAsExpression(_))
+                | (Expression::TSSatisfiesExpression(_), Expression::TSSatisfiesExpression(_))
+                | (Expression::ArrowFunctionExpression(_), Expression::ArrowFunctionExpression(_))
+                | (Expression::FunctionExpression(_), Expression::FunctionExpression(_))
+        )
+    {
+        return false;
+    }
+
+    let last_span = last.span();
+
+    // Don't group if there are comments around the last argument
+    let has_comment_before_last = if let Some(penultimate) = penultimate {
+        // Check for comments between the penultimate and last argument
+        f.comments().comments_in_range(penultimate.span().end, last_span.start).last().is_some_and(
+            |c| {
+                // Exclude end-of-line comments (treated as previous node's comment)
+                // and comments followed by a comma
+                !f.comments().is_end_of_line_comment(c)
+                    && !f.source_text().next_non_whitespace_byte_is(c.span.end, b',')
+            },
+        )
+    } else {
+        f.comments().has_comment_before(last_span.start)
+    };
+
+    if has_comment_before_last
+        // Check for comments after the last argument
+        || f.comments().comments_after(last_span.end).first().is_some_and(|c|
+        !f.source_text().bytes_contain(last_span.end, c.span.start, b')'))
+    {
+        return false;
+    }
+
+    if !last_can_group_fn() {
+        return false;
+    }
+
+    match last {
+        Expression::ArrayExpression(array) if penultimate.is_some() => {
+            // Not for `useEffect`
+            if matches!(penultimate, Some(Expression::ArrowFunctionExpression(_))) {
                 return false;
             }
 
-            !f.comments().has_comment(call_like_span.start, first.span(), second.span().start)
-                && !can_group_expression_argument(second, f)
-                && is_relatively_short_argument(second)
+            !can_concisely_print_array_list(array.span, &array.elements, f)
         }
-        _ => false,
+        _ => true,
     }
 }
 
 /// Checks if the last argument should be grouped.
-fn should_group_last_argument(
-    call_like_span: Span,
-    args: &[Argument],
-    f: &Formatter<'_, '_>,
-) -> bool {
+fn should_group_last_argument(args: &[Argument], f: &Formatter<'_, '_>) -> bool {
     let mut iter = args.iter();
-    let last = iter.next_back();
+    let Some(last) = iter.next_back().unwrap().as_expression() else {
+        return false;
+    };
 
-    match last.and_then(|arg| arg.as_expression()) {
-        Some(last) => {
-            let penultimate = iter.next_back();
-            if let Some(penultimate) = &penultimate
-                && matches!(
-                    (penultimate, last),
-                    (Argument::ObjectExpression(_), Expression::ObjectExpression(_))
-                        | (Argument::ArrayExpression(_), Expression::ArrayExpression(_))
-                )
-            {
-                return false;
-            }
-
-            let previous_span = penultimate.map_or(call_like_span.start, |a| a.span().end);
-            if f.comments().has_comment(previous_span, last.span(), call_like_span.end) {
-                return false;
-            }
-
-            if !can_group_expression_argument(last, f) {
-                return false;
-            }
-
-            match last {
-                Expression::ArrayExpression(array) if args.len() > 1 => {
-                    // Not for `useEffect`
-                    if args.len() == 2
-                        && matches!(penultimate, Some(Argument::ArrowFunctionExpression(_)))
-                    {
-                        return false;
-                    }
-
-                    if can_concisely_print_array_list(array.span, &array.elements, f) {
-                        return false;
-                    }
-
-                    true
-                }
-                _ => true,
-            }
-        }
-        _ => false,
-    }
+    let penultimate = iter.next_back().and_then(|arg| arg.as_expression());
+    let last_can_group_fn = || can_group_expression_argument(last, f);
+    should_group_last_argument_impl(penultimate, last, last_can_group_fn, f)
 }
 
 /// Check if `ty` is a relatively simple type annotation, allowing a few
@@ -452,20 +502,20 @@ fn is_simple_ts_type(ty: &TSType<'_>) -> bool {
 fn is_relatively_short_argument(argument: &Expression<'_>) -> bool {
     match argument {
         Expression::BinaryExpression(binary) => {
-            SimpleArgument::from(&binary.left).is_simple()
-                && SimpleArgument::from(&binary.right).is_simple()
+            SimpleArgument::from(&binary.left).is_simple_with_depth(1)
+                && SimpleArgument::from(&binary.right).is_simple_with_depth(1)
         }
         Expression::LogicalExpression(logical) => {
-            SimpleArgument::from(&logical.left).is_simple()
-                && SimpleArgument::from(&logical.right).is_simple()
+            SimpleArgument::from(&logical.left).is_simple_with_depth(1)
+                && SimpleArgument::from(&logical.right).is_simple_with_depth(1)
         }
         Expression::TSAsExpression(expr) => {
             is_simple_ts_type(&expr.type_annotation)
-                && SimpleArgument::from(&expr.expression).is_simple()
+                && SimpleArgument::from(&expr.expression).is_simple_with_depth(1)
         }
         Expression::TSSatisfiesExpression(expr) => {
             is_simple_ts_type(&expr.type_annotation)
-                && SimpleArgument::from(&expr.expression).is_simple()
+                && SimpleArgument::from(&expr.expression).is_simple_with_depth(1)
         }
         Expression::RegExpLiteral(_) => true,
         Expression::CallExpression(call) => match call.arguments.len() {
@@ -484,7 +534,6 @@ fn can_group_expression_argument(argument: &Expression<'_>, f: &Formatter<'_, '_
             !object_expression.properties.is_empty()
                 || f.comments().has_comment_in_span(object_expression.span)
         }
-
         Expression::ArrayExpression(array_expression) => {
             !array_expression.elements.is_empty()
                 || f.comments().has_comment_in_span(array_expression.span)
@@ -492,15 +541,12 @@ fn can_group_expression_argument(argument: &Expression<'_>, f: &Formatter<'_, '_
         Expression::TSTypeAssertion(assertion_expression) => {
             can_group_expression_argument(&assertion_expression.expression, f)
         }
-
         Expression::TSAsExpression(as_expression) => {
             can_group_expression_argument(&as_expression.expression, f)
         }
-
         Expression::TSSatisfiesExpression(satisfies_expression) => {
             can_group_expression_argument(&satisfies_expression.expression, f)
         }
-
         Expression::ArrowFunctionExpression(arrow_function) => {
             can_group_arrow_function_expression_argument(arrow_function, false, f)
         }
@@ -653,21 +699,16 @@ fn write_grouped_arguments<'a>(
         return format_all_elements_broken_out(node, elements.into_iter(), true, f);
     }
 
-    // We now cache the delimiter tokens. This is needed because `[crate::best_fitting]` will try to
-    // print each version first
-    let l_paren_token = "(".memoized();
-    let r_paren_token = ")".memoized();
-
     // First write the most expanded variant because it needs `arguments`.
     let most_expanded = {
         let mut buffer = VecBuffer::new(f.state_mut());
         buffer.write_element(FormatElement::Tag(Tag::StartEntry))?;
 
-        format_all_elements_broken_out(node, elements.iter().cloned(), true, &mut buffer);
+        format_all_elements_broken_out(node, elements.iter().cloned(), true, &mut buffer)?;
 
         buffer.write_element(FormatElement::Tag(Tag::EndEntry))?;
 
-        buffer.into_vec()
+        buffer.into_vec().into_bump_slice()
     };
 
     // Now reformat the first or last argument if they happen to be a function or arrow function expression.
@@ -682,71 +723,44 @@ fn write_grouped_arguments<'a>(
         match group_layout {
             GroupedCallArgumentLayout::GroupedFirstArgument => {
                 let argument = node.first().unwrap();
-                let mut first = grouped.first_mut().unwrap();
-                first.0 = f.intern(&format_once(|f| {
+                let interned = f.intern(&format_once(|f| {
                     FormatGroupedFirstArgument { argument }.fmt(f)?;
                     write!(f, (last_index != 0).then_some(","))
                 }));
+
+                // Turns out, using the grouped layout isn't a good fit because some parameters of the
+                // grouped function or arrow expression break. In that case, fall back to the all args expanded
+                // formatting.
+                // This back tracking is required because testing if the grouped argument breaks would also return `true`
+                // if any content of the function body breaks. But, as far as this is concerned, it's only interested if
+                // any content in the signature breaks.
+                if matches!(interned, Err(FormatError::PoorLayout)) {
+                    return format_all_elements_broken_out(node, grouped.into_iter(), true, f);
+                }
+
+                grouped.first_mut().unwrap().0 = interned;
             }
             GroupedCallArgumentLayout::GroupedLastArgument => {
                 let argument = node.last().unwrap();
-                let mut last = grouped.last_mut().unwrap();
-                last.0 = f.intern(&format_once(|f| {
+                let interned = f.intern(&format_once(|f| {
                     FormatGroupedLastArgument { argument, is_only: only_one_argument }.fmt(f)
                 }));
+
+                // Turns out, using the grouped layout isn't a good fit because some parameters of the
+                // grouped function or arrow expression break. In that case, fall back to the all args expanded
+                // formatting.
+                // This back tracking is required because testing if the grouped argument breaks would also return `true`
+                // if any content of the function body breaks. But, as far as this is concerned, it's only interested if
+                // any content in the signature breaks.
+                if matches!(interned, Err(FormatError::PoorLayout)) {
+                    return format_all_elements_broken_out(node, grouped.into_iter(), true, f);
+                }
+
+                let mut last = grouped.last_mut().unwrap();
+                grouped.last_mut().unwrap().0 = interned;
             }
         }
     }
-
-    // Write the most flat variant with the first or last argument grouped.
-    let most_flat = {
-        // let snapshot = f.state_snapshot();
-        let mut buffer = VecBuffer::new(f.state_mut());
-        buffer.write_element(FormatElement::Tag(Tag::StartEntry))?;
-
-        let result = write!(
-            buffer,
-            [
-                l_paren_token,
-                format_with(|f| {
-                    f.join_with(soft_line_break_or_space())
-                        .entries(grouped.iter().map(|(element, _)| {
-                            format_once(|f| {
-                                if let Some(element) = element.clone()? {
-                                    f.write_element(element)
-                                } else {
-                                    Ok(())
-                                }
-                            })
-                        }))
-                        .finish()
-                }),
-                r_paren_token,
-            ]
-        );
-
-        // Turns out, using the grouped layout isn't a good fit because some parameters of the
-        // grouped function or arrow expression break. In that case, fall back to the all args expanded
-        // formatting.
-        // This back tracking is required because testing if the grouped argument breaks would also return `true`
-        // if any content of the function body breaks. But, as far as this is concerned, it's only interested if
-        // any content in the signature breaks.
-        if matches!(result, Err(FormatError::PoorLayout)) {
-            drop(buffer);
-            // f.restore_state_snapshot(snapshot);
-
-            let mut most_expanded_iter = most_expanded.into_iter();
-            // Skip over the Start/EndEntry items.
-            most_expanded_iter.next_back();
-
-            // `skip(1)` is skipping the `StartEntry` tag
-            return f.write_elements(most_expanded_iter.skip(1));
-        }
-
-        buffer.write_element(FormatElement::Tag(Tag::EndEntry))?;
-
-        buffer.into_vec().into_boxed_slice()
-    };
 
     // Write the second variant that forces the group of the first/last argument to expand.
     let middle_variant = {
@@ -757,17 +771,17 @@ fn write_grouped_arguments<'a>(
         write!(
             buffer,
             [
-                l_paren_token,
+                "(",
                 format_once(|f| {
                     let mut joiner = f.join_with(soft_line_break_or_space());
 
-                    for (i, (element, _)) in grouped.into_iter().enumerate() {
+                    for (i, (element, _)) in grouped.iter().enumerate() {
                         if (group_layout.is_grouped_first() && i == 0)
                             || (group_layout.is_grouped_last() && i == last_index)
                         {
                             joiner.entry(
                                 &group(&format_once(|f| {
-                                    if let Some(arg_element) = element? {
+                                    if let Some(arg_element) = element.clone()? {
                                         f.write_element(arg_element)
                                     } else {
                                         Ok(())
@@ -777,7 +791,7 @@ fn write_grouped_arguments<'a>(
                             );
                         } else {
                             joiner.entry(&format_once(|f| {
-                                if let Some(arg_element) = element? {
+                                if let Some(arg_element) = element.clone()? {
                                     f.write_element(arg_element)
                                 } else {
                                     Ok(())
@@ -788,22 +802,53 @@ fn write_grouped_arguments<'a>(
 
                     joiner.finish()
                 }),
-                r_paren_token
+                ")"
             ]
         )?;
 
         buffer.write_element(FormatElement::Tag(Tag::EndEntry))?;
 
-        buffer.into_vec().into_boxed_slice()
+        buffer.into_vec().into_bump_slice()
     };
 
     // If the grouped content breaks, then we can skip the most_flat variant,
     // since we already know that it won't be fitting on a single line.
     let variants = if grouped_breaks {
         write!(f, [expand_parent()])?;
-        vec![middle_variant, most_expanded.into_boxed_slice()]
+        ArenaVec::from_array_in([middle_variant, most_expanded], f.context().allocator())
     } else {
-        vec![most_flat, middle_variant, most_expanded.into_boxed_slice()]
+        // Write the most flat variant with the first or last argument grouped.
+        let most_flat = {
+            let mut buffer = VecBuffer::new(f.state_mut());
+            buffer.write_element(FormatElement::Tag(Tag::StartEntry))?;
+
+            let result = write!(
+                buffer,
+                [
+                    "(",
+                    format_once(|f| {
+                        f.join_with(soft_line_break_or_space())
+                            .entries(grouped.into_iter().map(|(element, _)| {
+                                format_once(move |f| {
+                                    if let Some(element) = element? {
+                                        f.write_element(element)
+                                    } else {
+                                        Ok(())
+                                    }
+                                })
+                            }))
+                            .finish()
+                    }),
+                    ")",
+                ]
+            );
+
+            buffer.write_element(FormatElement::Tag(Tag::EndEntry))?;
+
+            buffer.into_vec().into_bump_slice()
+        };
+
+        ArenaVec::from_array_in([most_flat, middle_variant, most_expanded], f.context().allocator())
     };
 
     // SAFETY: Safe because variants is guaranteed to contain exactly 3 entries:
@@ -828,16 +873,14 @@ impl<'a> Format<'a> for FormatGroupedFirstArgument<'a, '_> {
         match self.argument.as_ast_nodes() {
             // Call the arrow function formatting but explicitly passes the call argument layout down
             // so that the arrow function formatting removes any soft line breaks between parameters and the return type.
-            AstNodes::ArrowFunctionExpression(arrow) => with_token_tracking_disabled(f, |f| {
-                arrow.fmt_with_options(
-                    FormatJsArrowFunctionExpressionOptions {
-                        cache_mode: FunctionCacheMode::Cache,
-                        call_arg_layout: Some(GroupedCallArgumentLayout::GroupedFirstArgument),
-                        ..FormatJsArrowFunctionExpressionOptions::default()
-                    },
-                    f,
-                )
-            }),
+            AstNodes::ArrowFunctionExpression(arrow) => arrow.fmt_with_options(
+                FormatJsArrowFunctionExpressionOptions {
+                    cache_mode: FunctionCacheMode::Cache,
+                    call_arg_layout: Some(GroupedCallArgumentLayout::GroupedFirstArgument),
+                    ..FormatJsArrowFunctionExpressionOptions::default()
+                },
+                f,
+            ),
 
             // For all other nodes, use the normal formatting (which already has been cached)
             _ => self.argument.fmt(f),
@@ -862,56 +905,85 @@ impl<'a> Format<'a> for FormatGroupedLastArgument<'a, '_> {
             AstNodes::Function(function)
                 if !self.is_only || function_has_only_simple_parameters(&function.params) =>
             {
-                with_token_tracking_disabled(f, |f| {
-                    function.fmt_with_options(
-                        FormatFunctionOptions {
-                            cache_mode: FunctionCacheMode::Cache,
-                            call_argument_layout: Some(
-                                GroupedCallArgumentLayout::GroupedLastArgument,
-                            ),
-                        },
-                        f,
-                    )
-                })
-            }
-
-            AstNodes::ArrowFunctionExpression(arrow) => with_token_tracking_disabled(f, |f| {
-                arrow.fmt_with_options(
-                    FormatJsArrowFunctionExpressionOptions {
+                function.fmt_with_options(
+                    FormatFunctionOptions {
                         cache_mode: FunctionCacheMode::Cache,
-                        call_arg_layout: Some(GroupedCallArgumentLayout::GroupedLastArgument),
-                        ..FormatJsArrowFunctionExpressionOptions::default()
+                        call_argument_layout: Some(GroupedCallArgumentLayout::GroupedLastArgument),
                     },
                     f,
                 )
-            }),
+            }
+
+            AstNodes::ArrowFunctionExpression(arrow) => arrow.fmt_with_options(
+                FormatJsArrowFunctionExpressionOptions {
+                    cache_mode: FunctionCacheMode::Cache,
+                    call_arg_layout: Some(GroupedCallArgumentLayout::GroupedLastArgument),
+                    ..FormatJsArrowFunctionExpressionOptions::default()
+                },
+                f,
+            ),
             _ => self.argument.fmt(f),
         }
     }
-}
-
-/// Disable the token tracking because it is necessary to format function/arrow expressions slightly different.
-fn with_token_tracking_disabled<'a, F: FnOnce(&mut Formatter<'_, 'a>) -> R, R>(
-    f: &mut Formatter<'_, 'a>,
-    callback: F,
-) -> R {
-    // let was_disabled = f.state().is_token_tracking_disabled();
-    // f.state_mut().set_token_tracking_disabled(true);
-
-    // f.state_mut().set_token_tracking_disabled(was_disabled);
-
-    callback(f)
 }
 
 fn function_has_only_simple_parameters(params: &FormalParameters<'_>) -> bool {
     has_only_simple_parameters(params, false)
 }
 
-/// Tests if this is a call to commonjs [`require`](https://nodejs.org/api/modules.html#requireid)
-/// or amd's [`define`](https://github.com/amdjs/amdjs-api/wiki/AMD#define-function-) function.
+/// Tests if this a simple module import like `import("module-name")` or `require("module-name")`.
+pub fn is_simple_module_import(
+    arguments: &AstNode<'_, ArenaVec<'_, Argument<'_>>>,
+    comments: &Comments,
+) -> bool {
+    if arguments.len() != 1 {
+        return false;
+    }
+
+    match arguments.parent {
+        AstNodes::ImportExpression(_) => {}
+        AstNodes::CallExpression(call) => {
+            match &call.callee {
+                Expression::StaticMemberExpression(member) => match member.property.name.as_str() {
+                    "resolve" => {
+                        match &member.object {
+                            Expression::Identifier(ident) if ident.name.as_str() == "require" => {
+                                // `require.resolve("foo")`
+                            }
+                            Expression::MetaProperty(_) => {
+                                // `import.meta.resolve("foo")`
+                            }
+                            _ => return false,
+                        }
+                    }
+                    "paths" => {
+                        if !matches!(
+                        &member.object, Expression::StaticMemberExpression(member)
+                        if matches!(&member.object, Expression::Identifier(ident)
+                            if ident.name == "require") && member.property.name.as_str() == "resolve"
+                        ) {
+                            return false;
+                        }
+                    }
+                    _ => return false,
+                },
+                _ => {
+                    return false;
+                }
+            }
+        }
+        _ => return false,
+    }
+
+    matches!(arguments.as_ref()[0], Argument::StringLiteral(_))
+        && !comments.has_comment_before(arguments.parent.span().end)
+}
+
+/// Tests if amd's [`define`](https://github.com/amdjs/amdjs-api/wiki/AMD#define-function-) function.
 fn is_commonjs_or_amd_call(
     arguments: &[Argument<'_>],
     call: &AstNode<'_, CallExpression<'_>>,
+    f: &Formatter<'_, '_>,
 ) -> bool {
     let Expression::Identifier(ident) = &call.callee else {
         return false;
@@ -919,8 +991,11 @@ fn is_commonjs_or_amd_call(
 
     match ident.name.as_str() {
         "require" => {
+            let first_argument = &arguments[0];
+            if f.comments().has_comment_before(first_argument.span().start) {
+                return false;
+            }
             match arguments.len() {
-                0 => false,
                 // `require` can be called with any expression that resolves to a
                 // string. This check is only an escape hatch to allow a complex
                 // expression to break rather than group onto the previous line.
@@ -934,7 +1009,9 @@ fn is_commonjs_or_amd_call(
                 //   require(
                 //     path.join(__dirname, 'relative/path')
                 //   );
-                1 => matches!(arguments.first(), Some(Argument::StringLiteral(_))),
+                1 => {
+                    matches!(first_argument, Argument::StringLiteral(_))
+                }
                 _ => true,
             }
         }

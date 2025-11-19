@@ -68,6 +68,7 @@ impl Gen for Hashbang<'_> {
 
 impl Gen for Directive<'_> {
     fn r#gen(&self, p: &mut Codegen, _ctx: Context) {
+        p.print_comments_at(self.span.start);
         p.add_source_mapping(self.span);
         p.print_indent();
         // A Use Strict Directive may not contain an EscapeSequence or LineContinuation.
@@ -154,6 +155,12 @@ impl Gen for Statement<'_> {
             Self::DebuggerStatement(stmt) => stmt.print(p, ctx),
             // TypeScript-specific (less common)
             Self::TSModuleDeclaration(decl) => {
+                p.print_comments_at(decl.span.start);
+                p.print_indent();
+                decl.print(p, ctx);
+                p.print_soft_newline();
+            }
+            Self::TSGlobalDeclaration(decl) => {
                 p.print_comments_at(decl.span.start);
                 p.print_indent();
                 decl.print(p, ctx);
@@ -964,6 +971,7 @@ impl Gen for ExportNamedDeclaration<'_> {
                 Declaration::FunctionDeclaration(decl) => decl.print(p, ctx),
                 Declaration::ClassDeclaration(decl) => decl.print(p, ctx),
                 Declaration::TSModuleDeclaration(decl) => decl.print(p, ctx),
+                Declaration::TSGlobalDeclaration(decl) => decl.print(p, ctx),
                 Declaration::TSTypeAliasDeclaration(decl) => decl.print(p, ctx),
                 Declaration::TSInterfaceDeclaration(decl) => decl.print(p, ctx),
                 Declaration::TSEnumDeclaration(decl) => decl.print(p, ctx),
@@ -2817,20 +2825,21 @@ impl Gen for BindingPatternKind<'_> {
 impl Gen for ObjectPattern<'_> {
     fn r#gen(&self, p: &mut Codegen, ctx: Context) {
         p.add_source_mapping(self.span);
-        p.print_ascii_byte(b'{');
-        if !self.is_empty() {
-            p.print_soft_space();
+        if self.is_empty() {
+            p.print_str("{}");
+            return;
         }
+        p.print_ascii_byte(b'{');
+        p.print_soft_space();
         p.print_list(&self.properties, ctx);
         if let Some(rest) = &self.rest {
             if !self.properties.is_empty() {
                 p.print_comma();
+                p.print_soft_space();
             }
             rest.print(p, ctx);
         }
-        if !self.is_empty() {
-            p.print_soft_space();
-        }
+        p.print_soft_space();
         p.print_ascii_byte(b'}');
     }
 }
@@ -3605,11 +3614,8 @@ impl Gen for TSModuleDeclaration<'_> {
             p.print_str("declare ");
         }
         p.print_str(self.kind.as_str());
-        // If the kind is global, then the id is also `global`, so we don't need to print it
-        if !self.kind.is_global() {
-            p.print_space_before_identifier();
-            self.id.print(p, ctx);
-        }
+        p.print_space_before_identifier();
+        self.id.print(p, ctx);
 
         if let Some(body) = &self.body {
             let mut body = body;
@@ -3644,6 +3650,18 @@ impl Gen for TSModuleDeclarationName<'_> {
             Self::Identifier(ident) => ident.print(p, ctx),
             Self::StringLiteral(s) => p.print_string_literal(s, false),
         }
+    }
+}
+
+impl Gen for TSGlobalDeclaration<'_> {
+    fn r#gen(&self, p: &mut Codegen, ctx: Context) {
+        if self.declare {
+            p.print_str("declare ");
+        }
+        p.print_str("global");
+        p.print_soft_space();
+        self.body.print(p, ctx);
+        p.needs_semicolon = false;
     }
 }
 

@@ -6,16 +6,20 @@ import { fileURLToPath } from 'node:url';
 
 const OXLINT_BIN_NAME = 'oxlint';
 const OXLS_BIN_NAME = 'oxc_language_server';
-const OXLINT_ROOT = resolve(fileURLToPath(import.meta.url), '../..'); // <REPO ROOT>/npm/oxlint
-const PACKAGES_ROOT = resolve(OXLINT_ROOT, '..'); // <REPO ROOT>/npm
+/** <REPO ROOT>/npm/oxlint` */
+const OXLINT_ROOT = resolve(fileURLToPath(import.meta.url), '../..');
+/** `<REPO ROOT>/npm` */
+const PACKAGES_ROOT = resolve(OXLINT_ROOT, '..');
 const REPO_ROOT = resolve(PACKAGES_ROOT, '..');
-const MANIFEST_PATH = resolve(OXLINT_ROOT, 'package.json'); // <REPO ROOT>/npm/oxlint/package.json
-const OXLINT_DIST_SRC = resolve(REPO_ROOT, 'apps/oxlint/dist'); // <REPO ROOT>/apps/oxlint/dist
-const OXLINT_DIST_DEST = resolve(OXLINT_ROOT, 'dist'); // <REPO ROOT>/npm/oxlint/dist
+/** `<REPO ROOT>/npm/oxlint/package.json` */
+const MANIFEST_PATH = resolve(OXLINT_ROOT, 'package.json');
+/** `<REPO ROOT>/apps/oxlint/dist` */
+const OXLINT_DIST_SRC = resolve(REPO_ROOT, 'apps/oxlint/dist');
+/** `<REPO ROOT>/npm/oxlint/dist` */
+const OXLINT_DIST_DEST = resolve(OXLINT_ROOT, 'dist');
 
-const rootManifest = JSON.parse(
-  fs.readFileSync(MANIFEST_PATH).toString('utf-8'),
-);
+/** Parsed `<REPO ROOT>/npm/oxlint/package.json` */
+const rootManifest = JSON.parse(fs.readFileSync(MANIFEST_PATH).toString('utf-8'));
 
 const LIBC_MAPPING = {
   gnu: 'glibc',
@@ -80,16 +84,12 @@ function generateNativePackage(target) {
 }
 
 function writeManifest() {
+  /** `<REPO ROOT>/npm/oxlint/package.json` */
   const manifestPath = resolve(PACKAGES_ROOT, OXLINT_BIN_NAME, 'package.json');
 
-  const manifestData = JSON.parse(
-    fs.readFileSync(manifestPath).toString('utf-8'),
-  );
+  const manifestData = JSON.parse(fs.readFileSync(manifestPath).toString('utf-8'));
 
-  const nativePackages = TARGETS.map((target) => [
-    `@${OXLINT_BIN_NAME}/${target}`,
-    rootManifest.version,
-  ]);
+  const nativePackages = TARGETS.map((target) => [`@${OXLINT_BIN_NAME}/${target}`, rootManifest.version]);
 
   manifestData.version = rootManifest.version;
   manifestData.optionalDependencies = Object.fromEntries(nativePackages);
@@ -97,11 +97,11 @@ function writeManifest() {
   // Do not automatically install 'oxlint-tsgolint'.
   // https://docs.npmjs.com/cli/v11/configuring-npm/package-json#peerdependenciesmeta
   manifestData.peerDependencies = {
-    'oxlint-tsgolint': '>=0.2.0',
+    'oxlint-tsgolint': '>=0.7.1',
   };
   manifestData.peerDependenciesMeta = {
     'oxlint-tsgolint': {
-      'optional': true,
+      optional: true,
     },
   };
 

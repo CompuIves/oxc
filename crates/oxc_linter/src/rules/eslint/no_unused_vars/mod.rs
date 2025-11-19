@@ -88,7 +88,7 @@ declare_oxc_lint!(
     ///
     /// The original ESLint rule recognizes `/* exported variableName */`
     /// comments as a way to indicate that a variable is used in another script
-    /// and should not be considered unused. Since ES6 modules are now a TC39
+    /// and should not be considered unused. Since ES modules are now a TC39
     /// standard, Oxlint does not support this feature.
     ///
     /// ### Examples
@@ -183,7 +183,7 @@ declare_oxc_lint!(
     /// ```js
     /// /* exported global_var */
     ///
-    /// // Not respected, use ES6 modules instead.
+    /// // Not respected, use ES modules instead.
     /// var global_var = 42;
     /// ```
     NoUnusedVars,
@@ -396,15 +396,12 @@ impl Symbol<'_, '_> {
                 flags.contains(ScopeFlags::TsModuleBlock)
             })
             .any(|ambient_module_scope_id| {
-                let AstKind::TSModuleDeclaration(module) = self
-                    .nodes()
-                    .get_node(self.scoping().get_node_id(ambient_module_scope_id))
-                    .kind()
-                else {
-                    return false;
-                };
-
-                module.kind.is_global()
+                matches!(
+                    self.nodes()
+                        .get_node(self.scoping().get_node_id(ambient_module_scope_id))
+                        .kind(),
+                    AstKind::TSGlobalDeclaration(_)
+                )
             })
     }
 }

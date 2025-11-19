@@ -5,9 +5,47 @@
 
 import { initSourceText, sourceText } from './source_code.js';
 
-import type { LineColumn, Location, Node } from './types.ts';
+import type { Node } from './types.ts';
 
 const { defineProperty } = Object;
+
+/**
+ * Range of source offsets.
+ */
+export type Range = [number, number];
+
+/**
+ * Interface for any type which has `range` field.
+ */
+export interface Ranged {
+  range: Range;
+}
+
+/**
+ * Interface for any type which has location properties.
+ */
+export interface Span extends Ranged {
+  start: number;
+  end: number;
+  loc: Location;
+}
+
+/**
+ * Source code location.
+ */
+export interface Location {
+  start: LineColumn;
+  end: LineColumn;
+}
+
+/**
+ * Line number + column number pair.
+ * `line` is 1-indexed, `column` is 0-indexed.
+ */
+export interface LineColumn {
+  line: number;
+  column: number;
+}
 
 // Pattern for splitting source text into lines
 const LINE_BREAK_PATTERN = /\r\n|[\r\n\u2028\u2029]/gu;
@@ -37,11 +75,13 @@ export function initLines(): void {
    */
 
   // Note: `lineStartOffsets` starts as `[0]`
-  let lastOffset = 0, offset, match;
-  while ((match = LINE_BREAK_PATTERN.exec(sourceText))) {
+  let lastOffset = 0,
+    offset,
+    match;
+  while ((match = LINE_BREAK_PATTERN.exec(sourceText)) !== null) {
     offset = match.index;
     lines.push(sourceText.slice(lastOffset, offset));
-    lineStartOffsets.push(lastOffset = offset + match[0].length);
+    lineStartOffsets.push((lastOffset = offset + match[0].length));
   }
   lines.push(sourceText.slice(lastOffset));
 }
@@ -89,7 +129,9 @@ export function getLineColumnFromOffset(offset: number): LineColumn {
  */
 function getLineColumnFromOffsetUnchecked(offset: number): LineColumn {
   // Binary search `lineStartOffsets` for the line containing `offset`
-  let low = 0, high = lineStartOffsets.length, mid: number;
+  let low = 0,
+    high = lineStartOffsets.length,
+    mid: number;
   do {
     mid = ((low + high) / 2) | 0; // Use bitwise OR to floor the division
     if (offset < lineStartOffsets[mid]) {

@@ -1,7 +1,7 @@
 import { Worker } from 'node:worker_threads';
 import { describe, expect, it, test } from 'vitest';
 
-import { parseAsync, parseSync } from '../src-js/index.js';
+import { parse, parseSync } from '../src-js/index.js';
 import type {
   ExpressionStatement,
   ParserOptions,
@@ -19,27 +19,27 @@ describe('parse', () => {
   });
 
   it('matches output', async () => {
-    const ret = await parseAsync('test.js', code);
+    const ret = await parse('test.js', code);
     expect(ret.program.body.length).toBe(1);
     expect(ret.errors.length).toBe(0);
     expect(ret.comments.length).toBe(1);
 
     const comment = ret.comments[0];
     expect(comment).toEqual({
-      'type': 'Block',
-      'start': 0,
-      'end': 13,
-      'value': ' comment ',
+      type: 'Block',
+      start: 0,
+      end: 13,
+      value: ' comment ',
     });
     expect(code.substring(comment.start, comment.end)).toBe('/*' + comment.value + '*/');
   });
 
   it('checks semantic', async () => {
     const code = 'let x; let x;';
-    let ret = await parseAsync('test.js', code);
+    let ret = await parse('test.js', code);
     expect(ret.errors.length).toBe(0);
 
-    ret = await parseAsync('test.js', code, {
+    ret = await parse('test.js', code, {
       showSemanticErrors: true,
     });
     expect(ret.errors.length).toBe(1);
@@ -340,7 +340,7 @@ describe('parse', () => {
                 raw: '\\uD800\\uDBFF',
                 cooked: '\ud800\udbff',
               },
-              'tail': false,
+              tail: false,
             },
             {
               type: 'TemplateElement',
@@ -350,7 +350,7 @@ describe('parse', () => {
                 raw: '\\uD800\\uDBFF',
                 cooked: '\ud800\udbff',
               },
-              'tail': true,
+              tail: true,
             },
           ],
         },
@@ -568,7 +568,7 @@ describe('parse', () => {
                 raw: '�\\u{FFFD}',
                 cooked: '��',
               },
-              'tail': false,
+              tail: false,
             },
             {
               type: 'TemplateElement',
@@ -578,7 +578,7 @@ describe('parse', () => {
                 raw: '�\\u{FFFD}',
                 cooked: '��',
               },
-              'tail': true,
+              tail: true,
             },
           ],
         },
@@ -614,7 +614,7 @@ describe('parse', () => {
                 raw: '�\\u{FFFD}\\uD800',
                 cooked: '��\ud800',
               },
-              'tail': false,
+              tail: false,
             },
             {
               type: 'TemplateElement',
@@ -624,7 +624,7 @@ describe('parse', () => {
                 raw: '\\uDBFF�\\u{FFFD}',
                 cooked: '\udbff��',
               },
-              'tail': true,
+              tail: true,
             },
           ],
         },
@@ -722,12 +722,12 @@ describe('parse', () => {
 describe('UTF-16 span', () => {
   it('basic', async () => {
     const code = "'🤨'";
-    const utf16 = await parseAsync('test.js', code);
+    const utf16 = await parse('test.js', code);
     expect(utf16.program.end).toMatchInlineSnapshot(`4`);
   });
 
   it('comment', async () => {
-    const ret = await parseAsync('test.js', `// ∞`);
+    const ret = await parse('test.js', `// ∞`);
     expect(ret.comments).toMatchInlineSnapshot(`
       [
         {
@@ -741,7 +741,7 @@ describe('UTF-16 span', () => {
   });
 
   it('module record', async () => {
-    const ret = await parseAsync('test.js', `"🤨";import x from "x"; export { x };import("y");import.meta.z`);
+    const ret = await parse('test.js', `"🤨";import x from "x"; export { x };import("y");import.meta.z`);
     expect(ret.module).toMatchInlineSnapshot(`
       {
         "dynamicImports": [
@@ -825,7 +825,7 @@ describe('UTF-16 span', () => {
   });
 
   it('error', async () => {
-    const ret = await parseAsync('test.js', `"🤨";asdf asdf`);
+    const ret = await parse('test.js', `"🤨";asdf asdf`);
     expect(ret.errors).toMatchInlineSnapshot(`
       [
         {
@@ -836,9 +836,9 @@ describe('UTF-16 span', () => {
        1 | "🤨";asdf asdf
          :          ^
          \`----
-        help: Try insert a semicolon here
+        help: Try inserting a semicolon here
       ",
-          "helpMessage": "Try insert a semicolon here",
+          "helpMessage": "Try inserting a semicolon here",
           "labels": [
             {
               "end": 9,
@@ -861,15 +861,15 @@ describe('error', () => {
     expect(ret.errors.length).toBe(1);
     delete ret.errors[0].codeframe;
     expect(ret.errors[0]).toStrictEqual({
-      'helpMessage': 'Try insert a semicolon here',
-      'labels': [
+      helpMessage: 'Try inserting a semicolon here',
+      labels: [
         {
-          'end': 4,
-          'start': 4,
+          end: 4,
+          start: 4,
         },
       ],
-      'message': 'Expected a semicolon or an implicit semicolon after a statement, but found none',
-      'severity': 'Error',
+      message: 'Expected a semicolon or an implicit semicolon after a statement, but found none',
+      severity: 'Error',
     });
   });
 });

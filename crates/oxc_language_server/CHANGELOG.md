@@ -4,6 +4,64 @@ All notable changes to this package will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0).
 
+## [1.29.0] - 2025-11-17
+
+### 🚀 Features
+
+- ac5c2ab lsp/fmt: Support ignore files & patterns (#15647) (Sysix)
+- 4c62ffa language_server: Add `run_server` helper for CLI tools (#15609) (Sysix)
+
+### ⚡ Performance
+
+- 7528db4 language_server: Pass file content as a referenced `String` (#15568) (Sysix)
+- ccfd935 language_server: Avoid `Mutex` in `ServerLinter` (#15516) (Sysix)
+
+## [1.27.0] - 2025-11-10
+
+### 🐛 Bug Fixes
+
+- ecf2f7b language_server: Fail gracefully when tsgolint executable not found (#15436) (camc314)
+
+### ⚡ Performance
+
+- 25d577e language_server: Start tools in parallel (#15500) (Sysix)
+
+## [1.26.0] - 2025-11-05
+
+### 🚀 Features
+
+- 798216b language_server: Respect disable directives for type-aware rules (#15170) (Sysix)
+
+### 🐛 Bug Fixes
+
+- e0edaef language-server: Disable tsgolint test on big endian (#15331) (camc314)
+- 86cfae1 language-server: Log error if tsgolint fails to run (#15228) (camc314)
+- 80a187c linter: Add offset for parsing error in partial loading files (#15075) (Liang Mi)
+
+### 🚜 Refactor
+
+- 778b0b6 language_server: Remove `ServerLinterDiagnostics` (#15169) (Sysix)
+- 10732e8 language_server: `Backend` checks the correct `LintOptions::Run` (#15166) (Sysix)
+- e70a37f language_server: Use `LintRunner` (#14472) (Sysix)
+
+### 🧪 Testing
+
+- 48e646b oxlint/lsp: Update snapshot for invalid syntax test (#15191) (Sysix)
+
+
+## [1.25.0] - 2025-10-30
+
+### 💥 BREAKING CHANGES
+
+- 659fd37 linter: [**BREAKING**] `tsgolint`: request fixes when necessary (#15048) (camchenry)
+
+### 🚜 Refactor
+
+- b1e1531 language_server: Extract library interface from main.rs (#15036) (Boshen)
+- 5de99c2 formatter: Export unified way to get_parse_options (#15027) (leaysgur)
+- b55df7f language_server: Move sub option for `flags` to the root + deprecate flags (#14933) (Sysix)
+
+
 ## [1.24.0] - 2025-10-22
 
 ### 🚀 Features

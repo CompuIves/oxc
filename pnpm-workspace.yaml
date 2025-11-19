@@ -9,30 +9,19 @@ packages:
   - tasks/mcp
 
 catalog:
-  '@napi-rs/cli': 3.4.0
+  '@napi-rs/cli': 3.4.1
   '@napi-rs/wasm-runtime': 1.0.7
-  publint: 0.3.14
+  '@types/node': ^24.0.0
+  publint: 0.3.15
+  tsdown: 0.16.5
   typescript: 5.9.3
-  vitest: 3.2.4
+  vitest: 4.0.10
 
-minimumReleaseAge: 1440
+onlyBuiltDependencies:
+  - '@vscode/vsce-sign@2.0.8'
+  - esbuild@0.25.11
 
-minimumReleaseAgeExclude:
-  - '@napi-rs/*'
-  - '@oxc-project/*'
-  - '@oxfmt/*'
-  - '@oxlint-tsgolint/*'
-  - '@oxlint/*'
-  - '@rolldown/*'
-  - oxfmt
-  - oxlint
-  - oxlint-tsgolint
-  - rolldown
-  - rolldown-plugin-dts
-  - rolldown-vite
-  - tsdown
-  - vite
-  - vitepress
-  - vitest
+patchedDependencies:
+  '@typescript-eslint/scope-manager': patches/@typescript-eslint__scope-manager.patch
 
 verifyDepsBeforeRun: install

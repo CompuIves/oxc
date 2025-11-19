@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { parseSync, Visitor, visitorKeys, type VisitorObject } from '../src-js/index.js';
 
 describe('visit', () => {
-  // eslint-disable-next-line vitest/expect-expect
+  // oxlint-disable-next-line vitest/expect-expect
   it('empty visitor', () => {
     const code = 'const x = { y: 123 }';
     const { program } = parseSync('test.js', code);
@@ -245,12 +245,7 @@ describe('visit', () => {
     const code2 = 'let z';
     const program2 = parseSync('test.js', code2).program;
     visitor.visit(program2);
-    expect(visited).toStrictEqual([
-      'enter: Program',
-      'enter: Identifier z',
-      'exit: Identifier z',
-      'exit: Program',
-    ]);
+    expect(visited).toStrictEqual(['enter: Program', 'enter: Identifier z', 'exit: Identifier z', 'exit: Program']);
   });
 });
 

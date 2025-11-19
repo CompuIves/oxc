@@ -2,6 +2,7 @@ use oxc_ast::AstKind;
 use oxc_diagnostics::OxcDiagnostic;
 use oxc_macros::declare_oxc_lint;
 use oxc_span::Span;
+use schemars::JsonSchema;
 use serde::Deserialize;
 
 use crate::{
@@ -27,7 +28,7 @@ declare_oxc_lint!(
     /// ### Why is this bad?
     ///
     /// The rule is intended to prevent the indication of defaults on tags
-    /// where this would be redundant with ES6 default parameters.
+    /// where this would be redundant with ES2015 default parameters.
     ///
     /// ### Examples
     ///
@@ -47,12 +48,14 @@ declare_oxc_lint!(
     /// ```
     NoDefaults,
     jsdoc,
-    correctness
+    correctness,
+    config = NoDefaultsConfig,
 );
 
-#[derive(Debug, Default, Clone, Deserialize)]
+#[derive(Debug, Default, Clone, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", default)]
 struct NoDefaultsConfig {
-    #[serde(default, rename = "noOptionalParamNames")]
+    /// If true, report the presence of optional param names (square brackets) on `@param` tags.
     no_optional_param_names: bool,
 }
 

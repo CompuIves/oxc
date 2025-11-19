@@ -1,25 +1,37 @@
 import { pathToFileURL } from 'node:url';
 
-import { Context } from './context.js';
+import { createContext } from './context.js';
 import { getErrorMessage } from './utils.js';
 
-import type { AfterHook, BeforeHook, RuleMeta, Visitor, VisitorWithHooks } from './types.ts';
+import type { Writable } from 'type-fest';
+import type { Context } from './context.ts';
+import type { JsonValue } from './json.ts';
+import type { RuleMeta } from './rule_meta.ts';
+import type { AfterHook, BeforeHook, Visitor, VisitorWithHooks } from './types.ts';
 
 const ObjectKeys = Object.keys;
 
-// Linter plugin, comprising multiple rules
+/**
+ * Linter plugin, comprising multiple rules
+ */
 export interface Plugin {
-  meta: {
-    name: string;
+  meta?: {
+    name?: string;
   };
   rules: {
     [key: string]: Rule;
   };
 }
 
-// Linter rule.
-// `Rule` can have either `create` method, or `createOnce` method.
-// If `createOnce` method is present, `create` is ignored.
+/**
+ * Linter rule.
+ *
+ * `Rule` can have either `create` method, or `createOnce` method.
+ * If `createOnce` method is present, `create` is ignored.
+ *
+ * If defining the rule with `createOnce`, and you want the rule to work with ESLint too,
+ * you need to wrap the rule with `defineRule`.
+ */
 export type Rule = CreateRule | CreateOnceRule;
 
 export interface CreateRule {
@@ -33,24 +45,39 @@ export interface CreateOnceRule {
   createOnce: (context: Context) => VisitorWithHooks;
 }
 
-// Linter rule and context object.
-// If `rule` has a `createOnce` method, the visitor it returns is stored in `visitor`.
-type RuleAndContext = CreateRuleAndContext | CreateOnceRuleAndContext;
+/**
+ * Options for a rule on a file.
+ */
+export type Options = JsonValue[];
 
-interface CreateRuleAndContext {
-  rule: CreateRule;
-  context: Context;
-  visitor: null;
-  beforeHook: null;
-  afterHook: null;
+/**
+ * Linter rule, context object, and other details of rule.
+ * If `rule` has a `createOnce` method, the visitor it returns is stored in `visitor` property.
+ */
+export type RuleDetails = CreateRuleDetails | CreateOnceRuleDetails;
+
+interface RuleDetailsBase {
+  // Static properties of the rule
+  readonly context: Readonly<Context>;
+  readonly isFixable: boolean;
+  readonly messages: Readonly<Record<string, string>> | null;
+  // Updated for each file
+  ruleIndex: number;
+  options: Readonly<Options>;
 }
 
-interface CreateOnceRuleAndContext {
-  rule: CreateOnceRule;
-  context: Context;
-  visitor: Visitor;
-  beforeHook: BeforeHook | null;
-  afterHook: AfterHook | null;
+interface CreateRuleDetails extends RuleDetailsBase {
+  readonly rule: CreateRule;
+  readonly visitor: null;
+  readonly beforeHook: null;
+  readonly afterHook: null;
+}
+
+interface CreateOnceRuleDetails extends RuleDetailsBase {
+  readonly rule: CreateOnceRule;
+  readonly visitor: Visitor;
+  readonly beforeHook: BeforeHook | null;
+  readonly afterHook: AfterHook | null;
 }
 
 // Absolute paths of plugins which have been loaded
@@ -58,10 +85,13 @@ const registeredPluginPaths = new Set<string>();
 
 // Rule objects for loaded rules.
 // Indexed by `ruleId`, which is passed to `lintFile`.
-export const registeredRules: RuleAndContext[] = [];
+export const registeredRules: RuleDetails[] = [];
 
 // `before` hook which makes rule never run.
 const neverRunBeforeHook: BeforeHook = () => false;
+
+// Default rule options
+const DEFAULT_OPTIONS: Readonly<Options> = Object.freeze([]);
 
 // Plugin details returned to Rust
 interface PluginDetails {
@@ -76,15 +106,15 @@ interface PluginDetails {
 /**
  * Load a plugin.
  *
- * Main logic is in separate function `loadPluginImpl`, because V8 cannot optimize functions
- * containing try/catch.
+ * Main logic is in separate function `loadPluginImpl`, because V8 cannot optimize functions containing try/catch.
  *
  * @param path - Absolute path of plugin file
- * @returns JSON result
+ * @param packageName - Optional package name from `package.json` (fallback if `plugin.meta.name` is not defined)
+ * @returns Plugin details or error serialized to JSON string
  */
-export async function loadPlugin(path: string): Promise<string> {
+export async function loadPlugin(path: string, packageName: string | null): Promise<string> {
   try {
-    const res = await loadPluginImpl(path);
+    const res = await loadPluginImpl(path, packageName);
     return JSON.stringify({ Success: res });
   } catch (err) {
     return JSON.stringify({ Failure: getErrorMessage(err) });
@@ -95,12 +125,15 @@ export async function loadPlugin(path: string): Promise<string> {
  * Load a plugin.
  *
  * @param path - Absolute path of plugin file
+ * @param packageName - Optional package name from `package.json` (fallback if `plugin.meta.name` is not defined)
  * @returns - Plugin details
  * @throws {Error} If plugin has already been registered
- * @throws {TypeError} If one of plugin's rules is malformed or its `createOnce` method returns invalid visitor
+ * @throws {Error} If plugin has no name
+ * @throws {TypeError} If one of plugin's rules is malformed, or its `createOnce` method returns invalid visitor
+ * @throws {TypeError} if `plugin.meta.name` is not a string
  * @throws {*} If plugin throws an error during import
  */
-async function loadPluginImpl(path: string): Promise<PluginDetails> {
+async function loadPluginImpl(path: string, packageName: string | null): Promise<PluginDetails> {
   if (registeredPluginPaths.has(path)) {
     throw new Error('This plugin has already been registered. This is a bug in Oxlint. Please report it.');
   }
@@ -110,7 +143,9 @@ async function loadPluginImpl(path: string): Promise<PluginDetails> {
   registeredPluginPaths.add(path);
 
   // TODO: Use a validation library to assert the shape of the plugin, and of rules
-  const pluginName = plugin.meta.name;
+
+  const pluginName = getPluginName(plugin, packageName);
+
   const offset = registeredRules.length;
   const { rules } = plugin;
   const ruleNames = ObjectKeys(rules);
@@ -121,31 +156,45 @@ async function loadPluginImpl(path: string): Promise<PluginDetails> {
       rule = rules[ruleName];
 
     // Validate `rule.meta` and convert to vars with standardized shape
-    let isFixable = false;
-    let messages: Record<string, string> | null = null;
-    let ruleMeta = rule.meta;
+    let isFixable = false,
+      messages: Record<string, string> | null = null;
+    const ruleMeta = rule.meta;
     if (ruleMeta != null) {
-      if (typeof ruleMeta !== 'object') throw new TypeError('Invalid `meta`');
+      if (typeof ruleMeta !== 'object') throw new TypeError('Invalid `rule.meta`');
 
       const { fixable } = ruleMeta;
       if (fixable != null) {
-        if (fixable !== 'code' && fixable !== 'whitespace') throw new TypeError('Invalid `meta.fixable`');
+        if (fixable !== 'code' && fixable !== 'whitespace') throw new TypeError('Invalid `rule.meta.fixable`');
         isFixable = true;
       }
 
       // Extract messages for messageId support
       const inputMessages = ruleMeta.messages;
       if (inputMessages != null) {
-        if (typeof inputMessages !== 'object') throw new TypeError('`meta.messages` must be an object if provided');
+        if (typeof inputMessages !== 'object') {
+          throw new TypeError('`rule.meta.messages` must be an object if provided');
+        }
         messages = inputMessages;
       }
     }
 
-    // Create `Context` object for rule. This will be re-used for every file.
-    // It's updated with file-specific data before linting each file with `setupContextForFile`.
-    const context = new Context(`${pluginName}/${ruleName}`, isFixable, messages);
+    // Create `RuleDetails` object for rule.
+    const ruleDetails: RuleDetails = {
+      rule: rule as CreateRule, // Could also be `CreateOnceRule`, but just to satisfy type checker
+      context: null as Readonly<Context>, // Filled in below
+      isFixable,
+      messages,
+      ruleIndex: 0,
+      options: DEFAULT_OPTIONS,
+      visitor: null,
+      beforeHook: null,
+      afterHook: null,
+    };
 
-    let ruleAndContext;
+    // Create `Context` object for rule. This will be re-used for every file.
+    const context = createContext(`${pluginName}/${ruleName}`, ruleDetails);
+    (ruleDetails as Writable<RuleDetails>).context = context;
+
     if ('createOnce' in rule) {
       // TODO: Compile visitor object to array here, instead of repeating compilation on each file
       let visitorWithHooks = rule.createOnce(context);
@@ -170,15 +219,44 @@ async function loadPluginImpl(path: string): Promise<PluginDetails> {
         afterHook = null;
       }
 
-      ruleAndContext = { rule, context, visitor, beforeHook, afterHook };
-    } else {
-      ruleAndContext = { rule, context, visitor: null, beforeHook: null, afterHook: null };
+      (ruleDetails as Writable<CreateOnceRuleDetails>).visitor = visitor;
+      (ruleDetails as Writable<CreateOnceRuleDetails>).beforeHook = beforeHook;
+      (ruleDetails as Writable<CreateOnceRuleDetails>).afterHook = afterHook;
     }
 
-    registeredRules.push(ruleAndContext);
+    registeredRules.push(ruleDetails);
   }
 
   return { name: pluginName, offset, ruleNames };
+}
+
+/**
+ * Get plugin name.
+ * - If `plugin.meta.name` is defined, return it.
+ * - Otherwise, fall back to `packageName`, if defined.
+ * - If neither is defined, throw an error.
+ *
+ * @param plugin - Plugin object
+ * @param packageName - Package name from `package.json`
+ * @returns Plugin name
+ * @throws {TypeError} If `plugin.meta.name` is not a string
+ * @throws {Error} If neither `plugin.meta.name` nor `packageName` are defined
+ */
+function getPluginName(plugin: Plugin, packageName: string | null): string {
+  const pluginMeta = plugin.meta;
+  if (pluginMeta != null) {
+    const pluginMetaName = pluginMeta.name;
+    if (pluginMetaName != null) {
+      if (typeof pluginMetaName !== 'string') throw new TypeError('`plugin.meta.name` must be a string if defined');
+      return pluginMetaName;
+    }
+  }
+
+  if (packageName !== null) return packageName;
+
+  throw new Error(
+    'Plugin must either define `meta.name`, or be loaded from an NPM package with a `name` field in `package.json`',
+  );
 }
 
 /**

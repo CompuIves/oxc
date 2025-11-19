@@ -22,12 +22,7 @@ init:
 
 # Clone or update submodules
 submodules:
-  just clone-submodule tasks/coverage/test262 https://github.com/tc39/test262 baa48a416c9e9abd698a9010378eccf3d1f4ed1e
-  just clone-submodule tasks/coverage/babel https://github.com/babel/babel 41d96516130ff48f16eca9f387996c0272125f16
-  just clone-submodule tasks/coverage/typescript https://github.com/microsoft/TypeScript 261630d650c0c961860187bebc86e25c3707c05d
-  just clone-submodule tasks/prettier_conformance/prettier https://github.com/prettier/prettier 7584432401a47a26943dd7a9ca9a8e032ead7285
-  just clone-submodule tasks/coverage/acorn-test262 https://github.com/oxc-project/acorn-test262 090bba4ab63458850b294f55b17f2ca0ee982062
-  just clone-submodule tasks/coverage/node-compat-table https://github.com/williamkapke/node-compat-table ed0d6ba55790519d9ad3f6f776ca2cd303cc1e0b
+  .github/scripts/clone-parallel.sh
   just update-transformer-fixtures
 
 # Install git pre-commit hook to format files
@@ -64,8 +59,9 @@ lint:
 # Format all files
 fmt:
   -cargo shear --fix # remove all unused dependencies
-  cargo fmt --all
+  cargo fmt
   dprint fmt
+  node --run fmt
 
 [unix]
 doc:
@@ -103,7 +99,7 @@ benchmark:
 
 # Run benchmarks for a single component
 benchmark-one *args:
-  cargo benchmark --bench {{args}} --no-default-features --features {{args}}
+  cargo benchmark --bench {{args}} --no-default-features --features {{ if args == "linter" { "linter" } else { "compiler" } }}
 
 # ==================== TESTING & CONFORMANCE ====================
 
@@ -127,10 +123,13 @@ codecov:
 
 # ==================== AST & CODEGEN ====================
 
-# Generate AST related boilerplate code
+# Generate AST related boilerplate code.
+# If fails first time, run with JS generators disabled first, and then again with JS generators enabled.
+# This is necessary because JS generators use `oxc_*` crates (e.g. `oxc_minifier`), and those crates may not compile
+# unless Rust code is generated first.
+# See: https://github.com/oxc-project/oxc/issues/15564
 ast:
-  cargo run -p oxc_ast_tools
-  just check
+  cargo run -p oxc_ast_tools || { cargo run -p oxc_ast_tools --no-default-features && cargo run -p oxc_ast_tools; }
 
 # ==================== PARSER ====================
 
@@ -138,11 +137,19 @@ ast:
 
 # ==================== LINTER ====================
 
-# Build oxlint in release build
+# oxlint release build
 oxlint:
+  cargo build -p oxlint --release --features allocator
+
+# watch oxlint, e.g. `just watch-oxlint test.js`
+watch-oxlint *args='':
+  just watch 'cargo run -p oxlint -- --disable-nested-config {{args}}'
+
+# oxlint release build for node.js
+oxlint-node:
   pnpm -C apps/oxlint run build
 
-watch-oxlint *args='':
+watch-oxlint-node *args='':
   just watch 'pnpm run -C apps/oxlint build-dev && node apps/oxlint/dist/cli.js --disable-nested-config {{args}}'
 
 # Create a new lint rule for any plugin
@@ -171,7 +178,20 @@ alias new-typescript-rule := new-ts-rule
 
 # ==================== FORMATTER ====================
 
-# Formatter-specific commands will be added here as needed
+# oxfmt release build
+oxfmt:
+  cargo build -p oxfmt --release --features allocator
+
+# watch oxfmt, e.g. `just watch-oxfmt test.js`
+watch-oxfmt *args='':
+  just watch 'cargo run -p oxfmt -- {{args}}'
+
+# Build oxfmt in release build
+oxfmt-node:
+  pnpm -C apps/oxfmt run build
+
+watch-oxfmt-node *args='':
+  just watch 'pnpm run -C apps/oxfmt build-dev && node apps/oxfmt/dist/cli.js {{args}}'
 
 # ==================== TRANSFORMER ====================
 
@@ -222,11 +242,18 @@ watch-playground:
 
 # ==================== UTILITIES & ADVANCED ====================
 
-# Generate website documentation
+# Generate website documentation, intended for updating the oxc-project.github.io site.
+# Path should be the path to your clone of https://github.com/oxc-project/oxc-project.github.io
+# When testing changes to the website documentation, you may also want to run `dprint fmt --staged`
+# in the website directory.
 website path:
   cargo run -p website -- linter-rules --table {{path}}/src/docs/guide/usage/linter/generated-rules.md --rule-docs {{path}}/src/docs/guide/usage/linter/rules --git-ref $(git rev-parse HEAD)
   cargo run -p website -- linter-cli > {{path}}/src/docs/guide/usage/linter/generated-cli.md
   cargo run -p website -- linter-schema-markdown > {{path}}/src/docs/guide/usage/linter/generated-config.md
+
+# Generate linter schema json for `npm/oxlint/configuration_schema.json`
+linter-schema-json:
+  cargo run -p website -- linter-schema-json > npm/oxlint/configuration_schema.json
 
 # Automatically DRY up Cargo.toml manifests in a workspace
 autoinherit:

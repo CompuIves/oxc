@@ -4,9 +4,10 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    ArrowParentheses, AttributePosition, BracketSameLine, BracketSpacing, Expand, FormatOptions,
-    IndentStyle, IndentWidth, LineEnding, LineWidth, OperatorPosition, QuoteProperties, QuoteStyle,
-    Semicolons, SortImports, SortOrder, TrailingCommas,
+    ArrowParentheses, AttributePosition, BracketSameLine, BracketSpacing,
+    EmbeddedLanguageFormatting, Expand, FormatOptions, IndentStyle, IndentWidth, LineEnding,
+    LineWidth, OperatorPosition, QuoteProperties, QuoteStyle, Semicolons, SortImports, SortOrder,
+    TrailingCommas,
 };
 
 /// Configuration options for the formatter.
@@ -64,6 +65,10 @@ pub struct Oxfmtrc {
     // TODO: Experimental: Use curious ternaries which move `?` after the condition. (Default: false)
     // #[serde(skip_serializing_if = "Option::is_none")]
     // pub experimental_ternaries: Option<bool>,
+    /// Control whether formats quoted code embedded in the file. (Default: "auto")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub embedded_language_formatting: Option<EmbeddedLanguageFormattingConfig>,
+
     /// Experimental: Sort import statements. Disabled by default.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub experimental_sort_imports: Option<SortImportsConfig>,
@@ -126,6 +131,15 @@ pub enum OperatorPositionConfig {
     End,
 }
 
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum EmbeddedLanguageFormattingConfig {
+    Auto,
+    // Disable by default at alpha release, synced with `options.rs`
+    #[default]
+    Off,
+}
+
 #[derive(Debug, Clone, Default, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase", default)]
 pub struct SortImportsConfig {
@@ -139,6 +153,8 @@ pub struct SortImportsConfig {
     pub order: Option<SortOrderConfig>,
     #[serde(default = "default_true")]
     pub ignore_case: bool,
+    #[serde(default = "default_true")]
+    pub newlines_between: bool,
 }
 
 fn default_true() -> bool {
@@ -291,9 +307,21 @@ impl Oxfmtrc {
             };
         }
 
+        if let Some(embedded_language_formatting) = self.embedded_language_formatting {
+            options.embedded_language_formatting = match embedded_language_formatting {
+                EmbeddedLanguageFormattingConfig::Auto => EmbeddedLanguageFormatting::Auto,
+                EmbeddedLanguageFormattingConfig::Off => EmbeddedLanguageFormatting::Off,
+            };
+        }
+
         // Below are our own extensions
 
         if let Some(sort_imports_config) = self.experimental_sort_imports {
+            // `partition_by_newline: true` and `newlines_between` cannot be used together
+            if sort_imports_config.partition_by_newline && sort_imports_config.newlines_between {
+                return Err("Invalid `sortImports` configuration: `partitionByNewline: true` and `newlinesBetween: true` cannot be used together".to_string());
+            }
+
             options.experimental_sort_imports = Some(SortImports {
                 partition_by_newline: sort_imports_config.partition_by_newline,
                 partition_by_comment: sort_imports_config.partition_by_comment,
@@ -302,8 +330,10 @@ impl Oxfmtrc {
                     SortOrderConfig::Asc => SortOrder::Asc,
                     SortOrderConfig::Desc => SortOrder::Desc,
                 }),
-
                 ignore_case: sort_imports_config.ignore_case,
+                newlines_between: sort_imports_config.newlines_between,
+                // TODO: Make this configurable later
+                groups: SortImports::default_groups(),
             });
         }
 
@@ -328,7 +358,8 @@ mod tests {
             "experimentalSortImports": {
                 "partitionByNewline": true,
                 "order": "desc",
-                "ignoreCase": false
+                "ignoreCase": false,
+                "newlinesBetween": false
             }
         }"#;
 
@@ -345,15 +376,16 @@ mod tests {
         assert!(sort_imports.partition_by_newline);
         assert!(sort_imports.order.is_desc());
         assert!(!sort_imports.ignore_case);
+        assert!(!sort_imports.newlines_between);
     }
 
     #[test]
     fn test_ignore_unknown_fields() {
         let config: Oxfmtrc = serde_json::from_str(
             r#"{
-            "unknownField": "someValue",
-            "anotherUnknown": 123
-        }"#,
+                "unknownField": "someValue",
+                "anotherUnknown": 123
+            }"#,
         )
         .unwrap();
         let options = config.into_format_options().unwrap();
@@ -406,5 +438,65 @@ mod tests {
         let config: Oxfmtrc = serde_json::from_str(r#"{"objectWrap": "always"}"#).unwrap();
         let options = config.into_format_options().unwrap();
         assert_eq!(options.expand, Expand::Always);
+    }
+
+    #[test]
+    fn test_sort_imports_config() {
+        let config: Oxfmtrc = serde_json::from_str(
+            r#"{
+            "experimentalSortImports": {}
+        }"#,
+        )
+        .unwrap();
+        let sort_imports = config.into_format_options().unwrap().experimental_sort_imports.unwrap();
+        assert!(sort_imports.newlines_between);
+        assert!(!sort_imports.partition_by_newline);
+
+        // Test explicit false
+        let config: Oxfmtrc = serde_json::from_str(
+            r#"{
+                "experimentalSortImports": {
+                    "newlinesBetween": false
+                }
+            }"#,
+        )
+        .unwrap();
+        let sort_imports = config.into_format_options().unwrap().experimental_sort_imports.unwrap();
+        assert!(!sort_imports.newlines_between);
+        assert!(!sort_imports.partition_by_newline);
+
+        // Test explicit true
+        let config: Oxfmtrc = serde_json::from_str(
+            r#"{
+                "experimentalSortImports": {
+                    "newlinesBetween": true
+                }
+            }"#,
+        )
+        .unwrap();
+        let sort_imports = config.into_format_options().unwrap().experimental_sort_imports.unwrap();
+        assert!(sort_imports.newlines_between);
+        assert!(!sort_imports.partition_by_newline);
+
+        let config: Oxfmtrc = serde_json::from_str(
+            r#"{
+                "experimentalSortImports": {
+                    "partitionByNewline": true,
+                    "newlinesBetween": false
+                }
+            }"#,
+        )
+        .unwrap();
+        assert!(config.into_format_options().is_ok());
+        let config: Oxfmtrc = serde_json::from_str(
+            r#"{
+                "experimentalSortImports": {
+                    "partitionByNewline": true,
+                    "newlinesBetween": true
+                }
+            }"#,
+        )
+        .unwrap();
+        assert!(config.into_format_options().is_err_and(|e| e.contains("newlinesBetween")));
     }
 }

@@ -3,7 +3,7 @@ import { DATA_POINTER_POS_32, SOURCE_LEN_OFFSET } from '../generated/constants.j
 // We use the deserializer which removes `ParenthesizedExpression`s from AST,
 // and with `range`, `loc`, and `parent` properties on AST nodes, to match ESLint
 // @ts-expect-error we need to generate `.d.ts` file for this module
-import { deserializeProgramOnly, resetBuffer } from '../../dist/generated/deserialize.js';
+import { deserializeProgramOnly, resetBuffer } from '../generated/deserialize.js';
 
 import visitorKeys from '../generated/keys.js';
 import * as commentMethods from './comments.js';
@@ -15,12 +15,14 @@ import {
   lines,
   resetLines,
 } from './location.js';
+import { resetScopeManager, SCOPE_MANAGER } from './scope.js';
 import * as scopeMethods from './scope.js';
 import * as tokenMethods from './tokens.js';
 
 import type { Program } from '../generated/types.d.ts';
+import type { Ranged } from './location.ts';
+import type { BufferWithArrays, Node } from './types.ts';
 import type { ScopeManager } from './scope.ts';
-import type { BufferWithArrays, Node, NodeOrToken, Ranged } from './types.ts';
 
 const { max } = Math;
 
@@ -39,14 +41,23 @@ export let sourceText: string | null = null;
 let sourceByteLen: number = 0;
 export let ast: Program | null = null;
 
+// Parser services object. Set before linting a file by `setupSourceForFile`.
+let parserServices: Record<string, unknown> | null = null;
+
 /**
  * Set up source for the file about to be linted.
  * @param bufferInput - Buffer containing AST
  * @param hasBOMInput - `true` if file's original source text has Unicode BOM
+ * @param parserServicesInput - Parser services object for the file
  */
-export function setupSourceForFile(bufferInput: BufferWithArrays, hasBOMInput: boolean): void {
+export function setupSourceForFile(
+  bufferInput: BufferWithArrays,
+  hasBOMInput: boolean,
+  parserServicesInput: Record<string, unknown>,
+): void {
   buffer = bufferInput;
   hasBOM = hasBOMInput;
+  parserServices = parserServicesInput;
 }
 
 /**
@@ -81,8 +92,10 @@ export function resetSourceAndAst(): void {
   buffer = null;
   sourceText = null;
   ast = null;
+  parserServices = null;
   resetBuffer();
   resetLines();
+  resetScopeManager();
 }
 
 // `SourceCode` object.
@@ -90,8 +103,9 @@ export function resetSourceAndAst(): void {
 // Only one file is linted at a time, so we can reuse a single object for all files.
 //
 // This has advantages:
-// 1. Property accesses don't need to go up prototype chain, as they would for instances of a class.
-// 2. No need for private properties, which are somewhat expensive to access - use top-level variables instead.
+// 1. Reduce object creation.
+// 2. Property accesses don't need to go up prototype chain, as they would for instances of a class.
+// 3. No need for private properties, which are somewhat expensive to access - use top-level variables instead.
 //
 // Freeze the object to prevent user mutating it.
 export const SOURCE_CODE = Object.freeze({
@@ -114,17 +128,17 @@ export const SOURCE_CODE = Object.freeze({
 
   // Get `ScopeManager` for the file.
   get scopeManager(): ScopeManager {
-    throw new Error('`sourceCode.scopeManager` not implemented yet'); // TODO
+    return SCOPE_MANAGER;
   },
 
   // Get visitor keys to traverse this AST.
-  get visitorKeys(): { [key: string]: string[] } {
+  get visitorKeys(): Record<string, string[]> {
     return visitorKeys;
   },
 
   // Get parser services for the file.
-  get parserServices(): { [key: string]: unknown } {
-    throw new Error('`sourceCode.parserServices` not implemented yet'); // TODO
+  get parserServices(): Record<string, unknown> {
+    return parserServices;
   },
 
   // Get source text as array of lines, split according to specification's definition of line breaks.
@@ -152,7 +166,8 @@ export const SOURCE_CODE = Object.freeze({
 
     // ESLint ignores falsy values for `beforeCount` and `afterCount`
     const { range } = node;
-    let start = range[0], end = range[1];
+    let start = range[0],
+      end = range[1];
     if (beforeCount) start = max(start - beforeCount, 0);
     if (afterCount) end += afterCount;
     return sourceText.slice(start, end);
@@ -178,19 +193,6 @@ export const SOURCE_CODE = Object.freeze({
   },
 
   /**
-   * Determine if two nodes or tokens have at least one whitespace character between them.
-   * Order does not matter. Returns `false` if the given nodes or tokens overlap.
-   * @param nodeOrToken1 - The first node or token to check between.
-   * @param nodeOrToken2 - The second node or token to check between.
-   * @returns `true` if there is a whitespace character between
-   *   any of the tokens found between the two given nodes or tokens.
-   */
-  // oxlint-disable-next-line no-unused-vars
-  isSpaceBetween(nodeOrToken1: NodeOrToken, nodeOrToken2: NodeOrToken): boolean {
-    throw new Error('`sourceCode.isSpaceBetween` not implemented yet'); // TODO
-  },
-
-  /**
    * Get the deepest node containing a range index.
    * @param index Range index of the desired node.
    * @returns The node if found, or `null` if not found.
@@ -210,6 +212,7 @@ export const SOURCE_CODE = Object.freeze({
   getCommentsAfter: commentMethods.getCommentsAfter,
   getCommentsInside: commentMethods.getCommentsInside,
   commentsExistBetween: commentMethods.commentsExistBetween,
+  getJSDocComment: commentMethods.getJSDocComment,
 
   // Scope methods
   isGlobalReference: scopeMethods.isGlobalReference,
@@ -224,8 +227,10 @@ export const SOURCE_CODE = Object.freeze({
   getLastToken: tokenMethods.getLastToken,
   getLastTokens: tokenMethods.getLastTokens,
   getTokenBefore: tokenMethods.getTokenBefore,
+  getTokenOrCommentBefore: tokenMethods.getTokenOrCommentBefore,
   getTokensBefore: tokenMethods.getTokensBefore,
   getTokenAfter: tokenMethods.getTokenAfter,
+  getTokenOrCommentAfter: tokenMethods.getTokenOrCommentAfter,
   getTokensAfter: tokenMethods.getTokensAfter,
   getTokensBetween: tokenMethods.getTokensBetween,
   getFirstTokenBetween: tokenMethods.getFirstTokenBetween,
@@ -233,6 +238,8 @@ export const SOURCE_CODE = Object.freeze({
   getLastTokenBetween: tokenMethods.getLastTokenBetween,
   getLastTokensBetween: tokenMethods.getLastTokensBetween,
   getTokenByRangeStart: tokenMethods.getTokenByRangeStart,
+  isSpaceBetween: tokenMethods.isSpaceBetween,
+  isSpaceBetweenTokens: tokenMethods.isSpaceBetweenTokens,
 });
 
 export type SourceCode = typeof SOURCE_CODE;

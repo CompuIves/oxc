@@ -1,0 +1,46 @@
+{
+  "name": "oxfmt-app",
+  "version": "0.14.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "description": "Internal development package for oxfmt. For the published package.json template, see `npm/oxfmt/package.json`.",
+  "license": "MIT",
+  "scripts": {
+    "build": "pnpm run build-napi-release && pnpm run build-js",
+    "build-dev": "pnpm run build-napi && pnpm run build-js",
+    "build-test": "pnpm run build-napi-test && pnpm run build-js",
+    "build-napi": "napi build --esm --platform --js ./bindings.js --dts ./bindings.d.ts --output-dir src-js --no-dts-cache",
+    "build-napi-test": "pnpm run build-napi",
+    "build-napi-release": "pnpm run build-napi --release --features allocator",
+    "build-js": "node scripts/build.js",
+    "test": "tsc && vitest --dir test run"
+  },
+  "engines": {
+    "node": "^20.19.0 || >=22.12.0"
+  },
+  "dependencies": {
+    "prettier": "3.6.2"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "execa": "^9.6.0",
+    "tsdown": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  },
+  "napi": {
+    "binaryName": "oxfmt",
+    "packageName": "@oxfmt/binding",
+    "targets": [
+      "win32-x64",
+      "win32-arm64",
+      "linux-x64-gnu",
+      "linux-arm64-gnu",
+      "linux-x64-musl",
+      "linux-arm64-musl",
+      "darwin-x64",
+      "darwin-arm64"
+    ]
+  }
+}

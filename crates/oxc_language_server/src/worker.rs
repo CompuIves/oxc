@@ -3,23 +3,15 @@ use serde_json::json;
 use tokio::sync::{Mutex, RwLock};
 use tower_lsp_server::{
     UriExt,
+    jsonrpc::ErrorCode,
     lsp_types::{
-        CodeActionOrCommand, Diagnostic, DidChangeWatchedFilesRegistrationOptions, FileEvent,
-        FileSystemWatcher, GlobPattern, OneOf, Range, Registration, RelativePattern, TextEdit,
-        Unregistration, Uri, WatchKind,
+        CodeActionKind, CodeActionOrCommand, Diagnostic, DidChangeWatchedFilesRegistrationOptions,
+        FileEvent, FileSystemWatcher, GlobPattern, OneOf, Range, Registration, RelativePattern,
+        TextEdit, Unregistration, Uri, WatchKind, WorkspaceEdit,
     },
 };
 
-use crate::{
-    code_actions::{apply_all_fix_code_action, apply_fix_code_actions, fix_all_text_edit},
-    formatter::{options::FormatOptions, server_formatter::ServerFormatter},
-    linter::{
-        error_with_position::DiagnosticReport,
-        options::LintOptions,
-        server_linter::{ServerLinter, ServerLinterRun},
-    },
-    options::Options,
-};
+use crate::tool::{Tool, ToolBuilder};
 
 /// A worker that manages the individual tools for a specific workspace
 /// and reports back the results to the [`Backend`](crate::backend::Backend).
@@ -28,9 +20,10 @@ use crate::{
 /// The [`Backend`](crate::backend::Backend) is responsible to target the correct worker for a given file URI.
 pub struct WorkspaceWorker {
     root_uri: Uri,
-    server_linter: RwLock<Option<ServerLinter>>,
-    server_formatter: RwLock<Option<ServerFormatter>>,
-    options: Mutex<Option<Options>>,
+    tools: RwLock<Vec<Box<dyn Tool>>>,
+    // Initialized options from the client
+    // If None, the worker has not been initialized yet
+    options: Mutex<Option<serde_json::Value>>,
 }
 
 impl WorkspaceWorker {
@@ -38,12 +31,7 @@ impl WorkspaceWorker {
     /// This will not start any programs, use [`start_worker`](Self::start_worker) for that.
     /// Depending on the client, we need to request the workspace configuration in `initialized.
     pub fn new(root_uri: Uri) -> Self {
-        Self {
-            root_uri,
-            server_linter: RwLock::new(None),
-            server_formatter: RwLock::new(None),
-            options: Mutex::new(None),
-        }
+        Self { root_uri, tools: RwLock::new(vec![]), options: Mutex::new(None) }
     }
 
     /// Get the root URI of the worker
@@ -56,6 +44,9 @@ impl WorkspaceWorker {
     /// e.g. root URI: file:///path/to/root
     ///      responsible for: file:///path/to/root/file.js
     ///      not responsible for: file:///path/to/other/file.js
+    ///
+    /// # Panics
+    /// Panics if the root URI cannot be converted to a file path.
     pub fn is_responsible_for_uri(&self, uri: &Uri) -> bool {
         if let Some(path) = uri.to_file_path() {
             return path.starts_with(self.root_uri.to_file_path().unwrap());
@@ -65,85 +56,33 @@ impl WorkspaceWorker {
 
     /// Start all programs (linter, formatter) for the worker.
     /// This should be called after the client has sent the workspace configuration.
-    pub async fn start_worker(&self, options: &Options) {
-        *self.options.lock().await = Some(options.clone());
+    pub async fn start_worker(&self, options: serde_json::Value, tools: &[Box<dyn ToolBuilder>]) {
+        *self.tools.write().await =
+            tools.iter().map(|tool| tool.build_boxed(&self.root_uri, options.clone())).collect();
 
-        *self.server_linter.write().await = Some(ServerLinter::new(&self.root_uri, &options.lint));
-        if options.format.experimental {
-            debug!("experimental formatter enabled");
-            *self.server_formatter.write().await =
-                Some(ServerFormatter::new(&self.root_uri, &options.format));
-        }
+        *self.options.lock().await = Some(options);
     }
 
     /// Initialize file system watchers for the workspace.
     /// These watchers are used to watch for changes in the lint configuration files.
     /// The returned watchers will be registered to the client.
     pub async fn init_watchers(&self) -> Vec<Registration> {
-        let mut registrations = Vec::new();
-
-        let Some(root_path) = &self.root_uri.to_file_path() else {
-            return registrations;
-        };
-
         // clone the options to avoid locking the mutex
-        let options = self.options.lock().await;
-        let lint_options = options.as_ref().map(|o| o.lint.clone()).unwrap_or_default();
-        let format_options = options.as_ref().map(|o| o.format.clone()).unwrap_or_default();
-        let lint_patterns = self
-            .server_linter
+        let options_json = { self.options.lock().await.clone().unwrap_or_default() };
+
+        self.tools
             .read()
             .await
-            .as_ref()
-            .map(|linter| linter.get_watch_patterns(&lint_options, root_path));
-        let format_patterns = self
-            .server_formatter
-            .read()
-            .await
-            .as_ref()
-            .map(|formatter| formatter.get_watcher_patterns(&format_options));
-
-        if let Some(lint_patterns) = lint_patterns {
-            registrations.push(Registration {
-                id: format!("watcher-linter-{}", self.root_uri.as_str()),
-                method: "workspace/didChangeWatchedFiles".to_string(),
-                register_options: Some(json!(DidChangeWatchedFilesRegistrationOptions {
-                    watchers: lint_patterns
-                        .into_iter()
-                        .map(|pattern| FileSystemWatcher {
-                            glob_pattern: GlobPattern::Relative(RelativePattern {
-                                base_uri: OneOf::Right(self.root_uri.clone()),
-                                pattern,
-                            }),
-                            kind: Some(WatchKind::all()), // created, deleted, changed
-                        })
-                        .collect::<Vec<_>>(),
-                })),
-            });
-        }
-
-        if format_options.experimental
-            && let Some(format_patterns) = format_patterns
-        {
-            registrations.push(Registration {
-                id: format!("watcher-formatter-{}", self.root_uri.as_str()),
-                method: "workspace/didChangeWatchedFiles".to_string(),
-                register_options: Some(json!(DidChangeWatchedFilesRegistrationOptions {
-                    watchers: format_patterns
-                        .into_iter()
-                        .map(|pattern| FileSystemWatcher {
-                            glob_pattern: GlobPattern::Relative(RelativePattern {
-                                base_uri: OneOf::Right(self.root_uri.clone()),
-                                pattern,
-                            }),
-                            kind: Some(WatchKind::all()), // created, deleted, changed
-                        })
-                        .collect::<Vec<_>>(),
-                })),
-            });
-        }
-
-        registrations
+            .iter()
+            .filter_map(|tool| {
+                let patterns = tool.get_watcher_patterns(options_json.clone());
+                if patterns.is_empty() {
+                    None
+                } else {
+                    Some(registration_tool_watcher_id(tool.name(), &self.root_uri, patterns))
+                }
+            })
+            .collect()
     }
 
     /// Check if the worker needs to be initialized with options
@@ -151,159 +90,118 @@ impl WorkspaceWorker {
         self.options.lock().await.is_none()
     }
 
-    pub async fn has_active_formatter(&self) -> bool {
-        self.server_formatter.read().await.is_some()
-    }
-
     /// Remove all diagnostics for the given URI
     pub async fn remove_diagnostics(&self, uri: &Uri) {
-        let server_linter_guard = self.server_linter.read().await;
-        let Some(server_linter) = server_linter_guard.as_ref() else {
-            return;
-        };
-        server_linter.remove_diagnostics(uri);
+        self.tools.read().await.iter().for_each(|tool| {
+            tool.remove_diagnostics(uri);
+        });
     }
 
-    /// Refresh the server linter with the current options
-    /// This will recreate the linter and re-read the config files.
-    /// Call this when the options have changed and the linter needs to be updated.
-    async fn refresh_server_linter(&self, lint_options: &LintOptions) {
-        let server_linter = ServerLinter::new(&self.root_uri, lint_options);
-
-        *self.server_linter.write().await = Some(server_linter);
-    }
-
-    /// Restart the server formatter with the current options
-    /// This will recreate the formatter and re-read the config files.
-    /// Call this when the options have changed and the formatter needs to be updated.
-    async fn refresh_server_formatter(&self, format_options: &FormatOptions) {
-        let server_formatter = ServerFormatter::new(&self.root_uri, format_options);
-
-        *self.server_formatter.write().await = Some(server_formatter);
-    }
-
-    /// Lint a file with the current linter
-    /// - If the file is not lintable, [`None`] is returned
-    /// - If the file is lintable, but no diagnostics are found, an empty vector is returned
-    pub async fn lint_file(
+    /// Run different tools to collect diagnostics.
+    pub async fn run_diagnostic(
         &self,
         uri: &Uri,
-        content: Option<String>,
-        run_type: ServerLinterRun,
-    ) -> Option<Vec<DiagnosticReport>> {
-        let Some(server_linter) = &*self.server_linter.read().await else {
-            return None;
-        };
+        content: Option<&str>,
+    ) -> Option<Vec<Diagnostic>> {
+        let mut diagnostics = Vec::new();
+        let mut found = false;
+        for tool in self.tools.read().await.iter() {
+            if let Some(tool_diagnostics) = tool.run_diagnostic(uri, content) {
+                diagnostics.extend(tool_diagnostics);
+                found = true;
+            }
+        }
+        if found { Some(diagnostics) } else { None }
+    }
 
-        server_linter.run_single(uri, content, run_type).await
+    /// Run different tools to collect diagnostics on change.
+    pub async fn run_diagnostic_on_change(
+        &self,
+        uri: &Uri,
+        content: Option<&str>,
+    ) -> Option<Vec<Diagnostic>> {
+        let mut diagnostics = Vec::new();
+        let mut found = false;
+        for tool in self.tools.read().await.iter() {
+            if let Some(tool_diagnostics) = tool.run_diagnostic_on_change(uri, content) {
+                diagnostics.extend(tool_diagnostics);
+                found = true;
+            }
+        }
+        if found { Some(diagnostics) } else { None }
+    }
+
+    /// Run different tools to collect diagnostics on save.
+    pub async fn run_diagnostic_on_save(
+        &self,
+        uri: &Uri,
+        content: Option<&str>,
+    ) -> Option<Vec<Diagnostic>> {
+        let mut diagnostics = Vec::new();
+        let mut found = false;
+        for tool in self.tools.read().await.iter() {
+            if let Some(tool_diagnostics) = tool.run_diagnostic_on_save(uri, content) {
+                diagnostics.extend(tool_diagnostics);
+                found = true;
+            }
+        }
+        if found { Some(diagnostics) } else { None }
     }
 
     /// Format a file with the current formatter
-    /// - If no formatter is active, [`None`] is returned
-    /// - If the formatter is active, but no changes are made, an empty vector is returned
-    pub async fn format_file(&self, uri: &Uri, content: Option<String>) -> Option<Vec<TextEdit>> {
-        let Some(server_formatter) = &*self.server_formatter.read().await else {
-            return None;
-        };
-
-        server_formatter.run_single(uri, content)
+    /// - If no file is not formattable or ignored, [`None`] is returned
+    /// - If the file is formattable, but no changes are made, an empty vector is returned
+    pub async fn format_file(&self, uri: &Uri, content: Option<&str>) -> Option<Vec<TextEdit>> {
+        for tool in self.tools.read().await.iter() {
+            if let Some(edits) = tool.run_format(uri, content) {
+                return Some(edits);
+            }
+        }
+        None
     }
 
-    /// Revalidate diagnostics for the given URIs
-    /// This will re-lint all opened files and return the new diagnostics
-    async fn revalidate_diagnostics(&self, uris: Vec<Uri>) -> Vec<(String, Vec<Diagnostic>)> {
-        let Some(server_linter) = &*self.server_linter.read().await else {
-            return Vec::new();
-        };
+    /// Shutdown the worker and return any necessary changes to be made after shutdown.
+    /// This includes clearing diagnostics and unregistering file watchers.
+    pub async fn shutdown(
+        &self,
+    ) -> (
+        // The URIs that need to have their diagnostics removed after shutdown
+        Vec<Uri>,
+        // Watchers that need to be unregistered
+        Vec<Unregistration>,
+    ) {
+        let mut uris_to_clear_diagnostics = Vec::new();
+        let mut watchers_to_unregister = Vec::new();
+        for tool in self.tools.read().await.iter() {
+            let shutdown_changes = tool.shutdown();
+            if let Some(uris) = shutdown_changes.uris_to_clear_diagnostics {
+                uris_to_clear_diagnostics.extend(uris);
+            }
+            watchers_to_unregister
+                .push(unregistration_tool_watcher_id(tool.name(), &self.root_uri));
+        }
 
-        server_linter.revalidate_diagnostics(uris).await
+        (uris_to_clear_diagnostics, watchers_to_unregister)
     }
 
-    /// Get all clear diagnostics for the current workspace
-    /// This should be called when:
-    /// - The linter is disabled (not currently implemented)
-    /// - The workspace is closed
-    /// - The server is shut down
-    ///
-    /// This will return a list of URIs that had diagnostics before, each with an empty diagnostics list
-    pub async fn get_clear_diagnostics(&self) -> Vec<(String, Vec<Diagnostic>)> {
-        self.server_linter
-            .read()
-            .await
-            .as_ref()
-            .map(|server_linter| {
-                server_linter
-                    .get_cached_files_of_diagnostics()
-                    .iter()
-                    .map(|uri| (uri.to_string(), vec![]))
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default()
-    }
-
-    /// Get code actions or commands for the given range
-    /// It uses the [`ServerLinter`] cached diagnostics if available, otherwise it will lint the file
-    /// If `is_source_fix_all_oxc` is true, it will return a single code action that applies all fixes
+    /// Get code actions or commands for the given range.
+    /// It calls all tools and collects their code actions or commands.
+    /// If `only_code_action_kinds` is provided, only code actions of the specified kinds are returned.
     pub async fn get_code_actions_or_commands(
         &self,
         uri: &Uri,
         range: &Range,
-        is_source_fix_all_oxc: bool,
+        only_code_action_kinds: Option<Vec<CodeActionKind>>,
     ) -> Vec<CodeActionOrCommand> {
-        let Some(server_linter) = &*self.server_linter.read().await else {
-            return vec![];
-        };
-
-        let value = if let Some(cached_diagnostics) = server_linter.get_cached_diagnostics(uri) {
-            cached_diagnostics
-        } else {
-            let diagnostics = server_linter.run_single(uri, None, ServerLinterRun::Always).await;
-            diagnostics.unwrap_or_default()
-        };
-
-        if value.is_empty() {
-            return vec![];
+        let mut actions = Vec::new();
+        for tool in self.tools.read().await.iter() {
+            actions.extend(tool.get_code_actions_or_commands(
+                uri,
+                range,
+                only_code_action_kinds.clone(),
+            ));
         }
-
-        let reports = value
-            .iter()
-            .filter(|r| r.diagnostic.range == *range || range_overlaps(*range, r.diagnostic.range));
-
-        if is_source_fix_all_oxc {
-            return apply_all_fix_code_action(reports, uri).map_or(vec![], |code_actions| {
-                vec![CodeActionOrCommand::CodeAction(code_actions)]
-            });
-        }
-
-        let mut code_actions_vec: Vec<CodeActionOrCommand> = vec![];
-
-        for report in reports {
-            if let Some(fix_actions) = apply_fix_code_actions(report, uri) {
-                code_actions_vec
-                    .extend(fix_actions.into_iter().map(CodeActionOrCommand::CodeAction));
-            }
-        }
-
-        code_actions_vec
-    }
-
-    /// This function is used for executing the `oxc.fixAll` command
-    pub async fn get_diagnostic_text_edits(&self, uri: &Uri) -> Vec<TextEdit> {
-        let Some(server_linter) = &*self.server_linter.read().await else {
-            return vec![];
-        };
-        let value = if let Some(cached_diagnostics) = server_linter.get_cached_diagnostics(uri) {
-            cached_diagnostics
-        } else {
-            let diagnostics = server_linter.run_single(uri, None, ServerLinterRun::Always).await;
-            diagnostics.unwrap_or_default()
-        };
-
-        if value.is_empty() {
-            return vec![];
-        }
-
-        fix_all_text_edit(value.iter())
+        actions
     }
 
     /// Handle file changes that are watched by the client
@@ -311,34 +209,7 @@ impl WorkspaceWorker {
     /// When a change is detected, the linter is refreshed and all diagnostics are revalidated
     pub async fn did_change_watched_files(
         &self,
-        _file_event: &FileEvent,
-    ) -> Option<Vec<(String, Vec<Diagnostic>)>> {
-        // TODO: the tools should implement a helper function to detect if the changed file is relevant
-        let files = {
-            let server_linter_guard = self.server_linter.read().await;
-            let server_linter = server_linter_guard.as_ref()?;
-            server_linter.get_cached_files_of_diagnostics()
-        };
-        let options = self.options.lock().await;
-        let format_options = options.as_ref().map(|o| o.format.clone()).unwrap_or_default();
-        let lint_options = options.as_ref().map(|o| o.lint.clone()).unwrap_or_default();
-
-        if format_options.experimental {
-            tokio::join!(
-                self.refresh_server_formatter(&format_options),
-                self.refresh_server_linter(&lint_options)
-            );
-        } else {
-            self.refresh_server_linter(&lint_options).await;
-        }
-
-        Some(self.revalidate_diagnostics(files).await)
-    }
-
-    /// Handle server configuration changes from the client
-    pub async fn did_change_configuration(
-        &self,
-        changed_options: &Options,
+        file_event: &FileEvent,
     ) -> (
         // Diagnostic reports that need to be revalidated
         Option<Vec<(String, Vec<Diagnostic>)>>,
@@ -346,146 +217,158 @@ impl WorkspaceWorker {
         Vec<Registration>,
         // Watchers that need to be unregistered
         Vec<Unregistration>,
-        // Is true, when the formatter was added to the workspace worker
-        bool,
     ) {
         // Scope the first lock so it is dropped before the second lock
-        let current_option = {
+        let options = {
             let options_guard = self.options.lock().await;
-            options_guard.clone()
-        }
-        .unwrap_or_default();
+            options_guard.clone().unwrap_or_default()
+        };
 
+        let mut registrations = vec![];
+        let mut unregistrations = vec![];
+        let mut diagnostics: Option<Vec<(String, Vec<Diagnostic>)>> = None;
+
+        for tool in self.tools.write().await.iter_mut() {
+            let change =
+                tool.handle_watched_file_change(&file_event.uri, &self.root_uri, options.clone());
+            if let Some(reports) = change.diagnostic_reports {
+                if let Some(existing_diagnostics) = &mut diagnostics {
+                    existing_diagnostics.extend(reports);
+                } else {
+                    diagnostics = Some(reports);
+                }
+            }
+            if let Some(patterns) = change.watch_patterns {
+                unregistrations.push(unregistration_tool_watcher_id(tool.name(), &self.root_uri));
+                if !patterns.is_empty() {
+                    registrations.push(registration_tool_watcher_id(
+                        tool.name(),
+                        &self.root_uri,
+                        patterns,
+                    ));
+                }
+            }
+            if let Some(replaced_tool) = change.tool {
+                *tool = replaced_tool;
+            }
+        }
+
+        (diagnostics, registrations, unregistrations)
+    }
+
+    /// Handle server configuration changes from the client
+    ///
+    /// # Panics
+    /// Panics if the root URI cannot be converted to a file path.
+    pub async fn did_change_configuration(
+        &self,
+        changed_options_json: serde_json::Value,
+    ) -> (
+        // Diagnostic reports that need to be revalidated
+        Option<Vec<(String, Vec<Diagnostic>)>>,
+        // New watchers that need to be registered
+        Vec<Registration>,
+        // Watchers that need to be unregistered
+        Vec<Unregistration>,
+    ) {
+        // Scope the first lock so it is dropped before the second lock
+        let old_options = {
+            let options_guard = self.options.lock().await;
+            options_guard.clone().unwrap_or_default()
+        };
         debug!(
             "
         configuration changed:
-        incoming: {changed_options:?}
-        current: {current_option:?}
+        incoming: {changed_options_json:?}
+        current: {old_options:?}
         "
         );
 
         {
             let mut options_guard = self.options.lock().await;
-            *options_guard = Some(changed_options.clone());
+            *options_guard = Some(changed_options_json.clone());
         }
-
-        let mut formatting = false;
 
         let mut registrations = vec![];
         let mut unregistrations = vec![];
-        let mut diagnostics = None;
+        let mut diagnostics: Option<Vec<(String, Vec<Diagnostic>)>> = None;
 
-        if current_option.format != changed_options.format {
-            if changed_options.format.experimental {
-                self.refresh_server_formatter(&changed_options.format).await;
-                formatting = true;
-
-                // Extract pattern data without holding the lock
-                let patterns = {
-                    let formatter_guard = self.server_formatter.read().await;
-                    formatter_guard.as_ref().and_then(|formatter| {
-                        formatter.get_changed_watch_patterns(
-                            &current_option.format,
-                            &changed_options.format,
-                        )
-                    })
-                };
-
-                if let Some(patterns) = patterns {
-                    if current_option.format.experimental {
-                        // unregister the old watcher
-                        unregistrations.push(Unregistration {
-                            id: format!("watcher-formatter-{}", self.root_uri.as_str()),
-                            method: "workspace/didChangeWatchedFiles".to_string(),
-                        });
-                    }
-
-                    registrations.push(Registration {
-                        id: format!("watcher-formatter-{}", self.root_uri.as_str()),
-                        method: "workspace/didChangeWatchedFiles".to_string(),
-                        register_options: Some(json!(DidChangeWatchedFilesRegistrationOptions {
-                            watchers: patterns
-                                .into_iter()
-                                .map(|pattern| FileSystemWatcher {
-                                    glob_pattern: GlobPattern::Relative(RelativePattern {
-                                        base_uri: OneOf::Right(self.root_uri.clone()),
-                                        pattern,
-                                    }),
-                                    kind: Some(WatchKind::all()), // created, deleted, changed
-                                })
-                                .collect::<Vec<_>>(),
-                        })),
-                    });
+        for tool in self.tools.write().await.iter_mut() {
+            let change = tool.handle_configuration_change(
+                &self.root_uri,
+                &old_options,
+                changed_options_json.clone(),
+            );
+            if let Some(reports) = change.diagnostic_reports {
+                if let Some(existing_diagnostics) = &mut diagnostics {
+                    existing_diagnostics.extend(reports);
+                } else {
+                    diagnostics = Some(reports);
                 }
-            } else {
-                *self.server_formatter.write().await = None;
-
-                unregistrations.push(Unregistration {
-                    id: format!("watcher-formatter-{}", self.root_uri.as_str()),
-                    method: "workspace/didChangeWatchedFiles".to_string(),
-                });
+            }
+            if let Some(patterns) = change.watch_patterns {
+                unregistrations.push(unregistration_tool_watcher_id(tool.name(), &self.root_uri));
+                if !patterns.is_empty() {
+                    registrations.push(registration_tool_watcher_id(
+                        tool.name(),
+                        &self.root_uri,
+                        patterns,
+                    ));
+                }
+            }
+            if let Some(replaced_tool) = change.tool {
+                *tool = replaced_tool;
             }
         }
 
-        if ServerLinter::needs_restart(&current_option.lint, &changed_options.lint) {
-            // get the cached files before refreshing the linter
-            let linter_files = {
-                let linter_guard = self.server_linter.read().await;
-                linter_guard
-                    .as_ref()
-                    .map(|linter: &ServerLinter| linter.get_cached_files_of_diagnostics())
-            };
+        (diagnostics, registrations, unregistrations)
+    }
 
-            self.refresh_server_linter(&changed_options.lint).await;
-
-            // Get the Watch patterns (including the files from oxlint `extends`)
-            let patterns = {
-                let linter_guard = self.server_linter.read().await;
-                linter_guard.as_ref().and_then(|linter: &ServerLinter| {
-                    linter.get_changed_watch_patterns(
-                        &current_option.lint,
-                        &changed_options.lint,
-                        self.root_uri.to_file_path().as_ref().unwrap(),
-                    )
-                })
-            };
-
-            // revalidate diagnostics for previously cached files
-            if let Some(linter_files) = linter_files {
-                diagnostics = Some(self.revalidate_diagnostics(linter_files).await);
-            }
-
-            if let Some(patterns) = patterns {
-                unregistrations.push(Unregistration {
-                    id: format!("watcher-linter-{}", self.root_uri.as_str()),
-                    method: "workspace/didChangeWatchedFiles".to_string(),
-                });
-
-                registrations.push(Registration {
-                    id: format!("watcher-linter-{}", self.root_uri.as_str()),
-                    method: "workspace/didChangeWatchedFiles".to_string(),
-                    register_options: Some(json!(DidChangeWatchedFilesRegistrationOptions {
-                        watchers: patterns
-                            .into_iter()
-                            .map(|pattern| FileSystemWatcher {
-                                glob_pattern: GlobPattern::Relative(RelativePattern {
-                                    base_uri: OneOf::Right(self.root_uri.clone()),
-                                    pattern,
-                                }),
-                                kind: Some(WatchKind::all()), // created, deleted, changed
-                            })
-                            .collect::<Vec<_>>(),
-                    })),
-                });
+    /// Execute a command for the workspace.
+    /// Currently, only the `oxc.fixAll` command is supported.
+    ///
+    /// # Errors
+    /// Returns `ErrorCode` when the command is found but could not be executed.
+    pub async fn execute_command(
+        &self,
+        command: &str,
+        arguments: Vec<serde_json::Value>,
+    ) -> Result<Option<WorkspaceEdit>, ErrorCode> {
+        for tool in self.tools.read().await.iter() {
+            if tool.is_responsible_for_command(command) {
+                return tool.execute_command(command, arguments);
             }
         }
-
-        (diagnostics, registrations, unregistrations, formatting)
+        Ok(None)
     }
 }
 
-fn range_overlaps(a: Range, b: Range) -> bool {
-    a.start <= b.end && a.end >= b.start
+/// Create an unregistration for a file system watcher for the given tool
+fn unregistration_tool_watcher_id(tool: &str, root_uri: &Uri) -> Unregistration {
+    Unregistration {
+        id: format!("watcher-{tool}-{}", root_uri.as_str()),
+        method: "workspace/didChangeWatchedFiles".to_string(),
+    }
+}
+
+/// Create a registration for a file system watcher for the given tool and patterns
+fn registration_tool_watcher_id(tool: &str, root_uri: &Uri, patterns: Vec<String>) -> Registration {
+    Registration {
+        id: format!("watcher-{tool}-{}", root_uri.as_str()),
+        method: "workspace/didChangeWatchedFiles".to_string(),
+        register_options: Some(json!(DidChangeWatchedFilesRegistrationOptions {
+            watchers: patterns
+                .into_iter()
+                .map(|pattern| FileSystemWatcher {
+                    glob_pattern: GlobPattern::Relative(RelativePattern {
+                        base_uri: OneOf::Right(root_uri.clone()),
+                        pattern,
+                    }),
+                    kind: Some(WatchKind::all()), // created, deleted, changed
+                })
+                .collect::<Vec<_>>(),
+        })),
+    }
 }
 
 #[cfg(test)]
@@ -529,14 +412,17 @@ mod test_watchers {
         },
     };
 
-    use crate::{options::Options, worker::WorkspaceWorker};
+    use crate::{
+        ToolBuilder, formatter::ServerFormatterBuilder, linter::ServerLinterBuilder,
+        worker::WorkspaceWorker,
+    };
 
     struct Tester {
         pub worker: WorkspaceWorker,
     }
 
     impl Tester {
-        pub fn new(relative_root_dir: &'static str, options: &Options) -> Self {
+        pub fn new(relative_root_dir: &'static str, options: serde_json::Value) -> Self {
             let absolute_path =
                 std::env::current_dir().expect("could not get current dir").join(relative_root_dir);
             let uri =
@@ -549,9 +435,15 @@ mod test_watchers {
             Self { worker }
         }
 
-        async fn create_workspace_worker(absolute_path: Uri, options: &Options) -> WorkspaceWorker {
+        async fn create_workspace_worker(
+            absolute_path: Uri,
+            options: serde_json::Value,
+        ) -> WorkspaceWorker {
             let worker = WorkspaceWorker::new(absolute_path);
-            worker.start_worker(options).await;
+            let tools: Vec<Box<dyn ToolBuilder>> =
+                vec![Box::new(ServerLinterBuilder), Box::new(ServerFormatterBuilder)];
+
+            worker.start_worker(options, &tools).await;
 
             worker
         }
@@ -564,9 +456,9 @@ mod test_watchers {
 
         fn did_change_configuration(
             &self,
-            options: &Options,
+            options: serde_json::Value,
         ) -> (Vec<Registration>, Vec<Unregistration>) {
-            let (_, registration, unregistration, _) = tokio::runtime::Runtime::new()
+            let (_, registration, unregistration) = tokio::runtime::Runtime::new()
                 .unwrap()
                 .block_on(async { self.worker.did_change_configuration(options).await });
 
@@ -604,14 +496,13 @@ mod test_watchers {
     }
 
     mod init_watchers {
-        use crate::{
-            formatter::options::FormatOptions, linter::options::LintOptions, options::Options,
-            worker::test_watchers::Tester,
-        };
+        use serde_json::json;
+
+        use crate::worker::test_watchers::Tester;
 
         #[test]
         fn test_default_options() {
-            let tester = Tester::new("fixtures/watcher/default", &Options::default());
+            let tester = Tester::new("fixtures/watcher/default", json!({}));
             let registrations = tester.init_watchers();
 
             assert_eq!(registrations.len(), 1);
@@ -622,13 +513,9 @@ mod test_watchers {
         fn test_custom_config_path() {
             let tester = Tester::new(
                 "fixtures/watcher/default",
-                &Options {
-                    lint: LintOptions {
-                        config_path: Some("configs/lint.json".to_string()),
-                        ..Default::default()
-                    },
-                    ..Default::default()
-                },
+                json!({
+                    "configPath": "configs/lint.json"
+                }),
             );
             let registrations = tester.init_watchers();
 
@@ -638,7 +525,7 @@ mod test_watchers {
 
         #[test]
         fn test_linter_extends_configs() {
-            let tester = Tester::new("fixtures/watcher/linter_extends", &Options::default());
+            let tester = Tester::new("fixtures/watcher/linter_extends", json!({}));
             let registrations = tester.init_watchers();
 
             // The `.oxlintrc.json` extends `./lint.json -> 2 watchers
@@ -654,13 +541,9 @@ mod test_watchers {
         fn test_linter_extends_custom_config_path() {
             let tester = Tester::new(
                 "fixtures/watcher/linter_extends",
-                &Options {
-                    lint: LintOptions {
-                        config_path: Some(".oxlintrc.json".to_string()),
-                        ..Default::default()
-                    },
-                    ..Default::default()
-                },
+                json!({
+                    "configPath": ".oxlintrc.json"
+                }),
             );
             let registrations = tester.init_watchers();
 
@@ -676,10 +559,9 @@ mod test_watchers {
         fn test_formatter_experimental_enabled() {
             let tester = Tester::new(
                 "fixtures/watcher/default",
-                &Options {
-                    format: FormatOptions { experimental: true, ..Default::default() },
-                    ..Default::default()
-                },
+                json!({
+                    "fmt.experimental": true
+                }),
             );
             let watchers = tester.init_watchers();
 
@@ -696,13 +578,10 @@ mod test_watchers {
         fn test_formatter_custom_config_path() {
             let tester = Tester::new(
                 "fixtures/watcher/default",
-                &Options {
-                    format: FormatOptions {
-                        experimental: true,
-                        config_path: Some("configs/formatter.json".to_string()),
-                    },
-                    ..Default::default()
-                },
+                json!({
+                    "fmt.experimental": true,
+                    "fmt.configPath": "configs/formatter.json"
+                }),
             );
             let watchers = tester.init_watchers();
 
@@ -715,16 +594,11 @@ mod test_watchers {
         fn test_linter_and_formatter_custom_config_path() {
             let tester = Tester::new(
                 "fixtures/watcher/default",
-                &Options {
-                    lint: LintOptions {
-                        config_path: Some("configs/lint.json".to_string()),
-                        ..Default::default()
-                    },
-                    format: FormatOptions {
-                        experimental: true,
-                        config_path: Some("configs/formatter.json".to_string()),
-                    },
-                },
+                json!({
+                    "configPath": "configs/lint.json",
+                    "fmt.experimental": true,
+                    "fmt.configPath": "configs/formatter.json"
+                }),
             );
             let watchers = tester.init_watchers();
 
@@ -735,34 +609,25 @@ mod test_watchers {
     }
 
     mod did_change_configuration {
+        use serde_json::json;
         use tower_lsp_server::lsp_types::Unregistration;
 
-        use crate::{
-            formatter::options::FormatOptions,
-            linter::options::{LintOptions, Run},
-            options::Options,
-            worker::test_watchers::Tester,
-        };
+        use crate::worker::test_watchers::Tester;
 
         #[test]
         fn test_no_change() {
-            let tester = Tester::new("fixtures/watcher/default", &Options::default());
-            let (registration, unregistrations) =
-                tester.did_change_configuration(&Options::default());
+            let tester = Tester::new("fixtures/watcher/default", json!({}));
+            let (registration, unregistrations) = tester.did_change_configuration(json!({}));
             assert!(registration.is_empty());
             assert!(unregistrations.is_empty());
         }
 
         #[test]
         fn test_lint_config_path_change() {
-            let tester = Tester::new("fixtures/watcher/default", &Options::default());
-            let (registration, unregistrations) = tester.did_change_configuration(&Options {
-                lint: LintOptions {
-                    config_path: Some("configs/lint.json".to_string()),
-                    ..Default::default()
-                },
-                ..Default::default()
-            });
+            let tester = Tester::new("fixtures/watcher/default", json!({}));
+            let (registration, unregistrations) = tester.did_change_configuration(json!( {
+                "configPath": "configs/lint.json"
+            }));
 
             assert_eq!(unregistrations.len(), 1);
             assert_eq!(registration.len(), 1);
@@ -779,12 +644,11 @@ mod test_watchers {
 
         #[test]
         fn test_lint_other_option_change() {
-            let tester = Tester::new("fixtures/watcher/default", &Options::default());
-            let (registration, unregistrations) = tester.did_change_configuration(&Options {
+            let tester = Tester::new("fixtures/watcher/default", json!({}));
+            let (registration, unregistrations) = tester.did_change_configuration(json!({
                 // run is the only option that does not require a restart
-                lint: LintOptions { run: Run::OnSave, ..Default::default() },
-                ..Default::default()
-            });
+                "run": "onSave"
+            }));
             assert!(unregistrations.is_empty());
             assert!(registration.is_empty());
         }
@@ -793,15 +657,13 @@ mod test_watchers {
         fn test_no_changes_with_formatter() {
             let tester = Tester::new(
                 "fixtures/watcher/default",
-                &Options {
-                    format: FormatOptions { experimental: true, ..Default::default() },
-                    ..Default::default()
-                },
+                json!({
+                    "fmt.experimental": true,
+                }),
             );
-            let (registration, unregistrations) = tester.did_change_configuration(&Options {
-                format: FormatOptions { experimental: true, ..Default::default() },
-                ..Default::default()
-            });
+            let (registration, unregistrations) = tester.did_change_configuration(json!({
+                "fmt.experimental": true
+            }));
 
             assert!(registration.is_empty());
             assert!(unregistrations.is_empty());
@@ -811,18 +673,14 @@ mod test_watchers {
         fn test_lint_config_path_change_with_formatter() {
             let tester = Tester::new(
                 "fixtures/watcher/default",
-                &Options {
-                    format: FormatOptions { experimental: true, ..Default::default() },
-                    ..Default::default()
-                },
+                json!({
+                  "fmt.experimental": true
+                }),
             );
-            let (registration, unregistrations) = tester.did_change_configuration(&Options {
-                lint: LintOptions {
-                    config_path: Some("configs/lint.json".to_string()),
-                    ..Default::default()
-                },
-                format: FormatOptions { experimental: true, ..Default::default() },
-            });
+            let (registration, unregistrations) = tester.did_change_configuration(json!( {
+                "configPath": "configs/lint.json",
+                "fmt.experimental": true
+            }));
 
             assert_eq!(unregistrations.len(), 1);
             assert_eq!(
@@ -837,13 +695,22 @@ mod test_watchers {
 
         #[test]
         fn test_formatter_experimental_enabled() {
-            let tester = Tester::new("fixtures/watcher/default", &Options::default());
-            let (registration, unregistrations) = tester.did_change_configuration(&Options {
-                format: FormatOptions { experimental: true, ..Default::default() },
-                ..Default::default()
-            });
+            let tester = Tester::new("fixtures/watcher/default", json!({}));
+            let (registration, unregistrations) = tester.did_change_configuration(json!({
+                "fmt.experimental": true
+            }));
 
-            assert_eq!(unregistrations.len(), 0);
+            // The `WorkspaceWorker` does not know if the formatter was previously enabled or not,
+            // so it will always unregister the old watcher.
+            assert_eq!(unregistrations.len(), 1);
+            assert_eq!(
+                unregistrations[0],
+                Unregistration {
+                    id: format!("watcher-formatter-{}", tester.worker.get_root_uri().as_str()),
+                    method: "workspace/didChangeWatchedFiles".to_string(),
+                }
+            );
+
             assert_eq!(registration.len(), 1);
             tester.assert_eq_registration(
                 &registration[0],
@@ -856,18 +723,14 @@ mod test_watchers {
         fn test_formatter_custom_config_path() {
             let tester = Tester::new(
                 "fixtures/watcher/default",
-                &Options {
-                    format: FormatOptions { experimental: true, ..Default::default() },
-                    ..Default::default()
-                },
+                json!({
+                    "fmt.experimental": true
+                }),
             );
-            let (registration, unregistrations) = tester.did_change_configuration(&Options {
-                format: FormatOptions {
-                    experimental: true,
-                    config_path: Some("configs/formatter.json".to_string()),
-                },
-                ..Default::default()
-            });
+            let (registration, unregistrations) = tester.did_change_configuration(json!({
+                "fmt.experimental": true,
+                "fmt.configPath": "configs/formatter.json"
+            }));
 
             assert_eq!(unregistrations.len(), 1);
             assert_eq!(registration.len(), 1);
@@ -890,15 +753,13 @@ mod test_watchers {
         fn test_formatter_disabling() {
             let tester = Tester::new(
                 "fixtures/watcher/default",
-                &Options {
-                    format: FormatOptions { experimental: true, ..Default::default() },
-                    ..Default::default()
-                },
+                json!({
+                    "fmt.experimental": true
+                }),
             );
-            let (registration, unregistrations) = tester.did_change_configuration(&Options {
-                format: FormatOptions { experimental: false, ..Default::default() },
-                ..Default::default()
-            });
+            let (registration, unregistrations) = tester.did_change_configuration(json!({
+                "fmt.experimental": false
+            }));
 
             assert_eq!(unregistrations.len(), 1);
             assert_eq!(registration.len(), 0);

@@ -13,7 +13,6 @@ use crate::{
         separated::FormatSeparatedIter,
         trivia::{FormatLeadingComments, FormatTrailingComments},
     },
-    utils::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments,
     write,
     write::semicolon::OptionalSemicolon,
 };
@@ -31,7 +30,7 @@ pub fn format_import_and_export_source_with_clause<'a>(
     with_clause: Option<&AstNode<'a, WithClause>>,
     f: &mut Formatter<'_, 'a>,
 ) -> FormatResult<()> {
-    FormatNodeWithoutTrailingComments(source).fmt(f)?;
+    source.fmt(f)?;
 
     if let Some(with_clause) = with_clause {
         if f.comments().has_comment_before(with_clause.span.start) {
@@ -145,15 +144,8 @@ impl<'a> Format<'a> for AstNode<'a, Vec<'a, ImportDeclarationSpecifier<'a>>> {
 
 impl<'a> FormatWrite<'a> for AstNode<'a, ImportSpecifier<'a>> {
     fn write(&self, f: &mut Formatter<'_, 'a>) -> FormatResult<()> {
-        let comments = f.context().comments().comments_before(self.local.span.end);
-        let mut len = comments.len();
-        while len != 0 && comments[len - 1].is_block() {
-            len -= 1;
-        }
-        if len != 0 {
-            write!(f, [FormatLeadingComments::Comments(&comments[..len])])?;
-        }
-        write!(f, [self.import_kind()])?;
+        let comments = f.context().comments().line_comments_before(self.local.span.end);
+        write!(f, [FormatLeadingComments::Comments(comments), self.import_kind()])?;
         if self.local.span == self.imported.span() {
             write!(f, [self.local()])
         } else {
@@ -194,7 +186,7 @@ impl<'a> FormatWrite<'a> for AstNode<'a, WithClause<'a>> {
                     WithClauseKeyword::Assert => "assert",
                 },
                 space(),
-                self.with_entries(),
+                self.with_entries()
             ]
         )
     }
@@ -202,18 +194,67 @@ impl<'a> FormatWrite<'a> for AstNode<'a, WithClause<'a>> {
 
 impl<'a> Format<'a> for AstNode<'a, Vec<'a, ImportAttribute<'a>>> {
     fn fmt(&self, f: &mut Formatter<'_, 'a>) -> FormatResult<()> {
-        write!(f, "{")?;
-        if !self.is_empty() {
-            let maybe_space = maybe_space(f.options().bracket_spacing.value());
-            write!(f, [maybe_space])?;
-
-            f.join_with(space())
-                .entries_with_trailing_separator(self.iter(), ",", TrailingSeparator::Disallowed)
-                .finish()?;
-
-            write!(f, [maybe_space])?;
+        if self.is_empty() {
+            return write!(f, "{}");
         }
-        write!(f, "}")
+
+        let format_inner = format_once(|f| {
+            let should_insert_space_around_brackets = f.options().bracket_spacing.value();
+
+            write!(f, "{")?;
+
+            if self.len() > 1
+                || self.first().is_some_and(|attribute| attribute.key.as_atom().as_str() != "type")
+                || f.comments().has_comment_before(self.parent.span().end)
+            {
+                write!(
+                    f,
+                    [soft_block_indent_with_maybe_space(
+                        &format_once(|f| {
+                            let trailing_separator =
+                                FormatTrailingCommas::ES5.trailing_separator(f.options());
+
+                            f.join_with(soft_line_break())
+                                .entries_with_trailing_separator(
+                                    self.iter(),
+                                    ",",
+                                    trailing_separator,
+                                )
+                                .finish()
+                        },),
+                        should_insert_space_around_brackets
+                    )]
+                )?;
+            } else {
+                write!(
+                    f,
+                    [format_once(|f| {
+                        let maybe_space = maybe_space(f.options().bracket_spacing.value());
+                        write!(f, [maybe_space])?;
+
+                        f.join_with(space())
+                            .entries_with_trailing_separator(
+                                self.iter(),
+                                ",",
+                                TrailingSeparator::Disallowed,
+                            )
+                            .finish()?;
+
+                        write!(f, [maybe_space])
+                    })]
+                )?;
+            }
+
+            write!(f, "}")
+        });
+
+        let first = self.as_ref().first().unwrap();
+
+        write!(
+            f,
+            group(&format_inner)
+                .should_expand(f.source_text().has_newline_before(first.span.start))
+        )
     }
 }
 
@@ -223,14 +264,23 @@ impl<'a> FormatWrite<'a> for AstNode<'a, ImportAttribute<'a>> {
             if f.options().quote_properties == QuoteProperties::AsNeeded
                 && is_identifier_name(s.value().as_str())
             {
-                dynamic_text(s.value().as_str()).fmt(f)?;
+                text(s.value().as_str()).fmt(f)?;
             } else {
                 s.fmt(f)?;
             }
         } else {
             write!(f, self.key())?;
         }
-        write!(f, [":", space(), self.value()])
+        write!(f, [":", space()])?;
+
+        let has_leading_own_line_comment =
+            f.comments().has_leading_own_line_comment(self.value.span.start);
+
+        if has_leading_own_line_comment {
+            write!(f, [group(&indent(&format_args!(soft_line_break(), self.value())))])
+        } else {
+            write!(f, [self.value()])
+        }
     }
 }
 
@@ -255,6 +305,14 @@ impl<'a> FormatWrite<'a> for AstNode<'a, TSImportEqualsDeclaration<'a>> {
 
 impl<'a> FormatWrite<'a> for AstNode<'a, TSExternalModuleReference<'a>> {
     fn write(&self, f: &mut Formatter<'_, 'a>) -> FormatResult<()> {
-        write!(f, ["require(", self.expression(), ")"])
+        write!(f, ["require("])?;
+
+        if f.comments().has_comment_in_span(self.span) {
+            write!(f, [block_indent(self.expression())])?;
+        } else {
+            write!(f, [self.expression()])?;
+        }
+
+        write!(f, [")"])
     }
 }

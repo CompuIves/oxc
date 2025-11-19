@@ -7,6 +7,8 @@ use oxc_codegen::{Context, Gen};
 use oxc_diagnostics::OxcDiagnostic;
 use oxc_macros::declare_oxc_lint;
 use oxc_span::{GetSpan, SPAN, Span};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::{AstNode, context::LintContext, fixer::RuleFixer, rule::Rule};
@@ -26,7 +28,8 @@ fn consistent_type_specifier_style_diagnostic(span: Span, mode: &Mode) -> OxcDia
     OxcDiagnostic::warn(warn_msg).with_help(help_msg).with_label(span)
 }
 
-#[derive(Debug, Default, PartialEq, Clone)]
+#[derive(Debug, Default, PartialEq, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
 enum Mode {
     #[default]
     PreferTopLevel,
@@ -39,8 +42,12 @@ impl Mode {
     }
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", default)]
 pub struct ConsistentTypeSpecifierStyle {
+    /// Specify whether to prefer top-level type-only imports or inline type specifiers.
+    /// - `"prefer-top-level"`: `import type { Foo } from 'foo'`
+    /// - `"prefer-inline"`: `import { type Foo } from 'foo'`
     mode: Mode,
 }
 
@@ -59,38 +66,38 @@ declare_oxc_lint!(
     ///
     /// Examples of incorrect code for the default `prefer-top-level` option:
     /// ```typescript
-    /// import {type Foo} from 'Foo';
-    /// import Foo, {type Bar} from 'Foo';
+    /// import { type Foo } from 'Foo';
+    /// import Foo, { type Bar } from 'Foo';
     /// ```
     ///
     /// Examples of correct code for the default option:
     /// ```typescript
-    /// import type {Foo} from 'Foo';
-    /// import type Foo, {Bar} from 'Foo';
+    /// import type { Foo } from 'Foo';
+    /// import type Foo, { Bar } from 'Foo';
     /// ```
     ///
     /// Examples of incorrect code for the `prefer-inline` option:
     /// ```typescript
-    /// import type {Foo} from 'Foo';
-    /// import type Foo, {Bar} from 'Foo';
+    /// import type { Foo } from 'Foo';
+    /// import type Foo, { Bar } from 'Foo';
     /// ```
     ///
     /// Examples of correct code for the `prefer-inline` option:
     /// ```typescript
-    /// import {type Foo} from 'Foo';
-    /// import Foo, {type Bar} from 'Foo';
+    /// import { type Foo } from 'Foo';
+    /// import Foo, { type Bar } from 'Foo';
     /// ```
     ConsistentTypeSpecifierStyle,
     import,
     style,
-    conditional_fix
+    conditional_fix,
+    config = ConsistentTypeSpecifierStyle,
 );
 
 impl Rule for ConsistentTypeSpecifierStyle {
     fn from_configuration(value: Value) -> Self {
         Self { mode: value.get(0).and_then(Value::as_str).map(Mode::from).unwrap_or_default() }
     }
-    #[expect(clippy::cast_possible_truncation)]
     fn run<'a>(&self, node: &AstNode<'a>, ctx: &LintContext<'a>) {
         let AstKind::ImportDeclaration(import_decl) = node.kind() else {
             return;
@@ -144,14 +151,8 @@ impl Rule for ConsistentTypeSpecifierStyle {
                         rule_fixes.push(fixer.insert_text_before(item, "type "));
                     }
                     // find the 'type' keyword and remove it
-                    if let Some(type_token_span) = ctx
-                        .source_range(Span::new(import_decl.span.start, specifiers[0].span().start))
-                        .find("type")
-                        .map(|pos| {
-                            let start = import_decl.span.start + pos as u32;
-                            Span::sized(start, 4)
-                        })
-                    {
+                    if let Some(pos) = ctx.find_next_token_from(import_decl.span.start, "type") {
+                        let type_token_span = Span::sized(import_decl.span.start + pos, 4);
                         let remove_fix = fixer.delete_range(type_token_span);
                         rule_fixes.push(remove_fix);
                     }
@@ -313,6 +314,11 @@ fn test() {
         (
             "import type { foo, /** comments */ bar } from 'foo'",
             "import  { type foo, /** comments */ type bar } from 'foo'",
+            Some(json!(["prefer-inline"])),
+        ),
+        (
+            "import /* type */ type { foo } from 'foo'",
+            "import /* type */  { type foo } from 'foo'",
             Some(json!(["prefer-inline"])),
         ),
         (

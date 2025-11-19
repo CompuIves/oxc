@@ -6,13 +6,12 @@ pub use crate::formatter::{
 use crate::{
     formatter::{
         formatter::Formatter,
-        prelude::{if_group_breaks, text},
+        prelude::{if_group_breaks, token},
         printer::PrinterOptions,
     },
     write,
 };
 
-// TODO: rename these to align with prettier
 #[derive(Debug, Default, Clone)]
 pub struct FormatOptions {
     /// The indent style.
@@ -63,6 +62,9 @@ pub struct FormatOptions {
     /// - `"end"`: Places the operator at the end of the current line (default).
     pub experimental_operator_position: OperatorPosition,
 
+    /// Enable formatting for embedded languages (e.g., CSS, SQL, GraphQL) within template literals. Defaults to "auto".
+    pub embedded_language_formatting: EmbeddedLanguageFormatting,
+
     // TODO: `FormatOptions`? Split out as `TransformOptions`?
     /// Sort import statements. By default disabled.
     pub experimental_sort_imports: Option<SortImports>,
@@ -86,6 +88,7 @@ impl FormatOptions {
             attribute_position: AttributePosition::default(),
             expand: Expand::default(),
             experimental_operator_position: OperatorPosition::default(),
+            embedded_language_formatting: EmbeddedLanguageFormatting::default(),
             experimental_sort_imports: None,
         }
     }
@@ -112,6 +115,7 @@ impl fmt::Display for FormatOptions {
         writeln!(f, "Attribute Position: {}", self.attribute_position)?;
         writeln!(f, "Expand lists: {}", self.expand)?;
         writeln!(f, "Experimental operator position: {}", self.experimental_operator_position)?;
+        writeln!(f, "Embedded language formatting: {}", self.embedded_language_formatting)?;
         writeln!(f, "Experimental sort imports: {:?}", self.experimental_sort_imports)
     }
 }
@@ -167,21 +171,19 @@ pub enum LineEnding {
     ///  Line Feed only (\n), common on Linux and macOS as well as inside git repos
     #[default]
     Lf,
-
     /// Carriage Return + Line Feed characters (\r\n), common on Windows
     Crlf,
-
     /// Carriage Return character only (\r), used very rarely
     Cr,
 }
 
 impl LineEnding {
     #[inline]
-    pub const fn as_str(self) -> &'static str {
+    pub const fn as_bytes(self) -> &'static [u8] {
         match self {
-            LineEnding::Lf => "\n",
-            LineEnding::Crlf => "\r\n",
-            LineEnding::Cr => "\r",
+            LineEnding::Lf => b"\n",
+            LineEnding::Crlf => b"\r\n",
+            LineEnding::Cr => b"\r",
         }
     }
 
@@ -492,6 +494,13 @@ impl From<QuoteStyle> for Quote {
 #[derive(Eq, PartialEq, Debug, Copy, Clone, Hash)]
 pub struct TabWidth(u8);
 
+impl TabWidth {
+    /// Returns the numeric value for this [TabWidth]
+    pub fn value(self) -> u8 {
+        self.0
+    }
+}
+
 impl From<u8> for TabWidth {
     fn from(value: u8) -> Self {
         TabWidth(value)
@@ -629,13 +638,10 @@ pub enum TrailingSeparator {
     /// A trailing separator is allowed and preferred
     #[default]
     Allowed,
-
     /// A trailing separator is not allowed
     Disallowed,
-
     /// A trailing separator is mandatory for the syntax to be correct
     Mandatory,
-
     /// A trailing separator might be present, but the consumer
     /// decides to remove it
     Omit,
@@ -668,7 +674,7 @@ impl Format<'_> for FormatTrailingCommas {
         }
 
         if matches!(self, FormatTrailingCommas::ES5) || f.options().trailing_commas.is_all() {
-            write!(f, [if_group_breaks(&text(","))])?;
+            write!(f, [if_group_breaks(&token(","))])?;
         }
 
         Ok(())
@@ -876,7 +882,6 @@ impl fmt::Display for Expand {
 pub enum OperatorPosition {
     /// When binary expressions wrap lines, print operators at the start of new lines.
     Start,
-
     // Default behavior; when binary expressions wrap lines, print operators at the end of previous lines.
     #[default]
     End,
@@ -914,9 +919,51 @@ impl fmt::Display for OperatorPosition {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+pub enum EmbeddedLanguageFormatting {
+    /// Enable formatting for embedded languages.
+    Auto,
+    // Disable by default at alpha release, synced with `oxfmtrc.rs`
+    /// Disable formatting for embedded languages.
+    #[default]
+    Off,
+}
+
+impl EmbeddedLanguageFormatting {
+    pub const fn is_auto(self) -> bool {
+        matches!(self, Self::Auto)
+    }
+
+    pub const fn is_off(self) -> bool {
+        matches!(self, Self::Off)
+    }
+}
+
+impl FromStr for EmbeddedLanguageFormatting {
+    type Err = &'static str;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "auto" => Ok(Self::Auto),
+            "off" => Ok(Self::Off),
+            _ => Err("Value not supported for EmbeddedLanguageFormatting"),
+        }
+    }
+}
+
+impl fmt::Display for EmbeddedLanguageFormatting {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let s = match self {
+            EmbeddedLanguageFormatting::Auto => "Auto",
+            EmbeddedLanguageFormatting::Off => "Off",
+        };
+        f.write_str(s)
+    }
+}
+
 // ---
 
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SortImports {
     /// Partition imports by newlines.
     /// Default is `false`.
@@ -933,6 +980,15 @@ pub struct SortImports {
     /// Ignore case when sorting.
     /// Default is `true`.
     pub ignore_case: bool,
+    /// Whether to insert blank lines between different import groups.
+    /// - `true`: Insert one blank line between groups (default)
+    /// - `false`: No blank lines between groups
+    ///
+    /// NOTE: Cannot be used together with `partition_by_newline: true`.
+    pub newlines_between: bool,
+    /// Groups configuration for organizing imports.
+    /// Each inner `Vec` represents a group, and multiple group names in the same `Vec` are treated as one.
+    pub groups: Vec<Vec<String>>,
 }
 
 impl Default for SortImports {
@@ -943,7 +999,28 @@ impl Default for SortImports {
             sort_side_effects: false,
             order: SortOrder::default(),
             ignore_case: true,
+            newlines_between: true,
+            groups: Self::default_groups(),
         }
+    }
+}
+
+impl SortImports {
+    pub fn default_groups() -> Vec<Vec<String>> {
+        vec![
+            vec!["type-import".to_string()],
+            vec!["value-builtin".to_string(), "value-external".to_string()],
+            vec!["type-internal".to_string()],
+            vec!["value-internal".to_string()],
+            vec!["type-parent".to_string(), "type-sibling".to_string(), "type-index".to_string()],
+            vec![
+                "value-parent".to_string(),
+                "value-sibling".to_string(),
+                "value-index".to_string(),
+            ],
+            // vec!["ts-equals-import".to_string()],
+            vec!["unknown".to_string()],
+        ]
     }
 }
 

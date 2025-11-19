@@ -6,11 +6,12 @@ use std::{
 
 use rustc_hash::FxHashMap;
 
-use oxc_diagnostics::{DiagnosticSender, DiagnosticService};
+use oxc_diagnostics::{DiagnosticSender, DiagnosticService, OxcDiagnostic};
 use oxc_span::Span;
 
 use crate::{
-    AllowWarnDeny, DisableDirectives, LintService, LintServiceOptions, Linter, TsGoLintState,
+    AllowWarnDeny, DisableDirectives, FixKind, LintService, LintServiceOptions, Linter, Message,
+    OsFileSystem, PossibleFixes, TsGoLintState,
 };
 
 /// Unified runner that orchestrates both regular (oxc) and type-aware (tsgolint) linting
@@ -101,9 +102,7 @@ impl DirectivesStore {
                     &source_text,
                     diagnostics,
                 );
-                tx_error
-                    .send((path.clone(), wrapped))
-                    .expect("failed to send unused directive diagnostics");
+                tx_error.send(wrapped).expect("failed to send unused directive diagnostics");
             }
         }
     }
@@ -129,6 +128,7 @@ pub struct LintRunnerBuilder {
     type_aware_enabled: bool,
     lint_service_options: LintServiceOptions,
     silent: bool,
+    fix_kind: FixKind,
 }
 
 impl LintRunnerBuilder {
@@ -138,6 +138,7 @@ impl LintRunnerBuilder {
             type_aware_enabled: false,
             lint_service_options,
             silent: false,
+            fix_kind: FixKind::None,
         }
     }
 
@@ -153,6 +154,12 @@ impl LintRunnerBuilder {
         self
     }
 
+    #[must_use]
+    pub fn with_fix_kind(mut self, fix_kind: FixKind) -> Self {
+        self.fix_kind = fix_kind;
+        self
+    }
+
     /// # Errors
     /// Returns an error if the type-aware linter fails to initialize.
     pub fn build(self) -> Result<LintRunner, String> {
@@ -162,6 +169,7 @@ impl LintRunnerBuilder {
             match TsGoLintState::try_new(
                 self.lint_service_options.cwd(),
                 self.regular_linter.config.clone(),
+                self.fix_kind,
             ) {
                 Ok(state) => Some(state.with_silent(self.silent)),
                 Err(e) => return Err(e),
@@ -196,17 +204,14 @@ impl LintRunner {
         mut self,
         files: &[Arc<OsStr>],
         tx_error: DiagnosticSender,
-        file_system: Option<Box<dyn crate::RuntimeFileSystem + Sync + Send>>,
+        file_system: Option<&(dyn crate::RuntimeFileSystem + Sync + Send)>,
     ) -> Result<Self, String> {
         // Phase 1: Regular linting (collects disable directives)
-        self.lint_service.with_paths(files.to_owned());
+        let default_fs = OsFileSystem;
+        let fs: &(dyn crate::RuntimeFileSystem + Sync + Send) =
+            if let Some(fs) = file_system { fs } else { &default_fs };
 
-        // Set custom file system if provided
-        if let Some(fs) = file_system {
-            self.lint_service.with_file_system(fs);
-        }
-
-        self.lint_service.run(&tx_error);
+        self.lint_service.run(fs, files.to_owned(), &tx_error);
 
         if let Some(type_aware_linter) = self.type_aware_linter.take() {
             type_aware_linter.lint(files, self.directives_store.map(), tx_error)?;
@@ -215,6 +220,37 @@ impl LintRunner {
         }
 
         Ok(self)
+    }
+
+    /// Run both regular and type-aware linting on files
+    /// # Errors
+    /// Returns an error if type-aware linting fails.
+    pub fn run_source(
+        &self,
+        file: &Arc<OsStr>,
+        source_text: String,
+        file_system: &(dyn crate::RuntimeFileSystem + Sync + Send),
+    ) -> Vec<Message> {
+        let mut messages = self.lint_service.run_source(file_system, vec![Arc::clone(file)]);
+
+        if let Some(type_aware_linter) = &self.type_aware_linter {
+            let tsgo_messages =
+                match type_aware_linter.lint_source(file, source_text, self.directives_store.map())
+                {
+                    Ok(msgs) => msgs,
+                    Err(err) => {
+                        vec![Message::new(
+                            OxcDiagnostic::warn(format!(
+                                "Failed to run type-aware linting: `{err}`",
+                            )),
+                            PossibleFixes::None,
+                        )]
+                    }
+                };
+            messages.extend(tsgo_messages);
+        }
+
+        messages
     }
 
     /// Report unused disable directives

@@ -1,10 +1,6 @@
 import os from 'node:os';
 import { BUFFER_ALIGN, BUFFER_SIZE, IS_TS_FLAG_POS } from '../../generated/constants.js';
-import {
-  getBufferOffset,
-  parseAsyncRaw as parseAsyncRawBinding,
-  parseSyncRaw as parseSyncRawBinding,
-} from '../bindings.js';
+import { getBufferOffset, parseRaw as parseRawBinding, parseRawSync as parseRawSyncBinding } from '../bindings.js';
 import { rawTransferSupported } from './supported.js';
 
 // Throw an error if running on a platform which raw transfer doesn't support.
@@ -34,7 +30,7 @@ if (!rawTransferSupported()) {
  */
 export function parseSyncRawImpl(filename, sourceText, options, convert) {
   const { buffer, sourceByteLen } = prepareRaw(sourceText);
-  parseSyncRawBinding(filename, buffer, sourceByteLen, options);
+  parseRawSyncBinding(filename, buffer, sourceByteLen, options);
   return convert(buffer, sourceText, sourceByteLen, options);
 }
 
@@ -114,7 +110,7 @@ export async function parseAsyncRawImpl(filename, sourceText, options, convert) 
 
   // Parse
   const { buffer, sourceByteLen } = prepareRaw(sourceText);
-  await parseAsyncRawBinding(filename, buffer, sourceByteLen, options);
+  await parseRawBinding(filename, buffer, sourceByteLen, options);
   const data = convert(buffer, sourceText, sourceByteLen, options);
 
   // Free the CPU core
@@ -164,7 +160,8 @@ const ONE_GIB = 1 << 30;
 // freed. We don't want to block it from freeing memory, but if it's not done that yet, there's no
 // point creating a new buffer, when one already exists.
 const CLEAR_BUFFERS_TIMEOUT = 10_000; // 10 seconds
-const buffers = [], oldBuffers = [];
+const buffers = [],
+  oldBuffers = [];
 let clearBuffersTimeout = null;
 
 const textEncoder = new TextEncoder();

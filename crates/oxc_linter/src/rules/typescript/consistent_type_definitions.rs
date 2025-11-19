@@ -7,6 +7,8 @@ use oxc_ast::{
 use oxc_diagnostics::OxcDiagnostic;
 use oxc_macros::declare_oxc_lint;
 use oxc_span::Span;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     AstNode,
@@ -15,21 +17,41 @@ use crate::{
 };
 
 fn consistent_type_definitions_diagnostic(
-    preferred_type_kind: &str,
-    bad_type_kind: &str,
+    config: ConsistentTypeDefinitionsConfig,
     span: Span,
 ) -> OxcDiagnostic {
-    OxcDiagnostic::warn(format!("Use an `{preferred_type_kind}` instead of a `{bad_type_kind}`"))
-        .with_help(format!("Use an `{preferred_type_kind}` instead of a `{bad_type_kind}`"))
-        .with_label(span)
+    let message = match config {
+        ConsistentTypeDefinitionsConfig::Interface => "Use `interface` instead of `type`.",
+        ConsistentTypeDefinitionsConfig::Type => "Use `type` instead of `interface`.",
+    };
+
+    OxcDiagnostic::warn(message).with_label(span)
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, JsonSchema, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", default)]
 pub struct ConsistentTypeDefinitions {
+    /// Configuration option to enforce either `interface` or `type` for object type definitions.
+    ///
+    /// Setting to `type` enforces the use of types for object type definitions.
+    ///
+    /// Examples of **incorrect** code for this option:
+    ///
+    /// ```typescript
+    /// interface T {
+    ///   x: number;
+    /// }
+    /// ```
+    ///
+    /// Examples of **correct** code for this option:
+    /// ```typescript
+    /// type T = { x: number };
+    /// ```
     config: ConsistentTypeDefinitionsConfig,
 }
 
-#[derive(Debug, Default, Clone, Copy, Eq, PartialEq)]
+#[derive(Debug, Default, Clone, Copy, Eq, PartialEq, JsonSchema, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
 enum ConsistentTypeDefinitionsConfig {
     #[default]
     Interface,
@@ -39,11 +61,11 @@ enum ConsistentTypeDefinitionsConfig {
 declare_oxc_lint!(
     /// ### What it does
     ///
-    /// Enforce type definitions to consistently use either interface or type.
+    /// Enforce type definitions to consistently use either `interface` or `type`.
     ///
     /// ### Why is this bad?
     ///
-    /// TypeScript provides two common ways to define an object type: interface and type.
+    /// TypeScript provides two common ways to define an object type: `interface` and `type`.
     /// The two are generally very similar, and can often be used interchangeably.
     /// Using the same type declaration style consistently helps with code readability.
     ///
@@ -65,36 +87,11 @@ declare_oxc_lint!(
     ///   x: number;
     /// }
     /// ```
-    ///
-    /// ### Options
-    ///
-    /// This rule has a single string option:
-    ///
-    /// `{ type: string, default: "interface" }`
-    ///
-    /// ### interface
-    ///
-    /// This is the default option.
-    ///
-    /// ### type
-    ///
-    /// Enforces the use of types for object type definitions.
-    ///
-    /// Examples of **incorrect** code for this option:
-    /// ```typescript
-    /// interface T {
-    ///   x: number;
-    /// }
-    /// ```
-    ///
-    /// Examples of **correct** code for this option:
-    /// ```typescript
-    /// type T = { x: number };
-    /// ```
     ConsistentTypeDefinitions,
     typescript,
     style,
-    fix
+    fix,
+    config = ConsistentTypeDefinitions,
 );
 
 impl Rule for ConsistentTypeDefinitions {
@@ -117,9 +114,9 @@ impl Rule for ConsistentTypeDefinitions {
                 {
                     let start = if decl.declare {
                         let base_start = decl.span.start + 7;
-                        ctx.source_range(Span::new(base_start, decl.span.end))
-                            .find("type")
-                            .map_or(base_start + 1, |v| u32::try_from(v).unwrap_or(0) + base_start)
+
+                        ctx.find_next_token_from(base_start, "type")
+                            .map_or(base_start + 1, |v| v + base_start)
                     } else {
                         decl.span.start
                     };
@@ -141,8 +138,7 @@ impl Rule for ConsistentTypeDefinitions {
 
                         ctx.diagnostic_with_fix(
                             consistent_type_definitions_diagnostic(
-                                "interface",
-                                "type",
+                                ConsistentTypeDefinitionsConfig::Interface,
                                 Span::new(start, start + 4),
                             ),
                             |fixer| {
@@ -181,8 +177,7 @@ impl Rule for ConsistentTypeDefinitions {
 
                     ctx.diagnostic_with_fix(
                         consistent_type_definitions_diagnostic(
-                            "type",
-                            "interface",
+                            ConsistentTypeDefinitionsConfig::Type,
                             Span::sized(decl.span.start, 9),
                         ),
                         |fixer| {
@@ -201,9 +196,9 @@ impl Rule for ConsistentTypeDefinitions {
             {
                 let start = if decl.declare {
                     let base_start = decl.span.start + 7;
-                    ctx.source_range(Span::new(base_start, decl.span.end))
-                        .find("interface")
-                        .map_or(base_start + 1, |v| u32::try_from(v).unwrap_or(0) + base_start)
+
+                    ctx.find_next_token_from(base_start, "interface")
+                        .map_or(base_start + 1, |v| v + base_start)
                 } else {
                     decl.span.start
                 };
@@ -227,8 +222,7 @@ impl Rule for ConsistentTypeDefinitions {
 
                 ctx.diagnostic_with_fix(
                     consistent_type_definitions_diagnostic(
-                        "type",
-                        "interface",
+                        ConsistentTypeDefinitionsConfig::Type,
                         Span::sized(start, 9),
                     ),
                     |fixer| {
@@ -265,6 +259,7 @@ fn test() {
         ),
         ("type U = string;", Some(serde_json::json!(["interface"]))),
         ("type V = { x: number } | { y: string };", Some(serde_json::json!(["interface"]))),
+        ("interface T { x: \"interface\" | \"type\"; }", Some(serde_json::json!(["interface"]))),
         (
             "
 			type Record<T, U> = {
@@ -301,6 +296,7 @@ fn test() {
         ("interface T { x: number; }", Some(serde_json::json!(["type"]))),
         ("interface T{ x: number; }", Some(serde_json::json!(["type"]))),
         ("interface T                          { x: number; }", Some(serde_json::json!(["type"]))),
+        ("type T = { x: \"interface\" | \"type\"; };", Some(serde_json::json!(["interface"]))),
         ("interface A extends B, C { x: number; };", Some(serde_json::json!(["type"]))),
         ("interface A extends B<T1>, C<T2> { x: number; };", Some(serde_json::json!(["type"]))),
         (
@@ -383,6 +379,8 @@ fn test() {
         ("declareinterface S {}", Some(serde_json::json!(["type"]))),
         ("export declaretype S={}", Some(serde_json::json!(["interface"]))),
         ("export declareinterface S {}", Some(serde_json::json!(["type"]))),
+        ("declare /* interface */ interface T { x: number; };", Some(serde_json::json!(["type"]))),
+        ("declare /* type */ type T =  { x: number; };", Some(serde_json::json!(["interface"]))),
     ];
 
     let fix = vec![
@@ -408,6 +406,11 @@ fn test() {
             "export interface W<T> {
             x: T;
           }",
+            Some(serde_json::json!(["interface"])),
+        ),
+        (
+            "type T = { x: \"interface\" | \"type\"; };",
+            "interface T { x: \"interface\" | \"type\"; }",
             Some(serde_json::json!(["interface"])),
         ),
         (

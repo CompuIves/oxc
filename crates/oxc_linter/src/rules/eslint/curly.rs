@@ -4,6 +4,8 @@ use oxc_ast::{AstKind, ast::IfStatement, ast::Statement};
 use oxc_diagnostics::OxcDiagnostic;
 use oxc_macros::declare_oxc_lint;
 use oxc_span::{GetSpan, Span};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 fn curly_diagnostic(span: Span, keyword: &str, expected: bool) -> OxcDiagnostic {
@@ -15,7 +17,8 @@ fn curly_diagnostic(span: Span, keyword: &str, expected: bool) -> OxcDiagnostic 
     OxcDiagnostic::warn(message).with_label(span)
 }
 
-#[derive(Debug, Default, Clone, PartialEq)]
+#[derive(Debug, Default, Clone, PartialEq, JsonSchema, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
 enum CurlyType {
     #[default]
     All,
@@ -38,9 +41,17 @@ impl CurlyType {
 #[derive(Debug, Default, Clone)]
 pub struct Curly(CurlyConfig);
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, JsonSchema, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", default)]
 pub struct CurlyConfig {
+    /// Which type of curly brace enforcement to use.
+    ///
+    /// - `"all"`: require braces in all cases
+    /// - `"multi"`: require braces only for multi-statement blocks
+    /// - `"multi-line"`: require braces only for multi-line blocks
+    /// - `"multi-or-nest"`: require braces for multi-line blocks or when nested
     curly_type: CurlyType,
+    /// Whether to enforce consistent use of curly braces in if-else chains.
     consistent: bool,
 }
 
@@ -70,32 +81,6 @@ declare_oxc_lint!(
     /// It can also lead to bugs if additional statements are added later without properly enclosing them in braces.
     /// Using curly braces consistently makes the code safer and easier to modify.
     ///
-    /// ### Options
-    ///
-    /// First option:
-    /// - Type: `string`
-    /// - Default: `"all"`
-    /// - Possible values:
-    ///   - `"all"`: require braces in all cases
-    ///   - `"multi"`: require braces only for multi-statement blocks
-    ///   - `"multi-line"`: require braces only for multi-line blocks
-    ///   - `"multi-or-nest"`: require braces for multi-line blocks or when nested
-    ///
-    /// Second option:
-    /// - Type: `string`
-    /// - Default: `undefined`
-    /// - Possible values:
-    ///  - `"consistent"`: require braces if any other branch in the `if-else` chain has braces
-    ///
-    /// Note : The second option can only be used in conjunction with the first option.
-    ///
-    /// Example configuration:
-    /// ```json
-    /// {
-    ///   "curly": ["error", "multi-or-nest", "consistent"]
-    /// }
-    /// ```
-    ///
     /// ### Examples
     ///
     /// #### `"all"` (default)
@@ -114,10 +99,14 @@ declare_oxc_lint!(
     /// ```js
     /// /* curly: ["error", "all"] */
     ///
-    /// if (foo) { foo++; }
-    /// while (bar) { bar--; }
+    /// if (foo) {
+    ///   foo++;
+    /// }
+    /// while (bar) {
+    ///   bar--;
+    /// }
     /// do { foo(); } while (bar);
-    ///```
+    /// ```
     ///
     /// #### `"multi"`
     /// Examples of **incorrect** code for this rule with the `"multi"` option:
@@ -272,7 +261,8 @@ declare_oxc_lint!(
     Curly,
     eslint,
     style,
-    fix
+    fix,
+    config = CurlyConfig,
 );
 
 impl Rule for Curly {

@@ -1,5 +1,3 @@
-import { sep } from 'node:path';
-
 import type { Node, Plugin, Rule } from '../../../dist/index.js';
 
 const SPAN: Node = {
@@ -12,12 +10,6 @@ const SPAN: Node = {
   },
 };
 
-const DIR_PATH_LEN = import.meta.dirname.length + 1;
-
-const relativePath = sep === '/'
-  ? (path: string) => path.slice(DIR_PATH_LEN)
-  : (path: string) => path.slice(DIR_PATH_LEN).replace(/\\/g, '/');
-
 let createOnceCallCount = 0;
 
 const alwaysRunRule: Rule = {
@@ -28,37 +20,59 @@ const alwaysRunRule: Rule = {
     // oxlint-disable-next-line typescript-eslint/no-this-alias
     const topLevelThis = this;
 
+    // Check that these APIs don't throw here
+    const cwd = context.cwd;
+    const getCwd = context.getCwd();
+
     // Check that these APIs throw here
     const idError = tryCatch(() => context.id);
     const filenameError = tryCatch(() => context.filename);
+    const getFilenameError = tryCatch(() => context.getFilename());
     const physicalFilenameError = tryCatch(() => context.physicalFilename);
+    const getPhysicalFilenameError = tryCatch(() => context.getPhysicalFilename());
     const optionsError = tryCatch(() => context.options);
     const sourceCodeError = tryCatch(() => context.sourceCode);
+    const getSourceCodeError = tryCatch(() => context.getSourceCode());
+    const settingsError = tryCatch(() => context.settings);
+    const parserOptionsError = tryCatch(() => context.parserOptions);
     const reportError = tryCatch(() => context.report({ message: 'oh no', node: SPAN }));
 
     return {
       before() {
         context.report({ message: `createOnce: call count: ${createOnceCallCount}`, node: SPAN });
         context.report({ message: `createOnce: this === rule: ${topLevelThis === alwaysRunRule}`, node: SPAN });
-        context.report({ message: `createOnce: id: ${idError?.message}`, node: SPAN });
-        context.report({ message: `createOnce: filename: ${filenameError?.message}`, node: SPAN });
-        context.report({ message: `createOnce: physicalFilename: ${physicalFilenameError?.message}`, node: SPAN });
-        context.report({ message: `createOnce: options: ${optionsError?.message}`, node: SPAN });
-        context.report({ message: `createOnce: sourceCode: ${sourceCodeError?.message}`, node: SPAN });
-        context.report({ message: `createOnce: report: ${reportError?.message}`, node: SPAN });
+        context.report({ message: `createOnce: cwd: ${cwd}`, node: SPAN });
+        context.report({ message: `createOnce: getCwd(): ${getCwd}`, node: SPAN });
+        context.report({ message: `createOnce: id error: ${idError?.message}`, node: SPAN });
+        context.report({ message: `createOnce: filename error: ${filenameError?.message}`, node: SPAN });
+        context.report({ message: `createOnce: getFilename() error: ${getFilenameError?.message}`, node: SPAN });
+        context.report({
+          message: `createOnce: physicalFilename error: ${physicalFilenameError?.message}`,
+          node: SPAN,
+        });
+        context.report({
+          message: `createOnce: getPhysicalFilename() error: ${getPhysicalFilenameError?.message}`,
+          node: SPAN,
+        });
+        context.report({ message: `createOnce: options error: ${optionsError?.message}`, node: SPAN });
+        context.report({ message: `createOnce: sourceCode error: ${sourceCodeError?.message}`, node: SPAN });
+        context.report({ message: `createOnce: getSourceCode() error: ${getSourceCodeError?.message}`, node: SPAN });
+        context.report({ message: `createOnce: settings error: ${settingsError?.message}`, node: SPAN });
+        context.report({ message: `createOnce: parserOptions error: ${parserOptionsError?.message}`, node: SPAN });
+        context.report({ message: `createOnce: report error: ${reportError?.message}`, node: SPAN });
 
         context.report({ message: `before hook: id: ${context.id}`, node: SPAN });
-        context.report({ message: `before hook: filename: ${relativePath(context.filename)}`, node: SPAN });
+        context.report({ message: `before hook: filename: ${context.filename}`, node: SPAN });
       },
       Identifier(node) {
         context.report({
-          message: `ident visit fn "${node.name}": filename: ${relativePath(context.filename)}`,
+          message: `ident visit fn "${node.name}": filename: ${context.filename}`,
           node,
         });
       },
       after() {
         context.report({ message: `after hook: id: ${context.id}`, node: SPAN });
-        context.report({ message: `after hook: filename: ${relativePath(context.filename)}`, node: SPAN });
+        context.report({ message: `after hook: filename: ${context.filename}`, node: SPAN });
       },
     };
   },
@@ -69,7 +83,7 @@ const skipRunRule: Rule = {
     return {
       before() {
         context.report({ message: `before hook: id: ${context.id}`, node: SPAN });
-        context.report({ message: `before hook: filename: ${relativePath(context.filename)}`, node: SPAN });
+        context.report({ message: `before hook: filename: ${context.filename}`, node: SPAN });
         // Skip running this rule
         return false;
       },
@@ -88,11 +102,11 @@ const beforeOnlyRule: Rule = {
     return {
       before() {
         context.report({ message: `before hook: id: ${context.id}`, node: SPAN });
-        context.report({ message: `before hook: filename: ${relativePath(context.filename)}`, node: SPAN });
+        context.report({ message: `before hook: filename: ${context.filename}`, node: SPAN });
       },
       Identifier(node) {
         context.report({
-          message: `ident visit fn "${node.name}": filename: ${relativePath(context.filename)}`,
+          message: `ident visit fn "${node.name}": filename: ${context.filename}`,
           node,
         });
       },
@@ -105,13 +119,13 @@ const afterOnlyRule: Rule = {
     return {
       Identifier(node) {
         context.report({
-          message: `ident visit fn "${node.name}": filename: ${relativePath(context.filename)}`,
+          message: `ident visit fn "${node.name}": filename: ${context.filename}`,
           node,
         });
       },
       after() {
         context.report({ message: `after hook: id: ${context.id}`, node: SPAN });
-        context.report({ message: `after hook: filename: ${relativePath(context.filename)}`, node: SPAN });
+        context.report({ message: `after hook: filename: ${context.filename}`, node: SPAN });
       },
     };
   },
@@ -136,7 +150,7 @@ const noHooksRule: Rule = {
     return {
       Identifier(node) {
         context.report({
-          message: `ident visit fn "${node.name}": filename: ${relativePath(context.filename)}`,
+          message: `ident visit fn "${node.name}": filename: ${context.filename}`,
           node,
         });
       },

@@ -15,6 +15,7 @@ use oxc_cfg::{
 use oxc_diagnostics::OxcDiagnostic;
 use oxc_macros::declare_oxc_lint;
 use oxc_span::Span;
+use schemars::JsonSchema;
 
 use crate::{
     AstNode,
@@ -28,8 +29,10 @@ fn getter_return_diagnostic(span: Span) -> OxcDiagnostic {
         .with_label(span)
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, JsonSchema)]
+#[serde(rename_all = "camelCase", default)]
 pub struct GetterReturn {
+    /// When set to `true`, allows getters to implicitly return `undefined` with a `return` statement containing no expression.
     pub allow_implicit: bool,
 }
 
@@ -79,7 +82,8 @@ declare_oxc_lint!(
     /// ```
     GetterReturn,
     eslint,
-    nursery
+    nursery,
+    config = GetterReturn
 );
 
 impl Rule for GetterReturn {
@@ -165,9 +169,8 @@ impl GetterReturn {
 
                 let parent_2 = ctx.nodes().parent_node(parent.id());
                 let parent_3 = ctx.nodes().parent_node(parent_2.id());
-                let parent_4 = ctx.nodes().parent_node(parent_3.id());
                 // handle (X())
-                match parent_4.kind() {
+                match parent_3.kind() {
                     AstKind::ParenthesizedExpression(p) => {
                         if Self::handle_paren_expr(&p.expression) {
                             return true;
@@ -181,9 +184,9 @@ impl GetterReturn {
                     _ => {}
                 }
 
+                let parent_4 = ctx.nodes().parent_node(parent_3.id());
                 let parent_5 = ctx.nodes().parent_node(parent_4.id());
-                let parent_6 = ctx.nodes().parent_node(parent_5.id());
-                match parent_6.kind() {
+                match parent_5.kind() {
                     AstKind::ParenthesizedExpression(p) => {
                         if Self::handle_paren_expr(&p.expression) {
                             return true;

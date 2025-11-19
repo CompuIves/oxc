@@ -4,7 +4,7 @@ use std::{
 };
 
 use rustc_hash::{FxHashMap, FxHashSet};
-use schemars::JsonSchema;
+use schemars::{JsonSchema, schema_for};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use oxc_diagnostics::OxcDiagnostic;
@@ -63,6 +63,12 @@ use super::{
 #[serde(default)]
 #[non_exhaustive]
 pub struct Oxlintrc {
+    /// Enabled built-in plugins for Oxlint.
+    /// You can view the list of available plugins on
+    /// [the website](https://oxc.rs/docs/guide/usage/linter/plugins.html#supported-plugins).
+    ///
+    /// NOTE: Setting the `plugins` field will overwrite the base set of plugins.
+    /// The `plugins` array should reflect all of the plugins you want to use.
     pub plugins: Option<LintPlugins>,
     /// JS plugins.
     ///
@@ -192,10 +198,27 @@ impl Oxlintrc {
         })
     }
 
+    /// Generates the JSON schema for Oxlintrc configuration files.
+    ///
+    /// # Panics
+    /// Panics if the schema generation fails.
+    pub fn generate_schema_json() -> String {
+        let mut schema = schema_for!(Oxlintrc);
+        // Allow comments and trailing commas for vscode-json-languageservice
+        // NOTE: This is NOT part of standard JSON Schema specification
+        // https://github.com/microsoft/vscode-json-languageservice/blob/fb83547762901f32d8449d57e24666573016b10c/src/jsonLanguageTypes.ts#L151-L159
+        schema.schema.extensions.insert("allowComments".to_string(), serde_json::Value::Bool(true));
+        schema
+            .schema
+            .extensions
+            .insert("allowTrailingCommas".to_string(), serde_json::Value::Bool(true));
+        serde_json::to_string_pretty(&schema).unwrap()
+    }
+
     /// Merges two [Oxlintrc] files together
     /// [Self] takes priority over `other`
     #[must_use]
-    pub fn merge(&self, other: Oxlintrc) -> Oxlintrc {
+    pub fn merge(&self, other: &Oxlintrc) -> Oxlintrc {
         let mut categories = other.categories.clone();
         categories.extend(self.categories.iter());
 
@@ -219,8 +242,8 @@ impl Oxlintrc {
         let env = self.env.clone();
         let globals = self.globals.clone();
 
-        let mut overrides = self.overrides.clone();
-        overrides.extend(other.overrides);
+        let mut overrides = other.overrides.clone();
+        overrides.extend(self.overrides.clone());
 
         let plugins = match (self.plugins, other.plugins) {
             (Some(self_plugins), Some(other_plugins)) => Some(self_plugins | other_plugins),

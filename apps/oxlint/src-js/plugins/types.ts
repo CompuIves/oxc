@@ -7,6 +7,7 @@ export interface Visitor {
 */
 
 import type { Span } from './location.ts';
+import type { Token } from './tokens.ts';
 
 import type { VisitorObject as Visitor } from '../generated/visitor.d.ts';
 export type { Visitor };
@@ -19,22 +20,16 @@ export type BeforeHook = () => boolean | void;
 export type AfterHook = () => void;
 
 // Visitor object returned by a `Rule`'s `createOnce` function.
-export interface VisitorWithHooks extends Visitor {
+export type VisitorWithHooks = Visitor & {
   before?: BeforeHook;
   after?: AfterHook;
-}
+};
 
 // Visit function for a specific AST node type.
 export type VisitFn = (node: Node) => void;
 
 // AST node type.
 export interface Node extends Span {}
-
-// AST token type.
-export interface Token extends Span {
-  type: string;
-  value: string;
-}
 
 // Currently we only support `Node`s, but will add support for `Token`s later.
 export type NodeOrToken = Node | Token;

@@ -1,4 +1,4 @@
-import type { ESTree, Plugin, Visitor } from '../../../dist/index.js';
+import type { ESTree, Plugin, Visitor } from '#oxlint';
 
 const plugin: Plugin = {
   meta: {
@@ -66,7 +66,7 @@ const plugin: Plugin = {
               if (type === 'Identifier') {
                 nodeDescription += `(${node.name})`;
               } else if (type === 'FunctionDeclaration') {
-                nodeDescription += `(${node.id.name})`;
+                nodeDescription += `(${node.id?.name})`;
               }
               return `${key}: ${nodeDescription}`;
             })

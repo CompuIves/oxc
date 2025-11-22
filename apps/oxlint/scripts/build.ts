@@ -1,9 +1,11 @@
 import { execSync } from 'node:child_process';
-import { copyFileSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { copyFileSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const oxlintDirPath = join(import.meta.dirname, '..'),
-  distDirPath = join(oxlintDirPath, 'dist');
+  srcDirPath = join(oxlintDirPath, 'src-js'),
+  distDirPath = join(oxlintDirPath, 'dist'),
+  debugDirPath = join(oxlintDirPath, 'debug');
 
 // Modify `bindings.js` to use correct package names
 console.log('Modifying bindings.js...');
@@ -19,13 +21,18 @@ writeFileSync(bindingsPath, bindingsJs);
 console.log('Building with tsdown...');
 execSync('pnpm tsdown', { stdio: 'inherit', cwd: oxlintDirPath });
 
+// Delete `cli.d.ts`
+console.log('Deleting cli.d.ts...');
+rmSync(join(distDirPath, 'cli.d.ts'));
+rmSync(join(debugDirPath, 'cli.d.ts'));
+
 // Copy native `.node` files from `src-js`
 console.log('Copying `.node` files...');
-
-const srcDirPath = join(oxlintDirPath, 'src-js');
 for (const filename of readdirSync(srcDirPath)) {
   if (!filename.endsWith('.node')) continue;
-  copyFileSync(join(srcDirPath, filename), join(distDirPath, filename));
+  const srcPath = join(srcDirPath, filename);
+  copyFileSync(srcPath, join(distDirPath, filename));
+  copyFileSync(srcPath, join(debugDirPath, filename));
 }
 
 console.log('Build complete!');

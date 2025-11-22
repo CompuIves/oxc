@@ -2,9 +2,14 @@
  * `SourceCode` methods related to tokens.
  */
 
+import { parse } from '@typescript-eslint/typescript-estree';
 import { sourceText, initSourceText } from './source_code.js';
+import { assertIsNonNull } from '../utils/asserts.js';
 
-import type { Comment, Node, NodeOrToken, Token } from './types.ts';
+import type { Comment, Node, NodeOrToken } from './types.ts';
+import type { Span } from './location.ts';
+
+const { max } = Math;
 
 /**
  * Options for various `SourceCode` methods e.g. `getFirstToken`.
@@ -44,9 +49,123 @@ export interface RangeOptions {
 export type FilterFn = (token: Token) => boolean;
 
 /**
+ * AST token type.
+ */
+export type Token =
+  | BooleanToken
+  | CommentToken
+  | IdentifierToken
+  | JSXIdentifierToken
+  | JSXTextToken
+  | KeywordToken
+  | NullToken
+  | NumericToken
+  | PrivateIdentifierToken
+  | PunctuatorToken
+  | RegularExpressionToken
+  | StringToken
+  | TemplateToken;
+
+interface BaseToken extends Omit<Span, 'start' | 'end'> {
+  type: Token['type'];
+  value: string;
+}
+
+export interface BooleanToken extends BaseToken {
+  type: 'Boolean';
+}
+
+export type CommentToken = BlockCommentToken | LineCommentToken;
+
+export interface BlockCommentToken extends BaseToken {
+  type: 'Block';
+}
+
+export interface LineCommentToken extends BaseToken {
+  type: 'Line';
+}
+
+export interface IdentifierToken extends BaseToken {
+  type: 'Identifier';
+}
+
+export interface JSXIdentifierToken extends BaseToken {
+  type: 'JSXIdentifier';
+}
+
+export interface JSXTextToken extends BaseToken {
+  type: 'JSXText';
+}
+
+export interface KeywordToken extends BaseToken {
+  type: 'Keyword';
+}
+
+export interface NullToken extends BaseToken {
+  type: 'Null';
+}
+
+export interface NumericToken extends BaseToken {
+  type: 'Numeric';
+}
+
+export interface PrivateIdentifierToken extends BaseToken {
+  type: 'PrivateIdentifier';
+}
+
+export interface PunctuatorToken extends BaseToken {
+  type: 'Punctuator';
+}
+
+export interface RegularExpressionToken extends BaseToken {
+  type: 'RegularExpression';
+  regex: {
+    flags: string;
+    pattern: string;
+  };
+}
+
+export interface StringToken extends BaseToken {
+  type: 'String';
+}
+
+export interface TemplateToken extends BaseToken {
+  type: 'Template';
+}
+
+// Tokens for the current file parsed by TS-ESLint.
+// Created lazily only when needed.
+let tokens: Token[] | null = null;
+let comments: CommentToken[] | null = null;
+let tokensWithComments: Token[] | null = null;
+
+/**
+ * Initialize TS-ESLint tokens for current file.
+ */
+function initTokens() {
+  assertIsNonNull(sourceText);
+  ({ tokens, comments } = parse(sourceText, {
+    sourceType: 'module',
+    tokens: true,
+    comment: true,
+    // TODO: Enable JSX only when needed
+    jsx: true,
+  }));
+}
+
+/**
+ * Discard TS-ESLint tokens to free memory.
+ */
+export function resetTokens() {
+  tokens = null;
+  comments = null;
+  tokensWithComments = null;
+}
+
+/**
  * Get all tokens that are related to the given node.
  * @param node - The AST node.
- * @param countOptions? - Options object. If this is a function then it's `options.filter`.
+ * @param countOptions? - Options object. If this is a function then it's `countOptions.filter`.
  * @returns Array of `Token`s.
  */
 /**
@@ -56,15 +175,94 @@ export type FilterFn = (token: Token) => boolean;
  * @param afterCount? - The number of tokens after the node to retrieve.
  * @returns Array of `Token`s.
  */
-/* oxlint-disable no-unused-vars */
 export function getTokens(
   node: Node,
-  countOptions?: CountOptions | number | FilterFn | null | undefined,
-  afterCount?: number | null | undefined,
+  countOptions?: CountOptions | number | FilterFn | null,
+  afterCount?: number | null,
 ): Token[] {
-  throw new Error('`sourceCode.getTokens` not implemented yet'); // TODO
+  if (tokens === null) initTokens();
+  assertIsNonNull(tokens);
+  assertIsNonNull(comments);
+
+  // Maximum number of tokens to return
+  const count = typeof countOptions === 'object' && countOptions !== null ? countOptions.count : null;
+
+  // Number of preceding tokens to additionally return
+  const beforeCount = typeof countOptions === 'number' ? countOptions : 0;
+
+  // Number of following tokens to additionally return
+  afterCount =
+    (typeof countOptions === 'number' || typeof countOptions === 'undefined') && typeof afterCount === 'number'
+      ? afterCount
+      : 0;
+
+  // Function to filter tokens
+  const filter =
+    typeof countOptions === 'function'
+      ? countOptions
+      : typeof countOptions === 'object' && countOptions !== null
+        ? countOptions.filter
+        : null;
+
+  // Whether to return comment tokens
+  const includeComments =
+    typeof countOptions === 'object' &&
+    countOptions !== null &&
+    'includeComments' in countOptions &&
+    countOptions.includeComments;
+
+  // Source array of tokens to search in
+  let nodeTokens: Token[] | null = null;
+  if (includeComments) {
+    if (tokensWithComments === null) {
+      // TODO: `tokens` and `comments` are already sorted, so there's a more efficient algorithm to merge them.
+      // That'd certainly be faster in Rust, but maybe here it's faster to leave it to JS engine to sort them?
+      // TODO: Once we have our own tokens which have `start` and `end` properties, we can use them instead of `range`.
+      tokensWithComments = [...tokens, ...comments].sort((a, b) => a.range[0] - b.range[0]);
+    }
+    nodeTokens = tokensWithComments;
+  } else {
+    nodeTokens = tokens;
+  }
+
+  const { range } = node,
+    rangeStart = range[0],
+    rangeEnd = range[1];
+
+  // Binary search for first token within `node`'s range
+  const tokensLength = nodeTokens.length;
+  let sliceStart = tokensLength;
+  for (let lo = 0; lo < sliceStart; ) {
+    const mid = (lo + sliceStart) >> 1;
+    if (nodeTokens[mid].range[0] < rangeStart) {
+      lo = mid + 1;
+    } else {
+      sliceStart = mid;
+    }
+  }
+
+  // Binary search for the first token outside `node`'s range
+  let sliceEnd = tokensLength;
+  for (let lo = sliceStart; lo < sliceEnd; ) {
+    const mid = (lo + sliceEnd) >> 1;
+    if (nodeTokens[mid].range[0] < rangeEnd) {
+      lo = mid + 1;
+    } else {
+      sliceEnd = mid;
+    }
+  }
+
+  sliceStart = max(0, sliceStart - beforeCount);
+  sliceEnd += afterCount;
+
+  nodeTokens = nodeTokens.slice(sliceStart, sliceEnd);
+
+  // Filter before limiting by `count`
+  if (filter) nodeTokens = nodeTokens.filter(filter);
+  if (typeof count === 'number' && count < nodeTokens.length) nodeTokens = nodeTokens.slice(0, count);
+
+  return nodeTokens;
 }
-/* oxlint-enable no-unused-vars */
 
 /**
  * Get the first token of the given node.
@@ -74,10 +272,7 @@ export function getTokens(
  * @returns `Token`, or `null` if all were skipped.
  */
 /* oxlint-disable no-unused-vars */
-export function getFirstToken(
-  node: Node,
-  skipOptions?: SkipOptions | number | FilterFn | null | undefined,
-): Token | null {
+export function getFirstToken(node: Node, skipOptions?: SkipOptions | number | FilterFn | null): Token | null {
   throw new Error('`sourceCode.getFirstToken` not implemented yet'); // TODO
 }
 /* oxlint-enable no-unused-vars */
@@ -90,10 +285,7 @@ export function getFirstToken(
  * @returns Array of `Token`s.
  */
 /* oxlint-disable no-unused-vars */
-export function getFirstTokens(
-  node: Node,
-  countOptions?: CountOptions | number | FilterFn | null | undefined,
-): Token[] {
+export function getFirstTokens(node: Node, countOptions?: CountOptions | number | FilterFn | null): Token[] {
   throw new Error('`sourceCode.getFirstTokens` not implemented yet'); // TODO
 }
 /* oxlint-enable no-unused-vars */
@@ -105,10 +297,7 @@ export function getFirstTokens(
  * @returns `Token`, or `null` if all were skipped.
  */
 /* oxlint-disable no-unused-vars */
-export function getLastToken(
-  node: Node,
-  skipOptions?: SkipOptions | number | FilterFn | null | undefined,
-): Token | null {
+export function getLastToken(node: Node, skipOptions?: SkipOptions | number | FilterFn | null): Token | null {
   throw new Error('`sourceCode.getLastToken` not implemented yet'); // TODO
 }
 /* oxlint-enable no-unused-vars */
@@ -120,7 +309,7 @@ export function getLastToken(
  * @returns Array of `Token`s.
  */
 // oxlint-disable-next-line no-unused-vars
-export function getLastTokens(node: Node, countOptions?: CountOptions | number | FilterFn | null | undefined): Token[] {
+export function getLastTokens(node: Node, countOptions?: CountOptions | number | FilterFn | null): Token[] {
   throw new Error('`sourceCode.getLastTokens` not implemented yet'); // TODO
 }
 
@@ -133,7 +322,7 @@ export function getLastTokens(node: Node, countOptions?: CountOptions | number |
 /* oxlint-disable no-unused-vars */
 export function getTokenBefore(
   nodeOrToken: NodeOrToken | Comment,
-  skipOptions?: SkipOptions | number | FilterFn | null | undefined,
+  skipOptions?: SkipOptions | number | FilterFn | null,
 ): Token | null {
   throw new Error('`sourceCode.getTokenBefore` not implemented yet'); // TODO
 }
@@ -166,7 +355,7 @@ export function getTokenOrCommentBefore(nodeOrToken: NodeOrToken | Comment, skip
 /* oxlint-disable no-unused-vars */
 export function getTokensBefore(
   nodeOrToken: NodeOrToken | Comment,
-  countOptions?: CountOptions | number | FilterFn | null | undefined,
+  countOptions?: CountOptions | number | FilterFn | null,
 ): Token[] {
   throw new Error('`sourceCode.getTokensBefore` not implemented yet'); // TODO
 }
@@ -181,7 +370,7 @@ export function getTokensBefore(
 /* oxlint-disable no-unused-vars */
 export function getTokenAfter(
   nodeOrToken: NodeOrToken | Comment,
-  skipOptions?: SkipOptions | number | FilterFn | null | undefined,
+  skipOptions?: SkipOptions | number | FilterFn | null,
 ): Token | null {
   throw new Error('`sourceCode.getTokenAfter` not implemented yet'); // TODO
 }
@@ -214,7 +403,7 @@ export function getTokenOrCommentAfter(nodeOrToken: NodeOrToken | Comment, skip?
 /* oxlint-disable no-unused-vars */
 export function getTokensAfter(
   nodeOrToken: NodeOrToken | Comment,
-  countOptions?: CountOptions | number | FilterFn | null | undefined,
+  countOptions?: CountOptions | number | FilterFn | null,
 ): Token[] {
   throw new Error('`sourceCode.getTokensAfter` not implemented yet'); // TODO
 }
@@ -238,7 +427,7 @@ export function getTokensAfter(
 export function getTokensBetween(
   nodeOrToken1: NodeOrToken | Comment,
   nodeOrToken2: NodeOrToken | Comment,
-  countOptions?: CountOptions | number | FilterFn | null | undefined,
+  countOptions?: CountOptions | number | FilterFn | null,
 ): Token[] {
   throw new Error('`sourceCode.getTokensBetween` not implemented yet'); // TODO
 }
@@ -255,7 +444,7 @@ export function getTokensBetween(
 export function getFirstTokenBetween(
   nodeOrToken1: NodeOrToken | Comment,
   nodeOrToken2: NodeOrToken | Comment,
-  skipOptions?: SkipOptions | null | undefined,
+  skipOptions?: SkipOptions | null,
 ): Token | null {
   throw new Error('`sourceCode.getFirstTokenBetween` not implemented yet'); // TODO
 }
@@ -272,7 +461,7 @@ export function getFirstTokenBetween(
 export function getFirstTokensBetween(
   nodeOrToken1: NodeOrToken | Comment,
   nodeOrToken2: NodeOrToken | Comment,
-  countOptions?: CountOptions | number | FilterFn | null | undefined,
+  countOptions?: CountOptions | number | FilterFn | null,
 ): Token[] {
   throw new Error('`sourceCode.getFirstTokensBetween` not implemented yet'); // TODO
 }
@@ -289,7 +478,7 @@ export function getFirstTokensBetween(
 export function getLastTokenBetween(
   nodeOrToken1: NodeOrToken | Comment,
   nodeOrToken2: NodeOrToken | Comment,
-  skipOptions?: SkipOptions | null | undefined,
+  skipOptions?: SkipOptions | null,
 ): Token | null {
   throw new Error('`sourceCode.getLastTokenBetween` not implemented yet'); // TODO
 }
@@ -306,7 +495,7 @@ export function getLastTokenBetween(
 export function getLastTokensBetween(
   nodeOrToken1: NodeOrToken | Comment,
   nodeOrToken2: NodeOrToken | Comment,
-  countOptions?: CountOptions | number | FilterFn | null | undefined,
+  countOptions?: CountOptions | number | FilterFn | null,
 ): Token[] {
   throw new Error('`sourceCode.getLastTokensBetween` not implemented yet'); // TODO
 }
@@ -319,7 +508,7 @@ export function getLastTokensBetween(
  * @returns The token starting at index, or `null` if no such token.
  */
 // oxlint-disable-next-line no-unused-vars
-export function getTokenByRangeStart(index: number, rangeOptions?: RangeOptions | null | undefined): Token | null {
+export function getTokenByRangeStart(index: number, rangeOptions?: RangeOptions | null): Token | null {
   throw new Error('`sourceCode.getTokenByRangeStart` not implemented yet'); // TODO
 }
 
@@ -379,6 +568,7 @@ export function isSpaceBetween(nodeOrToken1: NodeOrToken, nodeOrToken2: NodeOrTo
 
   // Check if there's any whitespace in the gap
   if (sourceText === null) initSourceText();
+  assertIsNonNull(sourceText);
 
   return WHITESPACE_REGEXP.test(sourceText.slice(gapStart, gapEnd));
 }

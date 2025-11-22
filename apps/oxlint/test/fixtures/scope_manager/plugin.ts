@@ -1,6 +1,6 @@
 import assert from 'node:assert';
 
-import type { Node, Plugin, Rule, Scope } from '../../../dist/index.js';
+import type { Node, Plugin, Rule, Scope } from '#oxlint';
 
 const SPAN: Node = {
   start: 0,
@@ -24,9 +24,14 @@ const rule: Rule = {
         assert.equal(moduleScope.upper, scopeManager.globalScope);
 
         context.report({
-          message: `File has ${scopeManager.scopes.length} scopes: ${scopeManager.scopes
-            .map((s: any) => s.block?.id?.name ?? '<' + s.constructor.name + '>')
-            .join(', ')}`,
+          message:
+            `File has ${scopeManager.scopes.length} scopes:\n- ` +
+            scopeManager.scopes
+              .map((s: any) => {
+                const name = s.block?.id?.name;
+                return name ? `${s.type}(${name})` : `${s.type}`;
+              })
+              .join('\n- '),
           node: SPAN,
         });
 

@@ -1,13 +1,14 @@
 import { pathToFileURL } from 'node:url';
 
 import { createContext } from './context.js';
-import { getErrorMessage } from './utils.js';
+import { getErrorMessage } from '../utils/utils.js';
 
 import type { Writable } from 'type-fest';
 import type { Context } from './context.ts';
 import type { JsonValue } from './json.ts';
 import type { RuleMeta } from './rule_meta.ts';
 import type { AfterHook, BeforeHook, Visitor, VisitorWithHooks } from './types.ts';
+import type { SetNullable } from '../utils/types.ts';
 
 const ObjectKeys = Object.keys;
 
@@ -134,13 +135,12 @@ export async function loadPlugin(path: string, packageName: string | null): Prom
  * @throws {*} If plugin throws an error during import
  */
 async function loadPluginImpl(path: string, packageName: string | null): Promise<PluginDetails> {
-  if (registeredPluginPaths.has(path)) {
-    throw new Error('This plugin has already been registered. This is a bug in Oxlint. Please report it.');
+  if (DEBUG) {
+    if (registeredPluginPaths.has(path)) throw new Error('This plugin has already been registered');
+    registeredPluginPaths.add(path);
   }
 
   const { default: plugin } = (await import(pathToFileURL(path).href)) as { default: Plugin };
-
-  registeredPluginPaths.add(path);
 
   // TODO: Use a validation library to assert the shape of the plugin, and of rules
 
@@ -181,7 +181,7 @@ async function loadPluginImpl(path: string, packageName: string | null): Promise
     // Create `RuleDetails` object for rule.
     const ruleDetails: RuleDetails = {
       rule: rule as CreateRule, // Could also be `CreateOnceRule`, but just to satisfy type checker
-      context: null as Readonly<Context>, // Filled in below
+      context: null!, // Filled in below
       isFixable,
       messages,
       ruleIndex: 0,
@@ -197,7 +197,7 @@ async function loadPluginImpl(path: string, packageName: string | null): Promise
 
     if ('createOnce' in rule) {
       // TODO: Compile visitor object to array here, instead of repeating compilation on each file
-      let visitorWithHooks = rule.createOnce(context);
+      let visitorWithHooks = rule.createOnce(context) as SetNullable<VisitorWithHooks, 'before' | 'after'>;
       if (typeof visitorWithHooks !== 'object' || visitorWithHooks === null) {
         throw new TypeError('`createOnce` must return an object');
       }
@@ -219,9 +219,9 @@ async function loadPluginImpl(path: string, packageName: string | null): Promise
         afterHook = null;
       }
 
-      (ruleDetails as Writable<CreateOnceRuleDetails>).visitor = visitor;
-      (ruleDetails as Writable<CreateOnceRuleDetails>).beforeHook = beforeHook;
-      (ruleDetails as Writable<CreateOnceRuleDetails>).afterHook = afterHook;
+      (ruleDetails as unknown as Writable<CreateOnceRuleDetails>).visitor = visitor;
+      (ruleDetails as unknown as Writable<CreateOnceRuleDetails>).beforeHook = beforeHook;
+      (ruleDetails as unknown as Writable<CreateOnceRuleDetails>).afterHook = afterHook;
     }
 
     registeredRules.push(ruleDetails);

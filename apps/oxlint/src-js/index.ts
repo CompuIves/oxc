@@ -1,8 +1,11 @@
+import { assertIsNonNull } from './utils/asserts.js';
+
 import type { Context, FileContext, LanguageOptions } from './plugins/context.ts';
 import type { CreateOnceRule, Plugin, Rule } from './plugins/load.ts';
 import type { Settings } from './plugins/settings.ts';
 import type { SourceCode } from './plugins/source_code.ts';
 import type { BeforeHook, Visitor, VisitorWithHooks } from './plugins/types.ts';
+import type { SetNullable } from './utils/types.ts';
 
 export type * as ESTree from './generated/types.d.ts';
 export type { Context, LanguageOptions } from './plugins/context.ts';
@@ -20,7 +23,28 @@ export type {
 } from './plugins/scope.ts';
 export type { Settings } from './plugins/settings.ts';
 export type { SourceCode } from './plugins/source_code.ts';
-export type { CountOptions, FilterFn, RangeOptions, SkipOptions } from './plugins/tokens.ts';
+export type {
+  CountOptions,
+  FilterFn,
+  RangeOptions,
+  SkipOptions,
+  Token,
+  BooleanToken,
+  CommentToken,
+  BlockCommentToken,
+  LineCommentToken,
+  IdentifierToken,
+  JSXIdentifierToken,
+  JSXTextToken,
+  KeywordToken,
+  NullToken,
+  NumericToken,
+  PrivateIdentifierToken,
+  PunctuatorToken,
+  RegularExpressionToken,
+  StringToken,
+  TemplateToken,
+} from './plugins/tokens.ts';
 export type {
   RuleMeta,
   RuleDocs,
@@ -30,16 +54,7 @@ export type {
   RuleReplacedByExternalSpecifier,
 } from './plugins/rule_meta.ts';
 export type { LineColumn, Location, Range, Ranged, Span } from './plugins/location.ts';
-export type {
-  AfterHook,
-  BeforeHook,
-  Comment,
-  Node,
-  NodeOrToken,
-  Token,
-  Visitor,
-  VisitorWithHooks,
-} from './plugins/types.ts';
+export type { AfterHook, BeforeHook, Comment, Node, NodeOrToken, Visitor, VisitorWithHooks } from './plugins/types.ts';
 
 const {
   defineProperty,
@@ -114,6 +129,7 @@ export function defineRule(rule: Rule): Rule {
     if (context === null) {
       ({ context, visitor, beforeHook } = createContextAndVisitor(rule));
     }
+    assertIsNonNull(visitor);
 
     // Copy properties from ESLint's context object to `context`.
     // ESLint's context object is an object of form `{ id, options, report }`, with all other properties
@@ -131,7 +147,7 @@ export function defineRule(rule: Rule): Rule {
     }
 
     // Return same visitor each time
-    return visitor!;
+    return visitor;
   };
 
   return rule;
@@ -231,9 +247,13 @@ function createContextAndVisitor(rule: CreateOnceRule): {
     report: { value: null, enumerable: true, configurable: true },
   });
 
-  let { before: beforeHook, after: afterHook, ...visitor } = createOnce.call(rule, context) as VisitorWithHooks;
+  let {
+    before: beforeHook,
+    after: afterHook,
+    ...visitor
+  } = createOnce.call(rule, context) as SetNullable<VisitorWithHooks, 'before' | 'after'>;
 
-  if (beforeHook === void 0) {
+  if (beforeHook === undefined) {
     beforeHook = null;
   } else if (beforeHook !== null && typeof beforeHook !== 'function') {
     throw new Error('`before` property of visitor must be a function if defined');

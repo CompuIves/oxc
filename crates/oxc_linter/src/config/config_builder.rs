@@ -6,6 +6,7 @@ use std::{
 use itertools::Itertools;
 use oxc_resolver::{ResolveOptions, Resolver};
 use rustc_hash::{FxHashMap, FxHashSet};
+#[cfg(not(target_arch = "wasm32"))]
 use url::Url;
 
 use oxc_span::{CompactStr, format_compact_str};
@@ -542,7 +543,11 @@ impl ConfigStoreBuilder {
 
         // Convert path to a `file://...` URL, as required by `import(...)` on JS side.
         // Note: `unwrap()` here is infallible as `plugin_path` is an absolute path.
+        // For wasm32 targets, `Url::from_file_path` is not available, so we construct the URL manually.
+        #[cfg(not(target_arch = "wasm32"))]
         let plugin_url = Url::from_file_path(&plugin_path).unwrap().as_str().to_string();
+        #[cfg(target_arch = "wasm32")]
+        let plugin_url = format!("file://{}", plugin_path.display());
 
         let result = (external_linter.load_plugin)(plugin_url, package_name).map_err(|e| {
             ConfigBuilderError::PluginLoadFailed {

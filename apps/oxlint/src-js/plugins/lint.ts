@@ -1,11 +1,17 @@
-import { setupFileContext, resetFileContext } from './context.js';
-import { registeredRules } from './load.js';
-import { diagnostics } from './report.js';
-import { setSettingsForFile, resetSettings } from './settings.js';
-import { ast, initAst, resetSourceAndAst, setupSourceForFile } from './source_code.js';
-import { assertIs, assertIsNonNull } from '../utils/asserts.js';
-import { getErrorMessage } from '../utils/utils.js';
-import { addVisitorToCompiled, compiledVisitor, finalizeCompiledVisitor, initCompiledVisitor } from './visitor.js';
+import { setupFileContext, resetFileContext } from "./context.js";
+import { registeredRules } from "./load.js";
+import { allOptions, DEFAULT_OPTIONS_ID } from "./options.js";
+import { diagnostics } from "./report.js";
+import { setSettingsForFile, resetSettings } from "./settings.js";
+import { ast, initAst, resetSourceAndAst, setupSourceForFile } from "./source_code.js";
+import { typeAssertIs, debugAssert, debugAssertIsNonNull } from "../utils/asserts.js";
+import { getErrorMessage } from "../utils/utils.js";
+import {
+  addVisitorToCompiled,
+  compiledVisitor,
+  finalizeCompiledVisitor,
+  initCompiledVisitor,
+} from "./visitor.js";
 
 // Lazy implementation
 /*
@@ -14,9 +20,9 @@ import { walkProgram } from '../generated/walk.js';
 */
 
 // @ts-expect-error we need to generate `.d.ts` file for this module
-import { walkProgram } from '../generated/walk.js';
+import { walkProgram } from "../generated/walk.js";
 
-import type { AfterHook, BufferWithArrays } from './types.ts';
+import type { AfterHook, BufferWithArrays } from "./types.ts";
 
 // Buffers cache.
 //
@@ -50,8 +56,11 @@ export function lintFile(
   ruleIds: number[],
   settingsJSON: string,
 ): string {
+  // TODO: Get `optionsIds` from Rust side
+  const optionsIds = ruleIds.map((_) => DEFAULT_OPTIONS_ID);
+
   try {
-    lintFileImpl(filePath, bufferId, buffer, ruleIds, settingsJSON);
+    lintFileImpl(filePath, bufferId, buffer, ruleIds, optionsIds, settingsJSON);
     return JSON.stringify({ Success: diagnostics });
   } catch (err) {
     return JSON.stringify({ Failure: getErrorMessage(err) });
@@ -67,6 +76,7 @@ export function lintFile(
  * @param bufferId - ID of buffer containing file data
  * @param buffer - Buffer containing file data, or `null` if buffer with this ID was previously sent to JS
  * @param ruleIds - IDs of rules to run on this file
+ * @param optionsIds - IDs of options to use for rules on this file
  * @param settingsJSON - Stringified settings for this file
  * @returns Diagnostics to send back to Rust
  * @throws {Error} If any parameters are invalid
@@ -77,6 +87,7 @@ function lintFileImpl(
   bufferId: number,
   buffer: Uint8Array | null,
   ruleIds: number[],
+  optionsIds: number[],
   settingsJSON: string,
 ) {
   // If new buffer, add it to `buffers` array. Otherwise, get existing buffer from array.
@@ -87,7 +98,7 @@ function lintFileImpl(
     // Rust will only send a `bufferId` alone, if it previously sent a buffer with this same ID
     buffer = buffers[bufferId]!;
   } else {
-    assertIs<BufferWithArrays>(buffer);
+    typeAssertIs<BufferWithArrays>(buffer);
     const { buffer: arrayBuffer, byteOffset } = buffer;
     buffer.uint32 = new Uint32Array(arrayBuffer, byteOffset);
     buffer.float64 = new Float64Array(arrayBuffer, byteOffset);
@@ -97,14 +108,14 @@ function lintFileImpl(
     }
     buffers[bufferId] = buffer;
   }
-  assertIs<BufferWithArrays>(buffer);
+  typeAssertIs<BufferWithArrays>(buffer);
 
   if (DEBUG) {
-    if (typeof filePath !== 'string' || filePath.length === 0) {
-      throw new Error('Expected filePath to be a non-zero length string');
+    if (typeof filePath !== "string" || filePath.length === 0) {
+      throw new Error("Expected filePath to be a non-zero length string");
     }
     if (!Array.isArray(ruleIds) || ruleIds.length === 0) {
-      throw new Error('Expected `ruleIds` to be a non-zero length array');
+      throw new Error("Expected `ruleIds` to be a non-zero length array");
     }
   }
 
@@ -129,17 +140,28 @@ function lintFileImpl(
   // Get visitors for this file from all rules
   initCompiledVisitor();
 
+  debugAssert(
+    ruleIds.length === optionsIds.length,
+    "Rule IDs and options IDs arrays must be the same length",
+  );
+
   for (let i = 0, len = ruleIds.length; i < len; i++) {
-    const ruleId = ruleIds[i],
-      ruleDetails = registeredRules[ruleId];
+    const ruleId = ruleIds[i];
+    debugAssert(ruleId < registeredRules.length, "Rule ID out of bounds");
+    const ruleDetails = registeredRules[ruleId];
 
     // Set `ruleIndex` for rule. It's used when sending diagnostics back to Rust.
     ruleDetails.ruleIndex = i;
 
+    // Set `options` for rule
+    const optionsId = optionsIds[i];
+    debugAssert(optionsId < allOptions.length, "Options ID out of bounds");
+    ruleDetails.options = allOptions[optionsId];
+
     let { visitor } = ruleDetails;
     if (visitor === null) {
       // Rule defined with `create` method
-      assertIsNonNull(ruleDetails.rule.create);
+      debugAssertIsNonNull(ruleDetails.rule.create);
       visitor = ruleDetails.rule.create(ruleDetails.context);
     } else {
       // Rule defined with `createOnce` method

@@ -2,10 +2,10 @@
  * Methods related to settings.
  */
 
-import { deepFreezeJsonValue } from './json.js';
-import { assertIsNonNull } from '../utils/asserts.js';
+import { deepFreezeJsonValue } from "./json.js";
+import { debugAssertIsNonNull } from "../utils/asserts.js";
 
-import type { JsonObject } from './json.ts';
+import type { JsonObject } from "./json.ts";
 
 /**
  * Settings for the file being linted.
@@ -36,7 +36,7 @@ export function setSettingsForFile(settingsJSONInput: string): undefined {
  * Deserialize settings from JSON.
  */
 export function initSettings(): undefined {
-  assertIsNonNull(settingsJSON);
+  debugAssertIsNonNull(settingsJSON);
   settings = JSON.parse(settingsJSON);
   // Deep freeze the settings object, to prevent any mutation of the settings from plugins
   deepFreezeJsonValue(settings);

@@ -1,8 +1,6 @@
 use std::{fmt, num::ParseIntError, str::FromStr};
 
-pub use crate::formatter::{
-    Buffer, Format, FormatResult, SyntaxTriviaPieceComments, token::string::Quote,
-};
+pub use crate::formatter::{Buffer, Format, FormatResult, token::string::Quote};
 use crate::{
     formatter::{
         formatter::Formatter,
@@ -328,6 +326,7 @@ impl fmt::Debug for LineWidth {
 }
 
 /// Error type returned when parsing a [LineWidth] or [IndentWidth] from a string fails
+#[expect(clippy::enum_variant_names)]
 pub enum ParseFormatNumberError {
     /// The string could not be parsed to a number
     ParseError(ParseIntError),
@@ -689,16 +688,14 @@ impl FormatTrailingCommas {
 }
 
 impl Format<'_> for FormatTrailingCommas {
-    fn fmt(&self, f: &mut Formatter) -> FormatResult<()> {
+    fn fmt(&self, f: &mut Formatter) {
         if f.options().trailing_commas.is_none() {
-            return Ok(());
+            return;
         }
 
         if matches!(self, FormatTrailingCommas::ES5) || f.options().trailing_commas.is_all() {
-            write!(f, [if_group_breaks(&token(","))])?;
+            write!(f, [if_group_breaks(&token(","))]);
         }
-
-        Ok(())
     }
 }
 

@@ -4,7 +4,7 @@ use cow_utils::CowUtils;
 use rayon::prelude::*;
 
 use oxc_allocator::AllocatorPool;
-use oxc_diagnostics::{DiagnosticSender, DiagnosticService};
+use oxc_diagnostics::{DiagnosticSender, DiagnosticService, OxcDiagnostic};
 use oxc_formatter::{FormatOptions, Formatter, enable_jsx_source_type, get_parse_options};
 use oxc_parser::Parser;
 
@@ -76,7 +76,20 @@ impl FormatService {
         let source_type = enable_jsx_source_type(entry.source_type);
 
         let allocator = self.allocator_pool.get();
-        let source_text = read_to_string(path).expect("Failed to read file");
+        let Ok(source_text) = read_to_string(path) else {
+            // This happens if `.ts` for MPEG-TS binary is attempted to be formatted
+            let diagnostics = DiagnosticService::wrap_diagnostics(
+                self.cwd.clone(),
+                path,
+                "",
+                vec![
+                    OxcDiagnostic::error(format!("Failed to read file: {}", path.display()))
+                        .with_help("This may be due to the file being a binary or inaccessible."),
+                ],
+            );
+            tx_error.send(diagnostics).unwrap();
+            return;
+        };
 
         let ret = Parser::new(&allocator, &source_text, source_type)
             .with_options(get_parse_options())
@@ -93,24 +106,39 @@ impl FormatService {
         }
 
         let base_formatter = Formatter::new(&allocator, self.format_options.clone());
-        let formatter = if self.format_options.embedded_language_formatting.is_off() {
-            base_formatter
-        } else {
-            #[cfg(feature = "napi")]
-            {
-                let external_formatter = self
+
+        #[cfg(feature = "napi")]
+        let formatted = {
+            if self.format_options.embedded_language_formatting.is_off() {
+                base_formatter.format(&ret.program)
+            } else {
+                let embedded_formatter = self
                     .external_formatter
                     .as_ref()
-                    .map(crate::prettier_plugins::ExternalFormatter::to_embedded_formatter);
-                base_formatter.with_embedded_formatter(external_formatter)
-            }
-            #[cfg(not(feature = "napi"))]
-            {
-                base_formatter
+                    .expect("`external_formatter` must exist when `napi` feature is enabled")
+                    .to_embedded_formatter();
+                base_formatter.format_with_embedded(&ret.program, embedded_formatter)
             }
         };
+        #[cfg(not(feature = "napi"))]
+        let formatted = base_formatter.format(&ret.program);
 
-        let code = formatter.build(&ret.program);
+        let code = match formatted.print() {
+            Ok(printed) => printed.into_code(),
+            Err(err) => {
+                let diagnostics = DiagnosticService::wrap_diagnostics(
+                    self.cwd.clone(),
+                    path,
+                    &source_text,
+                    vec![OxcDiagnostic::error(format!(
+                        "Failed to print formatted code: {}\n{err}",
+                        path.display()
+                    ))],
+                );
+                tx_error.send(diagnostics).unwrap();
+                return;
+            }
+        };
 
         #[cfg(feature = "detect_code_removal")]
         {

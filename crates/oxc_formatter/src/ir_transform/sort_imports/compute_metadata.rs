@@ -4,7 +4,6 @@ use cow_utils::CowUtils;
 use phf::phf_set;
 
 use crate::{
-    formatter::format_element::FormatElement,
     ir_transform::sort_imports::{
         group_config::{GroupName, ImportModifier, ImportSelector},
         source_line::ImportLineMetadata,
@@ -366,7 +365,7 @@ fn to_path_kind(source: &str) -> ImportPathKind {
     }
 
     // TODO: This can be changed via `options.internalPattern`
-    if source.starts_with('~') || source.starts_with('@') {
+    if source.starts_with("~/") || source.starts_with("@/") {
         return ImportPathKind::Internal;
     }
 

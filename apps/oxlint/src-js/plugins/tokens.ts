@@ -2,14 +2,14 @@
  * `SourceCode` methods related to tokens.
  */
 
-import { parse } from '@typescript-eslint/typescript-estree';
-import { sourceText, initSourceText } from './source_code.js';
-import { assertIsNonNull } from '../utils/asserts.js';
+import { createRequire } from "node:module";
+import { sourceText, initSourceText } from "./source_code.js";
+import { debugAssert, debugAssertIsNonNull } from "../utils/asserts.js";
 
-import type { Comment, Node, NodeOrToken } from './types.ts';
-import type { Span } from './location.ts';
+import type { Comment, Node, NodeOrToken } from "./types.ts";
+import type { Span } from "./location.ts";
 
-const { max } = Math;
+const { max, min } = Math;
 
 /**
  * Options for various `SourceCode` methods e.g. `getFirstToken`.
@@ -36,7 +36,7 @@ export interface CountOptions {
 }
 
 /**
- * Options for various `SourceCode` methods e.g. `getTokenByRangeStart`.
+ * Options for `getTokenByRangeStart`.
  */
 export interface RangeOptions {
   /** `true` to include comment tokens in the result */
@@ -66,59 +66,59 @@ export type Token =
   | StringToken
   | TemplateToken;
 
-interface BaseToken extends Omit<Span, 'start' | 'end'> {
-  type: Token['type'];
+interface BaseToken extends Omit<Span, "start" | "end"> {
+  type: Token["type"];
   value: string;
 }
 
 export interface BooleanToken extends BaseToken {
-  type: 'Boolean';
+  type: "Boolean";
 }
 
 export type CommentToken = BlockCommentToken | LineCommentToken;
 
 export interface BlockCommentToken extends BaseToken {
-  type: 'Block';
+  type: "Block";
 }
 
 export interface LineCommentToken extends BaseToken {
-  type: 'Line';
+  type: "Line";
 }
 
 export interface IdentifierToken extends BaseToken {
-  type: 'Identifier';
+  type: "Identifier";
 }
 
 export interface JSXIdentifierToken extends BaseToken {
-  type: 'JSXIdentifier';
+  type: "JSXIdentifier";
 }
 
 export interface JSXTextToken extends BaseToken {
-  type: 'JSXText';
+  type: "JSXText";
 }
 
 export interface KeywordToken extends BaseToken {
-  type: 'Keyword';
+  type: "Keyword";
 }
 
 export interface NullToken extends BaseToken {
-  type: 'Null';
+  type: "Null";
 }
 
 export interface NumericToken extends BaseToken {
-  type: 'Numeric';
+  type: "Numeric";
 }
 
 export interface PrivateIdentifierToken extends BaseToken {
-  type: 'PrivateIdentifier';
+  type: "PrivateIdentifier";
 }
 
 export interface PunctuatorToken extends BaseToken {
-  type: 'Punctuator';
+  type: "Punctuator";
 }
 
 export interface RegularExpressionToken extends BaseToken {
-  type: 'RegularExpression';
+  type: "RegularExpression";
   regex: {
     flags: string;
     pattern: string;
@@ -126,31 +126,177 @@ export interface RegularExpressionToken extends BaseToken {
 }
 
 export interface StringToken extends BaseToken {
-  type: 'String';
+  type: "String";
 }
 
 export interface TemplateToken extends BaseToken {
-  type: 'Template';
+  type: "Template";
 }
+
+// `SkipOptions` object used by `getTokenOrCommentBefore` and `getTokenOrCommentAfter`.
+// This object is reused over and over to avoid creating a new options object on each call.
+const INCLUDE_COMMENTS_SKIP_OPTIONS: SkipOptions = { includeComments: true, skip: 0 };
 
 // Tokens for the current file parsed by TS-ESLint.
 // Created lazily only when needed.
-let tokens: Token[] | null = null;
+export let tokens: Token[] | null = null;
 let comments: CommentToken[] | null = null;
 let tokensWithComments: Token[] | null = null;
 
+// TS-ESLint `parse` method.
+// Lazy-loaded only when needed, as it's a lot of code.
+// Bundle contains both `@typescript-eslint/typescript-estree` and `typescript`.
+let tsEslintParse: typeof import("@typescript-eslint/typescript-estree").parse | null = null;
+
 /**
  * Initialize TS-ESLint tokens for current file.
+ *
+ * Caller must ensure `sourceText` is initialized before calling this function.
  */
-function initTokens() {
-  assertIsNonNull(sourceText);
-  ({ tokens, comments } = parse(sourceText, {
-    sourceType: 'module',
+export function initTokens() {
+  debugAssertIsNonNull(sourceText);
+
+  // Lazy-load TS-ESLint.
+  // `./ts_eslint.cjs` is path to the bundle in `dist` directory, as well as relative path in `src-js`,
+  // so is valid both in bundled `dist` output, and in unit tests.
+  if (tsEslintParse === null) {
+    const require = createRequire(import.meta.url);
+    tsEslintParse = (
+      require("./ts_eslint.cjs") as typeof import("@typescript-eslint/typescript-estree")
+    ).parse;
+  }
+
+  ({ tokens, comments } = tsEslintParse(sourceText, {
+    sourceType: "module",
     tokens: true,
     comment: true,
-    // TODO: Enable JSX only when needed
+    // TODO: Set this option dependent on source type
     jsx: true,
   }));
+}
+
+/**
+ * Initialize `tokensWithComments`.
+ *
+ * Caller must ensure `tokens` and `comments` are initialized before calling this function.
+ */
+function initTokensWithComments() {
+  debugAssertIsNonNull(tokens);
+  debugAssertIsNonNull(comments);
+
+  // TODO: Replace `range[0]` with `start` throughout this function
+  // once we have our own tokens which have `start` property
+
+  // Fast paths for file with no comments, or file which is only comments
+  const commentsLength = comments.length;
+  if (commentsLength === 0) {
+    tokensWithComments = tokens;
+    return;
+  }
+
+  const tokensLength = tokens.length;
+  if (tokensLength === 0) {
+    tokensWithComments = comments;
+    return;
+  }
+
+  // File contains both tokens and comments.
+  // Fill `tokensWithComments` with the 2 arrays interleaved in source order.
+  tokensWithComments = [];
+
+  let tokenIndex = 0,
+    commentIndex = 0,
+    token = tokens[0],
+    comment = comments[0],
+    tokenStart = token.range[0],
+    commentStart = comment.range[0];
+
+  // Push any leading comments
+  while (commentStart < tokenStart) {
+    // Push current comment
+    tokensWithComments.push(comment);
+
+    // If that was last comment, push all remaining tokens, and exit
+    if (++commentIndex === commentsLength) {
+      tokensWithComments.push(...tokens.slice(tokenIndex));
+      debugCheckTokensWithComments();
+      return;
+    }
+
+    // Get next comment
+    comment = comments[commentIndex];
+    commentStart = comment.range[0];
+  }
+
+  // Push a run of tokens, then a run of comments, and so on, until all tokens and comments are exhausted
+  while (true) {
+    // There's at least 1 token and 1 comment remaining, and token is first.
+    // Push tokens until we reach the next comment or the end.
+    do {
+      // Push current token
+      tokensWithComments.push(token);
+
+      // If that was last token, push all remaining comments, and exit
+      if (++tokenIndex === tokensLength) {
+        tokensWithComments.push(...comments.slice(commentIndex));
+        debugCheckTokensWithComments();
+        return;
+      }
+
+      // Get next token
+      token = tokens[tokenIndex];
+      tokenStart = token.range[0];
+    } while (tokenStart < commentStart);
+
+    // There's at least 1 token and 1 comment remaining, and comment is first.
+    // Push comments until we reach the next token or the end.
+    do {
+      // Push current comment
+      tokensWithComments.push(comment);
+
+      // If that was last comment, push all remaining tokens, and exit
+      if (++commentIndex === commentsLength) {
+        tokensWithComments.push(...tokens.slice(tokenIndex));
+        debugCheckTokensWithComments();
+        return;
+      }
+
+      // Get next comment
+      comment = comments[commentIndex];
+      commentStart = comment.range[0];
+    } while (commentStart < tokenStart);
+  }
+
+  debugAssert(false, "Unreachable");
+}
+
+/**
+ * Check `tokensWithComments` contains all tokens and comments, in ascending order.
+ *
+ * Only runs in debug build (tests). In release build, this function is entirely removed by minifier.
+ */
+function debugCheckTokensWithComments() {
+  if (!DEBUG) return;
+
+  debugAssertIsNonNull(tokens);
+  debugAssertIsNonNull(comments);
+  debugAssertIsNonNull(tokensWithComments);
+
+  const expected = [...tokens, ...comments];
+  expected.sort((a, b) => {
+    if (a.range[0] === b.range[0]) throw new Error("2 tokens/comments have the same start");
+    return a.range[0] - b.range[0];
+  });
+
+  if (tokensWithComments.length !== expected.length) {
+    throw new Error("`tokensWithComments` has wrong length");
+  }
+
+  for (let i = 0; i < tokensWithComments.length; i++) {
+    if (tokensWithComments[i] !== expected[i]) {
+      throw new Error("`tokensWithComments` is not correctly ordered");
+    }
+  }
 }
 
 /**
@@ -165,7 +311,7 @@ export function resetTokens() {
 /**
  * Get all tokens that are related to the given node.
  * @param node - The AST node.
- * @param countOptions? - Options object. If this is a function then it's `countOptions.filter`.
+ * @param countOptions? - Options object. If is a function, equivalent to `{ filter: fn }`.
  * @returns Array of `Token`s.
  */
 /**
@@ -181,45 +327,43 @@ export function getTokens(
   afterCount?: number | null,
 ): Token[] {
   if (tokens === null) initTokens();
-  assertIsNonNull(tokens);
-  assertIsNonNull(comments);
+  debugAssertIsNonNull(tokens);
+  debugAssertIsNonNull(comments);
 
   // Maximum number of tokens to return
-  const count = typeof countOptions === 'object' && countOptions !== null ? countOptions.count : null;
+  const count =
+    typeof countOptions === "object" && countOptions !== null ? countOptions.count : null;
 
   // Number of preceding tokens to additionally return
-  const beforeCount = typeof countOptions === 'number' ? countOptions : 0;
+  const beforeCount = typeof countOptions === "number" ? countOptions : 0;
 
   // Number of following tokens to additionally return
   afterCount =
-    (typeof countOptions === 'number' || typeof countOptions === 'undefined') && typeof afterCount === 'number'
+    (typeof countOptions === "number" || typeof countOptions === "undefined") &&
+    typeof afterCount === "number"
       ? afterCount
       : 0;
 
   // Function to filter tokens
   const filter =
-    typeof countOptions === 'function'
+    typeof countOptions === "function"
       ? countOptions
-      : typeof countOptions === 'object' && countOptions !== null
+      : typeof countOptions === "object" && countOptions !== null
         ? countOptions.filter
         : null;
 
   // Whether to return comment tokens
   const includeComments =
-    typeof countOptions === 'object' &&
+    typeof countOptions === "object" &&
     countOptions !== null &&
-    'includeComments' in countOptions &&
+    "includeComments" in countOptions &&
     countOptions.includeComments;
 
   // Source array of tokens to search in
   let nodeTokens: Token[] | null = null;
   if (includeComments) {
-    if (tokensWithComments === null) {
-      // TODO: `tokens` and `comments` are already sorted, so there's a more efficient algorithm to merge them.
-      // That'd certainly be faster in Rust, but maybe here it's faster to leave it to JS engine to sort them?
-      // TODO: Once we have our own tokens which have `start` and `end` properties, we can use them instead of `range`.
-      tokensWithComments = [...tokens, ...comments].sort((a, b) => a.range[0] - b.range[0]);
-    }
+    if (tokensWithComments === null) initTokensWithComments();
+    debugAssertIsNonNull(tokensWithComments);
     nodeTokens = tokensWithComments;
   } else {
     nodeTokens = tokens;
@@ -259,7 +403,8 @@ export function getTokens(
 
   // Filter before limiting by `count`
   if (filter) nodeTokens = nodeTokens.filter(filter);
-  if (typeof count === 'number' && count < nodeTokens.length) nodeTokens = nodeTokens.slice(0, count);
+  if (typeof count === "number" && count < nodeTokens.length)
+    nodeTokens = nodeTokens.slice(0, count);
 
   return nodeTokens;
 }
@@ -267,66 +412,477 @@ export function getTokens(
 /**
  * Get the first token of the given node.
  * @param node - The AST node.
- * @param skipOptions? - Options object. If this is a number then it's `options.skip`.
- *   If this is a function then it's `options.filter`.
+ * @param skipOptions? - Options object.
+ *   If is a number, equivalent to `{ skip: n }`.
+ *   If is a function, equivalent to `{ filter: fn }`.
  * @returns `Token`, or `null` if all were skipped.
  */
-/* oxlint-disable no-unused-vars */
-export function getFirstToken(node: Node, skipOptions?: SkipOptions | number | FilterFn | null): Token | null {
-  throw new Error('`sourceCode.getFirstToken` not implemented yet'); // TODO
+export function getFirstToken(
+  node: Node,
+  skipOptions?: SkipOptions | number | FilterFn | null,
+): Token | null {
+  if (tokens === null) initTokens();
+  debugAssertIsNonNull(tokens);
+  debugAssertIsNonNull(comments);
+
+  // Number of tokens to skip
+  let skip =
+    typeof skipOptions === "number"
+      ? skipOptions
+      : typeof skipOptions === "object" && skipOptions !== null
+        ? skipOptions.skip
+        : null;
+
+  // Filter function
+  const filter =
+    typeof skipOptions === "function"
+      ? skipOptions
+      : typeof skipOptions === "object" && skipOptions !== null
+        ? skipOptions.filter
+        : null;
+
+  // Whether to include comments
+  const includeComments =
+    typeof skipOptions === "object" &&
+    skipOptions !== null &&
+    "includeComments" in skipOptions &&
+    skipOptions.includeComments;
+
+  // Source array of tokens
+  let nodeTokens: Token[] | null = null;
+  if (includeComments) {
+    if (tokensWithComments === null) initTokensWithComments();
+    debugAssertIsNonNull(tokensWithComments);
+    nodeTokens = tokensWithComments;
+  } else {
+    nodeTokens = tokens;
+  }
+
+  const { range } = node,
+    rangeStart = range[0],
+    rangeEnd = range[1];
+
+  // Binary search for first token within `node`'s range
+  const tokensLength = nodeTokens.length;
+  let startIndex = tokensLength;
+  for (let lo = 0; lo < startIndex; ) {
+    const mid = (lo + startIndex) >> 1;
+    if (nodeTokens[mid].range[0] < rangeStart) {
+      lo = mid + 1;
+    } else {
+      startIndex = mid;
+    }
+  }
+
+  if (typeof filter !== "function") {
+    if (typeof skip !== "number") {
+      // If no tokens start at or after `rangeStart`, return `null`
+      if (startIndex >= tokensLength) return null;
+      // Check if the first candidate token is actually within the range
+      if (nodeTokens[startIndex].range[0] >= rangeEnd) return null;
+      return nodeTokens[startIndex];
+    }
+
+    const firstTokenAfterSkip = nodeTokens[startIndex + skip];
+    if (firstTokenAfterSkip === undefined) return null;
+    if (firstTokenAfterSkip.range[0] >= rangeEnd) return null;
+    return firstTokenAfterSkip;
+  }
+
+  if (typeof skip !== "number") {
+    for (let i = startIndex; i < tokensLength; i++) {
+      const token = nodeTokens[i];
+      if (token.range[0] >= rangeEnd) return null; // Token is outside the node
+      if (filter(token)) return token;
+    }
+  } else {
+    for (let i = startIndex; i < tokensLength; i++) {
+      const token = nodeTokens[i];
+      if (token.range[0] >= rangeEnd) return null; // Token is outside the node
+      if (filter(token)) {
+        if (skip === 0) return token;
+        skip--;
+      }
+    }
+  }
+
+  return null;
 }
-/* oxlint-enable no-unused-vars */
 
 /**
  * Get the first tokens of the given node.
  * @param node - The AST node.
- * @param countOptions? - Options object. If this is a number then it's `options.count`.
- *   If this is a function then it's `options.filter`.
+ * @param countOptions? - Options object.
+ *   If is a number, equivalent to `{ count: n }`.
+ *   If is a function, equivalent to `{ filter: fn }`.
  * @returns Array of `Token`s.
  */
-/* oxlint-disable no-unused-vars */
-export function getFirstTokens(node: Node, countOptions?: CountOptions | number | FilterFn | null): Token[] {
-  throw new Error('`sourceCode.getFirstTokens` not implemented yet'); // TODO
+export function getFirstTokens(
+  node: Node,
+  countOptions?: CountOptions | number | FilterFn | null,
+): Token[] {
+  if (tokens === null) initTokens();
+  debugAssertIsNonNull(tokens);
+  debugAssertIsNonNull(comments);
+
+  const count =
+    typeof countOptions === "number"
+      ? countOptions
+      : typeof countOptions === "object" && countOptions !== null
+        ? countOptions.count
+        : null;
+
+  const filter =
+    typeof countOptions === "function"
+      ? countOptions
+      : typeof countOptions === "object" && countOptions !== null
+        ? countOptions.filter
+        : null;
+
+  const includeComments =
+    typeof countOptions === "object" &&
+    countOptions !== null &&
+    "includeComments" in countOptions &&
+    countOptions.includeComments;
+
+  let nodeTokens: Token[] | null = null;
+  if (includeComments) {
+    if (tokensWithComments === null) initTokensWithComments();
+    debugAssertIsNonNull(tokensWithComments);
+    nodeTokens = tokensWithComments;
+  } else {
+    nodeTokens = tokens;
+  }
+
+  const { range } = node,
+    rangeStart = range[0],
+    rangeEnd = range[1];
+
+  // Binary search for first token within `node`'s range
+  const tokensLength = nodeTokens.length;
+  let sliceStart = tokensLength;
+  for (let lo = 0; lo < sliceStart; ) {
+    const mid = (lo + sliceStart) >> 1;
+    if (nodeTokens[mid].range[0] < rangeStart) {
+      lo = mid + 1;
+    } else {
+      sliceStart = mid;
+    }
+  }
+
+  // Binary search for the first token outside `node`'s range
+  let sliceEnd = tokensLength;
+  for (let lo = sliceStart; lo < sliceEnd; ) {
+    const mid = (lo + sliceEnd) >> 1;
+    if (nodeTokens[mid].range[0] < rangeEnd) {
+      lo = mid + 1;
+    } else {
+      sliceEnd = mid;
+    }
+  }
+
+  if (typeof filter !== "function") {
+    if (typeof count !== "number") return nodeTokens.slice(sliceStart, sliceEnd);
+    return nodeTokens.slice(sliceStart, min(sliceStart + count, sliceEnd));
+  }
+
+  const firstTokens: Token[] = [];
+  if (typeof count !== "number") {
+    for (let i = sliceStart; i < sliceEnd; i++) {
+      const token = nodeTokens[i];
+      if (filter(token)) firstTokens.push(token);
+    }
+  } else {
+    for (let i = sliceStart; i < sliceEnd && firstTokens.length < count; i++) {
+      const token = nodeTokens[i];
+      if (filter(token)) firstTokens.push(token);
+    }
+  }
+  return firstTokens;
 }
-/* oxlint-enable no-unused-vars */
 
 /**
  * Get the last token of the given node.
  * @param node - The AST node.
- * @param skipOptions? - Options object. Same options as `getFirstToken()`.
+ * @param skipOptions? - Options object.
+ *   If is a number, equivalent to `{ skip: n }`.
+ *   If is a function, equivalent to `{ filter: fn }`.
  * @returns `Token`, or `null` if all were skipped.
  */
-/* oxlint-disable no-unused-vars */
-export function getLastToken(node: Node, skipOptions?: SkipOptions | number | FilterFn | null): Token | null {
-  throw new Error('`sourceCode.getLastToken` not implemented yet'); // TODO
+export function getLastToken(
+  node: Node,
+  skipOptions?: SkipOptions | number | FilterFn | null,
+): Token | null {
+  if (tokens === null) initTokens();
+  debugAssertIsNonNull(tokens);
+  debugAssertIsNonNull(comments);
+
+  // Number of tokens to skip from the end
+  let skip =
+    typeof skipOptions === "number"
+      ? skipOptions
+      : typeof skipOptions === "object" && skipOptions !== null
+        ? skipOptions.skip
+        : null;
+
+  const filter =
+    typeof skipOptions === "function"
+      ? skipOptions
+      : typeof skipOptions === "object" && skipOptions !== null
+        ? skipOptions.filter
+        : null;
+
+  // Whether to return comment tokens
+  const includeComments =
+    typeof skipOptions === "object" &&
+    skipOptions !== null &&
+    "includeComments" in skipOptions &&
+    skipOptions.includeComments;
+
+  // Source array of tokens to search in
+  let nodeTokens: Token[] | null = null;
+  if (includeComments) {
+    if (tokensWithComments === null) initTokensWithComments();
+    debugAssertIsNonNull(tokensWithComments);
+    nodeTokens = tokensWithComments;
+  } else {
+    nodeTokens = tokens;
+  }
+
+  const { range } = node,
+    rangeStart = range[0],
+    rangeEnd = range[1];
+
+  // Binary search for the last token within `node`'s range
+  const nodeTokensLength = nodeTokens.length;
+  let lastTokenIndex = nodeTokensLength;
+  for (let lo = 0, hi = nodeTokensLength; lo < hi; ) {
+    const mid = (lo + hi) >> 1;
+    if (nodeTokens[mid].range[0] < rangeEnd) {
+      lastTokenIndex = mid;
+      lo = mid + 1;
+    } else {
+      hi = mid;
+    }
+  }
+
+  // TODO: this early return feels iffy
+  if (lastTokenIndex === nodeTokensLength) return null;
+
+  if (typeof filter !== "function") {
+    if (typeof skip !== "number") return nodeTokens[lastTokenIndex] ?? null;
+
+    const token = nodeTokens[lastTokenIndex - skip];
+    if (token === undefined || token.range[0] < rangeStart) return null;
+    return token;
+  }
+
+  if (typeof skip !== "number") {
+    for (let i = lastTokenIndex; i >= 0; i--) {
+      const token = nodeTokens[i];
+      if (token.range[0] < rangeStart) return null;
+      if (filter(token)) return token;
+    }
+  } else {
+    for (let i = lastTokenIndex; i >= 0; i--) {
+      const token = nodeTokens[i];
+      if (token.range[0] < rangeStart) return null;
+      if (filter(token)) {
+        if (skip === 0) return token;
+        skip--;
+      }
+    }
+  }
+
+  return null;
 }
-/* oxlint-enable no-unused-vars */
 
 /**
  * Get the last tokens of the given node.
  * @param node - The AST node.
- * @param countOptions? - Options object. Same options as `getFirstTokens()`.
+ * @param countOptions? - Options object.
+ *   If is a number, equivalent to `{ count: n }`.
+ *   If is a function, equivalent to `{ filter: fn }`.
  * @returns Array of `Token`s.
  */
-// oxlint-disable-next-line no-unused-vars
-export function getLastTokens(node: Node, countOptions?: CountOptions | number | FilterFn | null): Token[] {
-  throw new Error('`sourceCode.getLastTokens` not implemented yet'); // TODO
+export function getLastTokens(
+  node: Node,
+  countOptions?: CountOptions | number | FilterFn | null,
+): Token[] {
+  if (tokens === null) initTokens();
+  debugAssertIsNonNull(tokens);
+  debugAssertIsNonNull(comments);
+
+  // Maximum number of tokens to return
+  const count =
+    typeof countOptions === "number"
+      ? countOptions
+      : typeof countOptions === "object" && countOptions !== null
+        ? countOptions.count
+        : null;
+
+  // Function to filter tokens
+  const filter =
+    typeof countOptions === "function"
+      ? countOptions
+      : typeof countOptions === "object" && countOptions !== null
+        ? countOptions.filter
+        : null;
+
+  // Whether to return comment tokens
+  const includeComments =
+    typeof countOptions === "object" &&
+    countOptions !== null &&
+    "includeComments" in countOptions &&
+    countOptions.includeComments;
+
+  // Source array of tokens to search in
+  let nodeTokens: Token[] | null = null;
+  if (includeComments) {
+    if (tokensWithComments === null) initTokensWithComments();
+    debugAssertIsNonNull(tokensWithComments);
+    nodeTokens = tokensWithComments;
+  } else {
+    nodeTokens = tokens;
+  }
+
+  const { range } = node,
+    rangeStart = range[0],
+    rangeEnd = range[1];
+
+  // Binary search for first token within `node`'s range
+  const tokensLength = nodeTokens.length;
+  let sliceStart = tokensLength;
+  for (let lo = 0; lo < sliceStart; ) {
+    const mid = (lo + sliceStart) >> 1;
+    if (nodeTokens[mid].range[0] < rangeStart) {
+      lo = mid + 1;
+    } else {
+      sliceStart = mid;
+    }
+  }
+
+  // Binary search for the first token outside `node`'s range
+  let sliceEnd = tokensLength;
+  for (let lo = sliceStart; lo < sliceEnd; ) {
+    const mid = (lo + sliceEnd) >> 1;
+    if (nodeTokens[mid].range[0] < rangeEnd) {
+      lo = mid + 1;
+    } else {
+      sliceEnd = mid;
+    }
+  }
+
+  if (typeof filter !== "function") {
+    if (typeof count !== "number") return nodeTokens.slice(sliceStart, sliceEnd);
+    return nodeTokens.slice(max(sliceStart, sliceEnd - count), sliceEnd);
+  }
+
+  const lastTokens: Token[] = [];
+  if (typeof count !== "number") {
+    for (let i = sliceStart; i < sliceEnd; i++) {
+      const token = nodeTokens[i];
+      if (filter(token)) lastTokens.push(token);
+    }
+  } else {
+    // `count` is the number of tokens within range from the end, so we iterate in reverse
+    for (let i = sliceEnd - 1; i >= sliceStart && lastTokens.length < count; i--) {
+      const token = nodeTokens[i];
+      if (filter(token)) lastTokens.unshift(token);
+    }
+  }
+  return lastTokens;
 }
 
 /**
  * Get the token that precedes a given node or token.
  * @param nodeOrToken - The AST node or token.
- * @param skipOptions? - Options object. Same options as `getFirstToken()`.
+ * @param skipOptions? - Options object.
+ *   If is a number, equivalent to `{ skip: n }`.
+ *   If is a function, equivalent to `{ filter: fn }`.
  * @returns `Token`, or `null` if all were skipped.
  */
-/* oxlint-disable no-unused-vars */
 export function getTokenBefore(
   nodeOrToken: NodeOrToken | Comment,
   skipOptions?: SkipOptions | number | FilterFn | null,
 ): Token | null {
-  throw new Error('`sourceCode.getTokenBefore` not implemented yet'); // TODO
+  if (tokens === null) initTokens();
+  debugAssertIsNonNull(tokens);
+  debugAssertIsNonNull(comments);
+
+  // Number of tokens preceding the given node to skip
+  let skip =
+    typeof skipOptions === "number"
+      ? skipOptions
+      : typeof skipOptions === "object" && skipOptions !== null
+        ? skipOptions.skip
+        : null;
+
+  const filter =
+    typeof skipOptions === "function"
+      ? skipOptions
+      : typeof skipOptions === "object" && skipOptions !== null
+        ? skipOptions.filter
+        : null;
+
+  // Whether to return comment tokens
+  const includeComments =
+    typeof skipOptions === "object" &&
+    skipOptions !== null &&
+    "includeComments" in skipOptions &&
+    skipOptions.includeComments;
+
+  // Source array of tokens to search in
+  let nodeTokens: Token[] | null = null;
+  if (includeComments) {
+    if (tokensWithComments === null) initTokensWithComments();
+    debugAssertIsNonNull(tokensWithComments);
+    nodeTokens = tokensWithComments;
+  } else {
+    nodeTokens = tokens;
+  }
+
+  const nodeStart = nodeOrToken.range[0];
+
+  // Index of the token immediately before the given node, token, or comment.
+  let beforeIndex = 0;
+  let hi = nodeTokens.length;
+
+  while (beforeIndex < hi) {
+    const mid = (beforeIndex + hi) >> 1;
+    if (nodeTokens[mid].range[0] < nodeStart) {
+      beforeIndex = mid + 1;
+    } else {
+      hi = mid;
+    }
+  }
+
+  beforeIndex--;
+
+  if (typeof filter !== "function") {
+    if (typeof skip !== "number") return nodeTokens[beforeIndex] ?? null;
+    return nodeTokens[beforeIndex - skip] ?? null;
+  }
+
+  if (typeof skip !== "number") {
+    while (beforeIndex >= 0) {
+      const token = nodeTokens[beforeIndex];
+      if (filter(token)) return token;
+      beforeIndex--;
+    }
+  } else {
+    while (beforeIndex >= 0) {
+      const token = nodeTokens[beforeIndex];
+      if (filter(token)) {
+        if (skip === 0) return token;
+        skip--;
+      }
+      beforeIndex--;
+    }
+  }
+
+  return null;
 }
-/* oxlint-enable no-unused-vars */
 
 /**
  * Get the token that precedes a given node or token.
@@ -337,44 +893,184 @@ export function getTokenBefore(
  * @param skip - Number of tokens to skip.
  * @returns `Token`, or `null` if all were skipped.
  */
-/* oxlint-disable no-unused-vars */
-export function getTokenOrCommentBefore(nodeOrToken: NodeOrToken | Comment, skip?: number): Token | null {
-  // TODO: Implement equivalent of:
-  // `return getTokenBefore(nodeOrToken, { includeComments: true, skip });`
-  // But could use a const object at top level for options object, to avoid creating temporary object on each call.
-  throw new Error('`sourceCode.getTokenOrCommentBefore` not implemented yet');
+export function getTokenOrCommentBefore(
+  nodeOrToken: NodeOrToken | Comment,
+  skip?: number,
+): Token | null {
+  // Equivalent to `return getTokenBefore(nodeOrToken, { includeComments: true, skip });`,
+  // but reuse a global object to avoid creating a new object on each call
+  INCLUDE_COMMENTS_SKIP_OPTIONS.skip = skip;
+  return getTokenBefore(nodeOrToken, INCLUDE_COMMENTS_SKIP_OPTIONS);
 }
-/* oxlint-enable no-unused-vars */
 
 /**
  * Get the tokens that precede a given node or token.
  * @param nodeOrToken - The AST node or token.
- * @param countOptions? - Options object. Same options as `getFirstTokens()`.
+ * @param countOptions? - Options object.
+ *   If is a number, equivalent to `{ count: n }`.
+ *   If is a function, equivalent to `{ filter: fn }`.
  * @returns Array of `Token`s.
  */
-/* oxlint-disable no-unused-vars */
 export function getTokensBefore(
   nodeOrToken: NodeOrToken | Comment,
   countOptions?: CountOptions | number | FilterFn | null,
 ): Token[] {
-  throw new Error('`sourceCode.getTokensBefore` not implemented yet'); // TODO
+  if (tokens === null) initTokens();
+  debugAssertIsNonNull(tokens);
+  debugAssertIsNonNull(comments);
+
+  // Maximum number of tokens to return
+  const count =
+    typeof countOptions === "number"
+      ? max(0, countOptions)
+      : typeof countOptions === "object" && countOptions !== null
+        ? countOptions.count
+        : null;
+
+  // Function to filter tokens
+  const filter =
+    typeof countOptions === "function"
+      ? countOptions
+      : typeof countOptions === "object" && countOptions !== null
+        ? countOptions.filter
+        : null;
+
+  // Whether to return comment tokens
+  const includeComments =
+    typeof countOptions === "object" &&
+    countOptions !== null &&
+    "includeComments" in countOptions &&
+    countOptions.includeComments;
+
+  // Source array of tokens to search in
+  let nodeTokens: Token[] | null = null;
+  if (includeComments) {
+    if (tokensWithComments === null) initTokensWithComments();
+    debugAssertIsNonNull(tokensWithComments);
+    nodeTokens = tokensWithComments;
+  } else {
+    nodeTokens = tokens;
+  }
+
+  const targetStart = nodeOrToken.range[0];
+
+  let sliceEnd = 0;
+  let hi = nodeTokens.length;
+  while (sliceEnd < hi) {
+    const mid = (sliceEnd + hi) >> 1;
+    if (nodeTokens[mid].range[0] < targetStart) {
+      sliceEnd = mid + 1;
+    } else {
+      hi = mid;
+    }
+  }
+
+  // Fast path for the common case
+  if (typeof filter !== "function") {
+    if (typeof count !== "number") return nodeTokens.slice(0, sliceEnd);
+    return nodeTokens.slice(sliceEnd - count, sliceEnd);
+  }
+
+  const tokensBefore: Token[] = [];
+  if (typeof count !== "number") {
+    for (let i = 0; i < sliceEnd; i++) {
+      const token = nodeTokens[i];
+      if (filter(token)) tokensBefore.push(token);
+    }
+  } else {
+    // Count is the number of preceding tokens, so we iterate in reverse
+    for (let i = sliceEnd - 1; i >= 0 && tokensBefore.length < count; i--) {
+      const token = nodeTokens[i];
+      if (filter(token)) tokensBefore.unshift(token);
+    }
+  }
+  return tokensBefore;
 }
-/* oxlint-enable no-unused-vars */
 
 /**
  * Get the token that follows a given node or token.
  * @param nodeOrToken - The AST node or token.
- * @param skipOptions? - Options object. Same options as `getFirstToken()`.
+ * @param skipOptions? - Options object.
+ *   If is a number, equivalent to `{ skip: n }`.
+ *   If is a function, equivalent to `{ filter: fn }`.
  * @returns `Token`, or `null` if all were skipped.
  */
-/* oxlint-disable no-unused-vars */
 export function getTokenAfter(
   nodeOrToken: NodeOrToken | Comment,
   skipOptions?: SkipOptions | number | FilterFn | null,
 ): Token | null {
-  throw new Error('`sourceCode.getTokenAfter` not implemented yet'); // TODO
+  if (tokens === null) initTokens();
+  debugAssertIsNonNull(tokens);
+  debugAssertIsNonNull(comments);
+
+  let skip =
+    typeof skipOptions === "number"
+      ? skipOptions
+      : typeof skipOptions === "object" && skipOptions !== null
+        ? (skipOptions.skip ?? 0)
+        : 0;
+
+  const filter =
+    typeof skipOptions === "function"
+      ? skipOptions
+      : typeof skipOptions === "object" && skipOptions !== null
+        ? skipOptions.filter
+        : null;
+
+  const includeComments =
+    typeof skipOptions === "object" &&
+    skipOptions !== null &&
+    "includeComments" in skipOptions &&
+    skipOptions.includeComments;
+
+  // Source array of tokens to search in
+  let nodeTokens: Token[] | null = null;
+  if (includeComments) {
+    if (tokensWithComments === null) initTokensWithComments();
+    debugAssertIsNonNull(tokensWithComments);
+    nodeTokens = tokensWithComments;
+  } else {
+    nodeTokens = tokens;
+  }
+
+  const { range } = nodeOrToken,
+    rangeEnd = range[1];
+
+  // Binary search for the first token that starts at or after the end of the node/token
+  const tokensLength = nodeTokens.length;
+  let startIndex = tokensLength;
+  for (let lo = 0; lo < startIndex; ) {
+    const mid = (lo + startIndex) >> 1;
+    if (nodeTokens[mid].range[0] < rangeEnd) {
+      lo = mid + 1;
+    } else {
+      startIndex = mid;
+    }
+  }
+
+  // Fast path for the common case
+  if (typeof filter !== "function") {
+    if (typeof skip !== "number") return nodeTokens[startIndex] ?? null;
+    return nodeTokens[startIndex + skip] ?? null;
+  }
+
+  if (typeof skip !== "number") {
+    for (let i = startIndex; i < tokensLength; i++) {
+      const token = nodeTokens[i];
+      if (filter(token)) return token;
+    }
+  } else {
+    for (let i = startIndex; i < tokensLength; i++) {
+      const token = nodeTokens[i];
+      if (filter(token)) {
+        if (skip === 0) return token;
+        skip--;
+      }
+    }
+  }
+
+  return null;
 }
-/* oxlint-enable no-unused-vars */
 
 /**
  * Get the token that follows a given node or token.
@@ -385,121 +1081,578 @@ export function getTokenAfter(
  * @param skip - Number of tokens to skip.
  * @returns `Token`, or `null` if all were skipped.
  */
-/* oxlint-disable no-unused-vars */
-export function getTokenOrCommentAfter(nodeOrToken: NodeOrToken | Comment, skip?: number): Token | null {
-  // TODO: Implement equivalent of:
-  // `return getTokenAfter(nodeOrToken, { includeComments: true, skip });`
-  // But could use a const object at top level for options object, to avoid creating temporary object on each call.
-  throw new Error('`sourceCode.getTokenOrCommentAfter` not implemented yet');
+export function getTokenOrCommentAfter(
+  nodeOrToken: NodeOrToken | Comment,
+  skip?: number,
+): Token | null {
+  // Equivalent to `return getTokenAfter(nodeOrToken, { includeComments: true, skip });`,
+  // but reuse a global object to avoid creating a new object on each call
+  INCLUDE_COMMENTS_SKIP_OPTIONS.skip = skip;
+  return getTokenAfter(nodeOrToken, INCLUDE_COMMENTS_SKIP_OPTIONS);
 }
-/* oxlint-enable no-unused-vars */
 
 /**
  * Get the tokens that follow a given node or token.
  * @param nodeOrToken - The AST node or token.
- * @param countOptions? - Options object. Same options as `getFirstTokens()`.
+ * @param countOptions? - Options object.
+ *   If is a number, equivalent to `{ count: n }`.
+ *   If is a function, equivalent to `{ filter: fn }`.
  * @returns Array of `Token`s.
  */
-/* oxlint-disable no-unused-vars */
 export function getTokensAfter(
   nodeOrToken: NodeOrToken | Comment,
   countOptions?: CountOptions | number | FilterFn | null,
 ): Token[] {
-  throw new Error('`sourceCode.getTokensAfter` not implemented yet'); // TODO
+  if (tokens === null) initTokens();
+  debugAssertIsNonNull(tokens);
+  debugAssertIsNonNull(comments);
+
+  const count =
+    typeof countOptions === "number"
+      ? countOptions
+      : typeof countOptions === "object" && countOptions !== null
+        ? countOptions.count
+        : null;
+
+  const filter =
+    typeof countOptions === "function"
+      ? countOptions
+      : typeof countOptions === "object" && countOptions !== null
+        ? countOptions.filter
+        : null;
+
+  const includeComments =
+    typeof countOptions === "object" &&
+    countOptions !== null &&
+    "includeComments" in countOptions &&
+    countOptions.includeComments;
+
+  let nodeTokens: Token[];
+  if (includeComments) {
+    if (tokensWithComments === null) initTokensWithComments();
+    debugAssertIsNonNull(tokensWithComments);
+    nodeTokens = tokensWithComments;
+  } else {
+    nodeTokens = tokens;
+  }
+
+  const rangeEnd = nodeOrToken.range[1];
+
+  let sliceStart = nodeTokens.length;
+  for (let lo = 0; lo < sliceStart; ) {
+    const mid = (lo + sliceStart) >> 1;
+    if (nodeTokens[mid].range[0] < rangeEnd) {
+      lo = mid + 1;
+    } else {
+      sliceStart = mid;
+    }
+  }
+
+  // Fast path for the common case
+  if (typeof filter !== "function") {
+    if (typeof count !== "number") return nodeTokens.slice(sliceStart);
+    return nodeTokens.slice(sliceStart, sliceStart + count);
+  }
+
+  const nodeTokensAfter: Token[] = [];
+  if (typeof count !== "number") {
+    for (let i = sliceStart; i < nodeTokens.length; i++) {
+      const token = nodeTokens[i];
+      if (filter(token)) nodeTokensAfter.push(token);
+    }
+  } else {
+    for (let i = sliceStart; i < nodeTokens.length && nodeTokensAfter.length < count; i++) {
+      const token = nodeTokens[i];
+      if (filter(token)) nodeTokensAfter.push(token);
+    }
+  }
+  return nodeTokensAfter;
 }
-/* oxlint-enable no-unused-vars */
 
 /**
  * Get all of the tokens between two non-overlapping nodes.
- * @param nodeOrToken1 - Node before the desired token range.
- * @param nodeOrToken2 - Node after the desired token range.
- * @param countOptions? - Options object. If this is a function then it's `options.filter`.
- * @returns Array of `Token`s between `nodeOrToken1` and `nodeOrToken2`.
+ * @param left - Node or token before the desired token range.
+ * @param right - Node or token after the desired token range.
+ * @param countOptions? - Options object. If is a function, equivalent to `{ filter: fn }`.
+ * @returns Array of `Token`s between `left` and `right`.
  */
 /**
  * Get all of the tokens between two non-overlapping nodes.
- * @param nodeOrToken1 - Node before the desired token range.
- * @param nodeOrToken2 - Node after the desired token range.
+ * @param left - Node or token before the desired token range.
+ * @param right - Node or token after the desired token range.
  * @param padding - Number of extra tokens on either side of center.
- * @returns Array of `Token`s between `nodeOrToken1` and `nodeOrToken2`.
+ * @returns Array of `Token`s between `left` and `right`.
  */
-/* oxlint-disable no-unused-vars */
 export function getTokensBetween(
-  nodeOrToken1: NodeOrToken | Comment,
-  nodeOrToken2: NodeOrToken | Comment,
+  left: NodeOrToken | Comment,
+  right: NodeOrToken | Comment,
   countOptions?: CountOptions | number | FilterFn | null,
 ): Token[] {
-  throw new Error('`sourceCode.getTokensBetween` not implemented yet'); // TODO
+  if (tokens === null) initTokens();
+  debugAssertIsNonNull(tokens);
+  debugAssertIsNonNull(comments);
+
+  const count =
+    typeof countOptions === "object" && countOptions !== null ? countOptions.count : null;
+
+  const padding = typeof countOptions === "number" ? countOptions : 0;
+
+  const filter =
+    typeof countOptions === "function"
+      ? countOptions
+      : typeof countOptions === "object" && countOptions !== null
+        ? countOptions.filter
+        : null;
+
+  const includeComments =
+    typeof countOptions === "object" &&
+    countOptions !== null &&
+    "includeComments" in countOptions &&
+    countOptions.includeComments;
+
+  let nodeTokens: Token[];
+  if (includeComments) {
+    if (tokensWithComments === null) initTokensWithComments();
+    debugAssertIsNonNull(tokensWithComments);
+    nodeTokens = tokensWithComments;
+  } else {
+    nodeTokens = tokens;
+  }
+
+  // This range is not invariant over node order.
+  // The first argument must be the left node.
+  // Same as ESLint's implementation.
+  const rangeStart = left.range[1],
+    rangeEnd = right.range[0],
+    tokensLength = nodeTokens.length;
+
+  // Binary search for first token past the beginning of the `between` range
+  let sliceStart = tokensLength;
+  for (let lo = 0; lo < sliceStart; ) {
+    const mid = (lo + sliceStart) >> 1;
+    if (nodeTokens[mid].range[0] < rangeStart) {
+      lo = mid + 1;
+    } else {
+      sliceStart = mid;
+    }
+  }
+
+  // Binary search for first token past the end of the `between` range
+  let sliceEnd = tokensLength;
+  for (let lo = sliceStart; lo < sliceEnd; ) {
+    const mid = (lo + sliceEnd) >> 1;
+    if (nodeTokens[mid].range[0] < rangeEnd) {
+      lo = mid + 1;
+    } else {
+      sliceEnd = mid;
+    }
+  }
+
+  // Apply padding
+  sliceStart = max(0, sliceStart - padding);
+  sliceEnd += padding;
+
+  if (typeof filter !== "function") {
+    if (typeof count !== "number") return nodeTokens.slice(sliceStart, sliceEnd);
+    return nodeTokens.slice(sliceStart, min(sliceStart + count, sliceEnd));
+  }
+
+  const tokensBetween: Token[] = [];
+  if (typeof count !== "number") {
+    for (let i = sliceStart; i < sliceEnd; i++) {
+      const token = nodeTokens[i];
+      if (filter(token)) tokensBetween.push(token);
+    }
+  } else {
+    for (let i = sliceStart; i < sliceEnd && tokensBetween.length < count; i++) {
+      const token = nodeTokens[i];
+      if (filter(token)) tokensBetween.push(token);
+    }
+  }
+  return tokensBetween;
 }
-/* oxlint-enable no-unused-vars */
 
 /**
  * Get the first token between two non-overlapping nodes.
- * @param nodeOrToken1 - Node before the desired token range.
- * @param nodeOrToken2 - Node after the desired token range.
- * @param skipOptions? - Options object. Same options as `getFirstToken()`.
+ * @param left - Node or token before the desired token range.
+ * @param right - Node or token after the desired token range.
+ * @param skipOptions? - Options object.
+ *   If is a number, equivalent to `{ skip: n }`.
+ *   If is a function, equivalent to `{ filter: fn }`.
  * @returns `Token`, or `null` if all were skipped.
  */
-/* oxlint-disable no-unused-vars */
 export function getFirstTokenBetween(
-  nodeOrToken1: NodeOrToken | Comment,
-  nodeOrToken2: NodeOrToken | Comment,
-  skipOptions?: SkipOptions | null,
+  left: NodeOrToken | Comment,
+  right: NodeOrToken | Comment,
+  skipOptions?: SkipOptions | number | FilterFn | null,
 ): Token | null {
-  throw new Error('`sourceCode.getFirstTokenBetween` not implemented yet'); // TODO
+  if (tokens === null) initTokens();
+  debugAssertIsNonNull(tokens);
+  debugAssertIsNonNull(comments);
+
+  let skip =
+    typeof skipOptions === "number"
+      ? skipOptions
+      : typeof skipOptions === "object" && skipOptions !== null
+        ? skipOptions.skip
+        : null;
+
+  const filter =
+    typeof skipOptions === "function"
+      ? skipOptions
+      : typeof skipOptions === "object" && skipOptions !== null
+        ? skipOptions.filter
+        : null;
+
+  const includeComments =
+    typeof skipOptions === "object" &&
+    skipOptions !== null &&
+    "includeComments" in skipOptions &&
+    skipOptions.includeComments;
+
+  let nodeTokens: Token[] | null = null;
+  if (includeComments) {
+    if (tokensWithComments === null) initTokensWithComments();
+    debugAssertIsNonNull(tokensWithComments);
+    nodeTokens = tokensWithComments;
+  } else {
+    nodeTokens = tokens;
+  }
+
+  // This range is not invariant over node order.
+  // The first argument must be the left node.
+  // Same as ESLint's implementation.
+  const rangeStart = left.range[1],
+    rangeEnd = right.range[0];
+
+  const tokensLength = nodeTokens.length;
+
+  // Binary search for the token following the left node
+  let firstTokenIndex = tokensLength;
+  for (let lo = 0; lo < firstTokenIndex; ) {
+    const mid = (lo + firstTokenIndex) >> 1;
+    if (nodeTokens[mid].range[0] < rangeStart) {
+      lo = mid + 1;
+    } else {
+      firstTokenIndex = mid;
+    }
+  }
+
+  if (typeof filter !== "function") {
+    const token = nodeTokens[typeof skip === "number" ? firstTokenIndex + skip : firstTokenIndex];
+    if (token === undefined || token.range[0] >= rangeEnd) return null;
+    return token;
+  }
+
+  if (typeof skip !== "number") {
+    for (let i = firstTokenIndex; i < tokensLength; i++) {
+      const token = nodeTokens[i];
+      if (token.range[0] >= rangeEnd) return null;
+      if (filter(token)) return token;
+    }
+  } else {
+    for (let i = firstTokenIndex; i < tokensLength; i++) {
+      const token = nodeTokens[i];
+      if (token.range[0] >= rangeEnd) return null;
+      if (filter(token)) {
+        if (skip <= 0) return token;
+        skip--;
+      }
+    }
+  }
+
+  return null;
 }
-/* oxlint-enable no-unused-vars */
 
 /**
  * Get the first tokens between two non-overlapping nodes.
- * @param nodeOrToken1 - Node before the desired token range.
- * @param nodeOrToken2 - Node after the desired token range.
- * @param countOptions? - Options object. Same options as `getFirstTokens()`.
- * @returns Array of `Token`s between `nodeOrToken1` and `nodeOrToken2`.
+ * @param left - Node or token before the desired token range.
+ * @param right - Node or token after the desired token range.
+ * @param countOptions? - Options object.
+ *   If is a number, equivalent to `{ count: n }`.
+ *   If is a function, equivalent to `{ filter: fn }`.
+ * @returns Array of `Token`s between `left` and `right`.
  */
-/* oxlint-disable no-unused-vars */
 export function getFirstTokensBetween(
-  nodeOrToken1: NodeOrToken | Comment,
-  nodeOrToken2: NodeOrToken | Comment,
+  left: NodeOrToken | Comment,
+  right: NodeOrToken | Comment,
   countOptions?: CountOptions | number | FilterFn | null,
 ): Token[] {
-  throw new Error('`sourceCode.getFirstTokensBetween` not implemented yet'); // TODO
+  if (tokens === null) initTokens();
+  debugAssertIsNonNull(tokens);
+  debugAssertIsNonNull(comments);
+
+  const count =
+    typeof countOptions === "number"
+      ? countOptions
+      : typeof countOptions === "object" && countOptions !== null
+        ? countOptions.count
+        : null;
+
+  const filter =
+    typeof countOptions === "function"
+      ? countOptions
+      : typeof countOptions === "object" && countOptions !== null
+        ? countOptions.filter
+        : null;
+
+  const includeComments =
+    typeof countOptions === "object" &&
+    countOptions !== null &&
+    "includeComments" in countOptions &&
+    countOptions.includeComments;
+
+  let nodeTokens: Token[] | null = null;
+  if (includeComments) {
+    if (tokensWithComments === null) initTokensWithComments();
+    debugAssertIsNonNull(tokensWithComments);
+    nodeTokens = tokensWithComments;
+  } else {
+    nodeTokens = tokens;
+  }
+
+  // This range is not invariant over node order.
+  // The first argument must be the left node.
+  // Same as ESLint's implementation.
+  const rangeStart = left.range[1],
+    rangeEnd = right.range[0];
+
+  const tokensLength = nodeTokens.length;
+
+  // Find the first token after `left`
+  let sliceStart = tokensLength;
+  for (let lo = 0; lo < sliceStart; ) {
+    const mid = (lo + sliceStart) >> 1;
+    if (nodeTokens[mid].range[0] < rangeStart) {
+      lo = mid + 1;
+    } else {
+      sliceStart = mid;
+    }
+  }
+
+  // Find the first token at or after `right`
+  let sliceEnd = tokensLength;
+  for (let lo = sliceStart; lo < sliceEnd; ) {
+    const mid = (lo + sliceEnd) >> 1;
+    if (nodeTokens[mid].range[0] < rangeEnd) {
+      lo = mid + 1;
+    } else {
+      sliceEnd = mid;
+    }
+  }
+
+  if (typeof filter !== "function") {
+    if (typeof count !== "number") return nodeTokens.slice(sliceStart, sliceEnd);
+    return nodeTokens.slice(sliceStart, min(sliceStart + count, sliceEnd));
+  }
+
+  const firstTokens: Token[] = [];
+  if (typeof count !== "number") {
+    for (let i = sliceStart; i < sliceEnd; i++) {
+      const token = nodeTokens[i];
+      if (filter(token)) firstTokens.push(token);
+    }
+  } else {
+    for (let i = sliceStart; i < sliceEnd && firstTokens.length < count; i++) {
+      const token = nodeTokens[i];
+      if (filter(token)) firstTokens.push(token);
+    }
+  }
+  return firstTokens;
 }
-/* oxlint-enable no-unused-vars */
 
 /**
  * Get the last token between two non-overlapping nodes.
- * @param nodeOrToken1 - Node before the desired token range.
- * @param nodeOrToken2 - Node after the desired token range.
- * @param skipOptions? - Options object. Same options as `getFirstToken()`.
+ * @param left - Node or token before the desired token range.
+ * @param right - Node or token after the desired token range.
+ * @param skipOptions? - Options object.
+ *   If is a number, equivalent to `{ skip: n }`.
+ *   If is a function, equivalent to `{ filter: fn }`.
  * @returns `Token`, or `null` if all were skipped.
  */
-/* oxlint-disable no-unused-vars */
 export function getLastTokenBetween(
-  nodeOrToken1: NodeOrToken | Comment,
-  nodeOrToken2: NodeOrToken | Comment,
-  skipOptions?: SkipOptions | null,
+  left: NodeOrToken | Comment,
+  right: NodeOrToken | Comment,
+  skipOptions?: SkipOptions | number | FilterFn | null,
 ): Token | null {
-  throw new Error('`sourceCode.getLastTokenBetween` not implemented yet'); // TODO
+  if (tokens === null) initTokens();
+  debugAssertIsNonNull(tokens);
+  debugAssertIsNonNull(comments);
+
+  let skip =
+    typeof skipOptions === "number"
+      ? skipOptions
+      : typeof skipOptions === "object" && skipOptions !== null
+        ? skipOptions.skip
+        : null;
+
+  const filter =
+    typeof skipOptions === "function"
+      ? skipOptions
+      : typeof skipOptions === "object" && skipOptions !== null
+        ? skipOptions.filter
+        : null;
+
+  const includeComments =
+    typeof skipOptions === "object" &&
+    skipOptions !== null &&
+    "includeComments" in skipOptions &&
+    skipOptions.includeComments;
+
+  let nodeTokens: Token[] | null = null;
+  if (includeComments) {
+    if (tokensWithComments === null) initTokensWithComments();
+    debugAssertIsNonNull(tokensWithComments);
+    nodeTokens = tokensWithComments;
+  } else {
+    nodeTokens = tokens;
+  }
+
+  // This range is not invariant over node order.
+  // The first argument must be the left node.
+  // Same as ESLint's implementation.
+  const rangeStart = left.range[1],
+    rangeEnd = right.range[0];
+
+  // Binary search for the token preceding the right node.
+  // The found token may be within the left node if there are no tokens between the nodes.
+  let lastTokenIndex = -1;
+  for (let lo = 0, hi = nodeTokens.length - 1; lo <= hi; ) {
+    const mid = (lo + hi) >> 1;
+    if (nodeTokens[mid].range[0] < rangeEnd) {
+      lastTokenIndex = mid;
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
+  }
+
+  // Fast path for the common case
+  if (typeof filter !== "function") {
+    const token = nodeTokens[typeof skip === "number" ? lastTokenIndex - skip : lastTokenIndex];
+    if (token === undefined || token.range[0] < rangeStart) return null;
+    return token;
+  }
+
+  if (typeof skip !== "number") {
+    for (let i = lastTokenIndex; i >= 0; i--) {
+      const token = nodeTokens[i];
+      if (token.range[0] < rangeStart) return null;
+      if (filter(token)) return token;
+    }
+  } else {
+    for (let i = lastTokenIndex; i >= 0; i--) {
+      const token = nodeTokens[i];
+      if (token.range[0] < rangeStart) return null;
+      if (filter(token)) {
+        // `<=` because user input may be negative
+        // TODO: gracefully handle the negative case in other methods
+        if (skip <= 0) return token;
+        skip--;
+      }
+    }
+  }
+
+  return null;
 }
-/* oxlint-enable no-unused-vars */
 
 /**
  * Get the last tokens between two non-overlapping nodes.
- * @param nodeOrToken1 - Node before the desired token range.
- * @param nodeOrToken2 - Node after the desired token range.
- * @param countOptions? - Options object. Same options as `getFirstTokens()`.
- * @returns Array of `Token`s between `nodeOrToken1` and `nodeOrToken2`.
+ * @param left - Node or token before the desired token range.
+ * @param right - Node or token after the desired token range.
+ * @param countOptions? - Options object.
+ *   If is a number, equivalent to `{ count: n }`.
+ *   If is a function, equivalent to `{ filter: fn }`.
+ * @returns Array of `Token`s between `left` and `right`.
  */
-/* oxlint-disable no-unused-vars */
 export function getLastTokensBetween(
-  nodeOrToken1: NodeOrToken | Comment,
-  nodeOrToken2: NodeOrToken | Comment,
+  left: NodeOrToken | Comment,
+  right: NodeOrToken | Comment,
   countOptions?: CountOptions | number | FilterFn | null,
 ): Token[] {
-  throw new Error('`sourceCode.getLastTokensBetween` not implemented yet'); // TODO
+  if (tokens === null) initTokens();
+  debugAssertIsNonNull(tokens);
+  debugAssertIsNonNull(comments);
+
+  const count =
+    typeof countOptions === "number"
+      ? countOptions
+      : typeof countOptions === "object" && countOptions !== null
+        ? countOptions.count
+        : null;
+
+  const filter =
+    typeof countOptions === "function"
+      ? countOptions
+      : typeof countOptions === "object" && countOptions !== null
+        ? countOptions.filter
+        : null;
+
+  const includeComments =
+    typeof countOptions === "object" &&
+    countOptions !== null &&
+    "includeComments" in countOptions &&
+    countOptions.includeComments;
+
+  let nodeTokens: Token[] | null = null;
+  if (includeComments) {
+    if (tokensWithComments === null) initTokensWithComments();
+    debugAssertIsNonNull(tokensWithComments);
+    nodeTokens = tokensWithComments;
+  } else {
+    nodeTokens = tokens;
+  }
+
+  // This range is not invariant over node order.
+  // The first argument must be the left node.
+  // Same as ESLint's implementation.
+  const rangeStart = left.range[1],
+    rangeEnd = right.range[0],
+    tokensLength = nodeTokens.length;
+
+  // Binary search for first token past the beginning of the `between` range
+  let sliceStart = tokensLength;
+  for (let lo = 0; lo < sliceStart; ) {
+    const mid = (lo + sliceStart) >> 1;
+    if (nodeTokens[mid].range[0] < rangeStart) {
+      lo = mid + 1;
+    } else {
+      sliceStart = mid;
+    }
+  }
+
+  // Binary search for first token past the end of the `between` range
+  let sliceEnd = tokensLength;
+  for (let lo = sliceStart; lo < sliceEnd; ) {
+    const mid = (lo + sliceEnd) >> 1;
+    if (nodeTokens[mid].range[0] < rangeEnd) {
+      lo = mid + 1;
+    } else {
+      sliceEnd = mid;
+    }
+  }
+
+  // Fast path for the common case
+  if (typeof filter !== "function") {
+    if (typeof count !== "number") return nodeTokens.slice(sliceStart, sliceEnd);
+    return nodeTokens.slice(max(sliceStart, sliceEnd - count), sliceEnd);
+  }
+
+  const tokensBetween: Token[] = [];
+  if (typeof count !== "number") {
+    for (let i = sliceStart; i < sliceEnd; i++) {
+      const token = nodeTokens[i];
+      if (filter(token)) tokensBetween.push(token);
+    }
+  } else {
+    // Count is the number of preceding tokens, so we iterate in reverse
+    for (let i = sliceEnd - 1; i >= sliceStart && tokensBetween.length < count; i--) {
+      const token = nodeTokens[i];
+      if (filter(token)) tokensBetween.unshift(token);
+    }
+  }
+  return tokensBetween;
 }
-/* oxlint-enable no-unused-vars */
 
 /**
  * Get the token starting at the specified index.
@@ -507,9 +1660,43 @@ export function getLastTokensBetween(
  * @param rangeOptions - Options object.
  * @returns The token starting at index, or `null` if no such token.
  */
-// oxlint-disable-next-line no-unused-vars
-export function getTokenByRangeStart(index: number, rangeOptions?: RangeOptions | null): Token | null {
-  throw new Error('`sourceCode.getTokenByRangeStart` not implemented yet'); // TODO
+export function getTokenByRangeStart(
+  index: number,
+  rangeOptions?: RangeOptions | null,
+): Token | null {
+  if (tokens === null) initTokens();
+  debugAssertIsNonNull(tokens);
+  debugAssertIsNonNull(comments);
+
+  const includeComments =
+    typeof rangeOptions === "object" &&
+    rangeOptions !== null &&
+    "includeComments" in rangeOptions &&
+    rangeOptions.includeComments;
+
+  let nodeTokens: Token[] | null = null;
+  if (includeComments) {
+    if (tokensWithComments === null) initTokensWithComments();
+    debugAssertIsNonNull(tokensWithComments);
+    nodeTokens = tokensWithComments;
+  } else {
+    nodeTokens = tokens;
+  }
+
+  // Binary search for the token that starts at the given index
+  for (let lo = 0, hi = nodeTokens.length; lo < hi; ) {
+    const mid = (lo + hi) >> 1;
+    const tokenStart = nodeTokens[mid].range[0];
+    if (tokenStart === index) {
+      return nodeTokens[mid];
+    } else if (tokenStart < index) {
+      lo = mid + 1;
+    } else {
+      hi = mid;
+    }
+  }
+
+  return null;
 }
 
 // Regex that tests for whitespace.
@@ -568,7 +1755,7 @@ export function isSpaceBetween(nodeOrToken1: NodeOrToken, nodeOrToken2: NodeOrTo
 
   // Check if there's any whitespace in the gap
   if (sourceText === null) initSourceText();
-  assertIsNonNull(sourceText);
+  debugAssertIsNonNull(sourceText);
 
   return WHITESPACE_REGEXP.test(sourceText.slice(gapStart, gapEnd));
 }

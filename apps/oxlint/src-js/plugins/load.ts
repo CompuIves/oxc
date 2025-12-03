@@ -1,5 +1,7 @@
-import { createContext } from "./context.js";
-import { getErrorMessage } from "../utils/utils.js";
+import { createContext } from "./context.ts";
+import { deepFreezeJsonArray } from "./json.ts";
+import { DEFAULT_OPTIONS } from "./options.ts";
+import { getErrorMessage } from "../utils/utils.ts";
 
 import type { Writable } from "type-fest";
 import type { Context } from "./context.ts";
@@ -8,7 +10,8 @@ import type { RuleMeta } from "./rule_meta.ts";
 import type { AfterHook, BeforeHook, Visitor, VisitorWithHooks } from "./types.ts";
 import type { SetNullable } from "../utils/types.ts";
 
-const ObjectKeys = Object.keys;
+const ObjectKeys = Object.keys,
+  { isArray } = Array;
 
 /**
  * Linter plugin, comprising multiple rules
@@ -55,6 +58,7 @@ interface RuleDetailsBase {
   readonly context: Readonly<Context>;
   readonly isFixable: boolean;
   readonly messages: Readonly<Record<string, string>> | null;
+  readonly defaultOptions: Readonly<Options>;
   // Updated for each file
   ruleIndex: number;
   options: Readonly<Options> | null; // Initially `null`, set to options object before linting a file
@@ -105,7 +109,13 @@ interface PluginDetails {
  */
 export async function loadPlugin(url: string, packageName: string | null): Promise<string> {
   try {
-    const res = await loadPluginImpl(url, packageName);
+    if (DEBUG) {
+      if (registeredPluginUrls.has(url)) throw new Error("This plugin has already been registered");
+      registeredPluginUrls.add(url);
+    }
+
+    const plugin = (await import(url)).default as Plugin;
+    const res = registerPlugin(plugin, packageName);
     return JSON.stringify({ Success: res });
   } catch (err) {
     return JSON.stringify({ Failure: getErrorMessage(err) });
@@ -113,25 +123,16 @@ export async function loadPlugin(url: string, packageName: string | null): Promi
 }
 
 /**
- * Load a plugin.
+ * Register a plugin.
  *
- * @param url - Absolute path of plugin file as a `file://...` URL
+ * @param plugin - Plugin
  * @param packageName - Optional package name from `package.json` (fallback if `plugin.meta.name` is not defined)
  * @returns - Plugin details
- * @throws {Error} If plugin has already been registered
- * @throws {Error} If plugin has no name
+ * @throws {Error} If `plugin.meta.name` is `null` / `undefined` and `packageName` not provided
  * @throws {TypeError} If one of plugin's rules is malformed, or its `createOnce` method returns invalid visitor
- * @throws {TypeError} if `plugin.meta.name` is not a string
- * @throws {*} If plugin throws an error during import
+ * @throws {TypeError} If `plugin.meta.name` is not a string
  */
-async function loadPluginImpl(url: string, packageName: string | null): Promise<PluginDetails> {
-  if (DEBUG) {
-    if (registeredPluginUrls.has(url)) throw new Error("This plugin has already been registered");
-    registeredPluginUrls.add(url);
-  }
-
-  const { default: plugin } = (await import(url)) as { default: Plugin };
-
+export function registerPlugin(plugin: Plugin, packageName: string | null): PluginDetails {
   // TODO: Use a validation library to assert the shape of the plugin, and of rules
 
   const pluginName = getPluginName(plugin, packageName);
@@ -147,7 +148,8 @@ async function loadPluginImpl(url: string, packageName: string | null): Promise<
 
     // Validate `rule.meta` and convert to vars with standardized shape
     let isFixable = false,
-      messages: Record<string, string> | null = null;
+      messages: Record<string, string> | null = null,
+      defaultOptions: Readonly<Options> = DEFAULT_OPTIONS;
     const ruleMeta = rule.meta;
     if (ruleMeta != null) {
       if (typeof ruleMeta !== "object") throw new TypeError("Invalid `rule.meta`");
@@ -157,6 +159,16 @@ async function loadPluginImpl(url: string, packageName: string | null): Promise<
         if (fixable !== "code" && fixable !== "whitespace")
           throw new TypeError("Invalid `rule.meta.fixable`");
         isFixable = true;
+      }
+
+      const inputDefaultOptions = ruleMeta.defaultOptions;
+      if (inputDefaultOptions != null) {
+        // TODO: Validate is JSON-serializable, and validate against provided options schema
+        if (!isArray(inputDefaultOptions)) {
+          throw new TypeError("`rule.meta.defaultOptions` must be an array if provided");
+        }
+        deepFreezeJsonArray(inputDefaultOptions);
+        defaultOptions = inputDefaultOptions;
       }
 
       // Extract messages for messageId support
@@ -175,6 +187,7 @@ async function loadPluginImpl(url: string, packageName: string | null): Promise<
       context: null!, // Filled in below
       isFixable,
       messages,
+      defaultOptions,
       ruleIndex: 0,
       options: null,
       visitor: null,
@@ -188,7 +201,7 @@ async function loadPluginImpl(url: string, packageName: string | null): Promise<
 
     if ("createOnce" in rule) {
       // TODO: Compile visitor object to array here, instead of repeating compilation on each file
-      let visitorWithHooks = rule.createOnce(context) as SetNullable<
+      const visitorWithHooks = rule.createOnce(context) as SetNullable<
         VisitorWithHooks,
         "before" | "after"
       >;

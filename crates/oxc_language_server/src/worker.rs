@@ -11,7 +11,10 @@ use tower_lsp_server::{
     },
 };
 
-use crate::tool::{Tool, ToolBuilder};
+use crate::{
+    ToolRestartChanges,
+    tool::{Tool, ToolBuilder},
+};
 
 /// A worker that manages the individual tools for a specific workspace
 /// and reports back the results to the [`Backend`](crate::backend::Backend).
@@ -224,36 +227,10 @@ impl WorkspaceWorker {
             options_guard.clone().unwrap_or_default()
         };
 
-        let mut registrations = vec![];
-        let mut unregistrations = vec![];
-        let mut diagnostics: Option<Vec<(String, Vec<Diagnostic>)>> = None;
-
-        for tool in self.tools.write().await.iter_mut() {
-            let change =
-                tool.handle_watched_file_change(&file_event.uri, &self.root_uri, options.clone());
-            if let Some(reports) = change.diagnostic_reports {
-                if let Some(existing_diagnostics) = &mut diagnostics {
-                    existing_diagnostics.extend(reports);
-                } else {
-                    diagnostics = Some(reports);
-                }
-            }
-            if let Some(patterns) = change.watch_patterns {
-                unregistrations.push(unregistration_tool_watcher_id(tool.name(), &self.root_uri));
-                if !patterns.is_empty() {
-                    registrations.push(registration_tool_watcher_id(
-                        tool.name(),
-                        &self.root_uri,
-                        patterns,
-                    ));
-                }
-            }
-            if let Some(replaced_tool) = change.tool {
-                *tool = replaced_tool;
-            }
-        }
-
-        (diagnostics, registrations, unregistrations)
+        self.handle_tool_changes(|tool| {
+            tool.handle_watched_file_change(&file_event.uri, &self.root_uri, options.clone())
+        })
+        .await
     }
 
     /// Handle server configuration changes from the client
@@ -289,16 +266,31 @@ impl WorkspaceWorker {
             *options_guard = Some(changed_options_json.clone());
         }
 
+        self.handle_tool_changes(|tool| {
+            tool.handle_configuration_change(
+                &self.root_uri,
+                &old_options,
+                changed_options_json.clone(),
+            )
+        })
+        .await
+    }
+
+    /// Common implementation for handling tool changes that may result in
+    /// diagnostics updates, watcher registrations/unregistrations, and tool replacement
+    async fn handle_tool_changes<F>(
+        &self,
+        change_handler: F,
+    ) -> (Option<Vec<(String, Vec<Diagnostic>)>>, Vec<Registration>, Vec<Unregistration>)
+    where
+        F: Fn(&mut Box<dyn Tool>) -> ToolRestartChanges,
+    {
         let mut registrations = vec![];
         let mut unregistrations = vec![];
         let mut diagnostics: Option<Vec<(String, Vec<Diagnostic>)>> = None;
 
         for tool in self.tools.write().await.iter_mut() {
-            let change = tool.handle_configuration_change(
-                &self.root_uri,
-                &old_options,
-                changed_options_json.clone(),
-            );
+            let change = change_handler(tool);
             if let Some(reports) = change.diagnostic_reports {
                 if let Some(existing_diagnostics) = &mut diagnostics {
                     existing_diagnostics.extend(reports);
@@ -375,7 +367,13 @@ fn registration_tool_watcher_id(tool: &str, root_uri: &Uri, patterns: Vec<String
 mod tests {
     use std::str::FromStr;
 
-    use super::*;
+    use tower_lsp_server::lsp_types::{CodeActionOrCommand, FileChangeType, FileEvent, Range, Uri};
+
+    use crate::{
+        ToolBuilder,
+        tests::{FAKE_COMMAND, FakeToolBuilder},
+        worker::WorkspaceWorker,
+    };
 
     #[test]
     fn test_get_root_uri() {
@@ -398,5 +396,171 @@ mod tests {
             !worker
                 .is_responsible_for_uri(&Uri::from_str("file:///path/to/other/file.js").unwrap())
         );
+    }
+
+    #[tokio::test]
+    async fn test_needs_init_options() {
+        let worker = WorkspaceWorker::new(Uri::from_str("file:///root/").unwrap());
+        assert!(worker.needs_init_options().await);
+        worker.start_worker(serde_json::Value::Null, &[]).await;
+        assert!(!worker.needs_init_options().await);
+    }
+
+    #[tokio::test]
+    async fn test_init_watchers() {
+        // with one watcher
+        let worker = WorkspaceWorker::new(Uri::from_str("file:///root/").unwrap());
+        let tools: Vec<Box<dyn ToolBuilder>> = vec![Box::new(FakeToolBuilder)];
+        worker.start_worker(serde_json::Value::Null, &tools).await;
+        let registrations = worker.init_watchers().await;
+        assert_eq!(registrations.len(), 1);
+        assert_eq!(registrations[0].id, "watcher-FakeTool-file:///root/");
+
+        // with no watchers
+        let worker_no_watchers = WorkspaceWorker::new(Uri::from_str("file:///root/").unwrap());
+        let tools_no_watchers: Vec<Box<dyn ToolBuilder>> = vec![Box::new(FakeToolBuilder)];
+        worker_no_watchers
+            .start_worker(serde_json::json!({"some_option": true}), &tools_no_watchers)
+            .await;
+        let registrations_no_watchers = worker_no_watchers.init_watchers().await;
+        assert_eq!(registrations_no_watchers.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_execute_command() {
+        let worker = WorkspaceWorker::new(Uri::from_str("file:///root/").unwrap());
+        let tools: Vec<Box<dyn ToolBuilder>> = vec![Box::new(FakeToolBuilder)];
+        worker.start_worker(serde_json::Value::Null, &tools).await;
+
+        // Test command not found
+        let result = worker.execute_command("unknown.command", vec![]).await;
+        assert!(result.is_ok());
+        assert!(result.ok().unwrap().is_none());
+
+        // Test command found but no arguments
+        let result = worker.execute_command(FAKE_COMMAND, vec![]).await;
+        assert!(result.is_ok());
+        assert!(result.ok().unwrap().is_none());
+
+        // Test command found with arguments
+        let result = worker.execute_command(FAKE_COMMAND, vec![serde_json::Value::Null]).await;
+        assert!(result.is_ok());
+        assert!(result.ok().unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn test_watched_files_change_notification() {
+        let worker = WorkspaceWorker::new(Uri::from_str("file:///root/").unwrap());
+        let tools: Vec<Box<dyn ToolBuilder>> = vec![Box::new(FakeToolBuilder)];
+        worker.start_worker(serde_json::Value::Null, &tools).await;
+
+        let (diagnostics, registrations, unregistrations) = worker
+            .did_change_watched_files(&FileEvent {
+                uri: Uri::from_str("file:///root/unknown.file").unwrap(),
+                typ: FileChangeType::CHANGED,
+            })
+            .await;
+
+        // Since FakeToolBuilder does not know about "unknown.file", no diagnostics or registrations are expected
+        assert!(diagnostics.is_none());
+        assert_eq!(registrations.len(), 0); // No new registrations expected
+        assert_eq!(unregistrations.len(), 0); // No unregistrations expected
+
+        let (diagnostics, registrations, unregistrations) = worker
+            .did_change_watched_files(&FileEvent {
+                uri: Uri::from_str("file:///root/watcher.config").unwrap(),
+                typ: FileChangeType::CHANGED,
+            })
+            .await;
+
+        // Since FakeToolBuilder knows about "watcher.config", registrations are expected
+        assert!(diagnostics.is_none());
+        assert_eq!(unregistrations.len(), 1); // One unregistration expected
+        assert_eq!(unregistrations[0].id, "watcher-FakeTool-file:///root/");
+        assert_eq!(registrations.len(), 1); // One new registration expected
+        assert_eq!(registrations[0].id, "watcher-FakeTool-file:///root/");
+
+        let (diagnostics, registrations, unregistrations) = worker
+            .did_change_watched_files(&FileEvent {
+                uri: Uri::from_str("file:///root/diagnostics.config").unwrap(),
+                typ: FileChangeType::CHANGED,
+            })
+            .await;
+        // Since FakeToolBuilder knows about "diagnostics.config", diagnostics are expected
+        assert!(diagnostics.is_some());
+        assert_eq!(diagnostics.unwrap().len(), 1); // One diagnostic report expected
+        assert_eq!(registrations.len(), 0); // No new registrations expected
+        assert_eq!(unregistrations.len(), 0); // No unregistrations expected
+
+        // TODO: add test for tool replacement
+    }
+
+    #[tokio::test]
+    async fn test_did_change_configuration() {
+        let worker = WorkspaceWorker::new(Uri::from_str("file:///root/").unwrap());
+        worker
+            .start_worker(serde_json::json!({"some_option": true}), &[Box::new(FakeToolBuilder)])
+            .await;
+
+        let (diagnostics, registrations, unregistrations) =
+            worker.did_change_configuration(serde_json::json!({"some_option": false})).await;
+
+        // Since FakeToolBuilder does not change anything based on configuration, no diagnostics or registrations are expected
+        assert!(diagnostics.is_none());
+        assert_eq!(registrations.len(), 0); // No new registrations expected
+        assert_eq!(unregistrations.len(), 0); // No unregistrations expected
+
+        let (diagnostics, registrations, unregistrations) =
+            worker.did_change_configuration(serde_json::json!(2)).await;
+
+        // Since FakeToolBuilder changes watcher patterns based on configuration, registrations are expected
+        assert!(diagnostics.is_none());
+        assert_eq!(unregistrations.len(), 1); // One unregistration expected
+        assert_eq!(unregistrations[0].id, "watcher-FakeTool-file:///root/");
+        assert_eq!(registrations.len(), 1); // One new registration expected
+        assert_eq!(registrations[0].id, "watcher-FakeTool-file:///root/");
+
+        let (diagnostics, registrations, unregistrations) =
+            worker.did_change_configuration(serde_json::json!(3)).await;
+
+        // Since FakeToolBuilder changes diagnostics based on configuration, diagnostics are expected
+        assert!(diagnostics.is_some());
+        assert_eq!(diagnostics.unwrap().len(), 1); // One diagnostic report expected
+        assert_eq!(registrations.len(), 0); // No new registrations expected
+        assert_eq!(unregistrations.len(), 0); // No unregistrations expected
+
+        // TODO: add test for tool replacement
+    }
+
+    #[tokio::test]
+    async fn test_code_action_collection() {
+        let worker = WorkspaceWorker::new(Uri::from_str("file:///root/").unwrap());
+        let tools: Vec<Box<dyn ToolBuilder>> = vec![Box::new(FakeToolBuilder)];
+        worker.start_worker(serde_json::Value::Null, &tools).await;
+
+        let actions = worker
+            .get_code_actions_or_commands(
+                &Uri::from_str("file:///root/file.js").unwrap(),
+                &Range::default(),
+                None,
+            )
+            .await;
+
+        assert_eq!(actions.len(), 0);
+
+        let actions = worker
+            .get_code_actions_or_commands(
+                &Uri::from_str("file:///root/code_action.config").unwrap(),
+                &Range::default(),
+                None,
+            )
+            .await;
+
+        assert_eq!(actions.len(), 1);
+        if let CodeActionOrCommand::CodeAction(action) = &actions[0] {
+            assert_eq!(action.title, "Code Action title");
+        } else {
+            panic!("Expected CodeAction");
+        }
     }
 }

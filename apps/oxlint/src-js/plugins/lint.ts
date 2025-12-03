@@ -1,17 +1,17 @@
-import { setupFileContext, resetFileContext } from "./context.js";
-import { registeredRules } from "./load.js";
-import { allOptions, DEFAULT_OPTIONS_ID } from "./options.js";
-import { diagnostics } from "./report.js";
-import { setSettingsForFile, resetSettings } from "./settings.js";
-import { ast, initAst, resetSourceAndAst, setupSourceForFile } from "./source_code.js";
-import { typeAssertIs, debugAssert, debugAssertIsNonNull } from "../utils/asserts.js";
-import { getErrorMessage } from "../utils/utils.js";
+import { setupFileContext, resetFileContext } from "./context.ts";
+import { registeredRules } from "./load.ts";
+import { allOptions, DEFAULT_OPTIONS_ID } from "./options.ts";
+import { diagnostics } from "./report.ts";
+import { setSettingsForFile, resetSettings } from "./settings.ts";
+import { ast, initAst, resetSourceAndAst, setupSourceForFile } from "./source_code.ts";
+import { typeAssertIs, debugAssert, debugAssertIsNonNull } from "../utils/asserts.ts";
+import { getErrorMessage } from "../utils/utils.ts";
 import {
   addVisitorToCompiled,
   compiledVisitor,
   finalizeCompiledVisitor,
   initCompiledVisitor,
-} from "./visitor.js";
+} from "./visitor.ts";
 
 // Lazy implementation
 /*
@@ -29,7 +29,7 @@ import type { AfterHook, BufferWithArrays } from "./types.ts";
 // All buffers sent from Rust are stored in this array, indexed by `bufferId` (also sent from Rust).
 // Buffers are only added to this array, never removed, so no buffers will be garbage collected
 // until the process exits.
-const buffers: (BufferWithArrays | null)[] = [];
+export const buffers: (BufferWithArrays | null)[] = [];
 
 // Array of `after` hooks to run after traversal. This array reused for every file.
 const afterHooks: AfterHook[] = [];
@@ -46,7 +46,8 @@ const PARSER_SERVICES_DEFAULT: Record<string, unknown> = Object.freeze({});
  * @param bufferId - ID of buffer containing file data
  * @param buffer - Buffer containing file data, or `null` if buffer with this ID was previously sent to JS
  * @param ruleIds - IDs of rules to run on this file
- * @param settingsJSON - Settings for file, as JSON
+ * @param optionsIds - IDs of options to use for rules on this file, in same order as `ruleIds`
+ * @param settingsJSON - Settings for this file, as JSON string
  * @returns Diagnostics or error serialized to JSON string
  */
 export function lintFile(
@@ -54,18 +55,23 @@ export function lintFile(
   bufferId: number,
   buffer: Uint8Array | null,
   ruleIds: number[],
+  optionsIds: number[],
   settingsJSON: string,
-): string {
-  // TODO: Get `optionsIds` from Rust side
-  const optionsIds = ruleIds.map((_) => DEFAULT_OPTIONS_ID);
-
+): string | null {
   try {
     lintFileImpl(filePath, bufferId, buffer, ruleIds, optionsIds, settingsJSON);
+
+    // Avoid JSON serialization in common case that there are no diagnostics to report
+    if (diagnostics.length === 0) return null;
+
+    // Note: `messageId` field of `DiagnosticReport` is not needed on Rust side, but we assume it's cheaper to leave it
+    // in place and let `serde` skip over it on Rust side, than to iterate over all diagnostics and remove it here.
     return JSON.stringify({ Success: diagnostics });
   } catch (err) {
     return JSON.stringify({ Failure: getErrorMessage(err) });
   } finally {
     diagnostics.length = 0;
+    resetFile();
   }
 }
 
@@ -76,13 +82,12 @@ export function lintFile(
  * @param bufferId - ID of buffer containing file data
  * @param buffer - Buffer containing file data, or `null` if buffer with this ID was previously sent to JS
  * @param ruleIds - IDs of rules to run on this file
- * @param optionsIds - IDs of options to use for rules on this file
- * @param settingsJSON - Stringified settings for this file
- * @returns Diagnostics to send back to Rust
+ * @param optionsIds - IDs of options to use for rules on this file, in same order as `ruleIds`
+ * @param settingsJSON - Settings for this file, as JSON string
  * @throws {Error} If any parameters are invalid
  * @throws {*} If any rule throws
  */
-function lintFileImpl(
+export function lintFileImpl(
   filePath: string,
   bufferId: number,
   buffer: Uint8Array | null,
@@ -155,8 +160,13 @@ function lintFileImpl(
 
     // Set `options` for rule
     const optionsId = optionsIds[i];
+    debugAssertIsNonNull(allOptions);
     debugAssert(optionsId < allOptions.length, "Options ID out of bounds");
-    ruleDetails.options = allOptions[optionsId];
+
+    // If the rule has no user-provided options, use the plugin-provided default
+    // options (which falls back to `DEFAULT_OPTIONS`)
+    ruleDetails.options =
+      optionsId === DEFAULT_OPTIONS_ID ? ruleDetails.defaultOptions : allOptions[optionsId];
 
     let { visitor } = ruleDetails;
     if (visitor === null) {
@@ -214,8 +224,12 @@ function lintFileImpl(
     // Reset array, ready for next file
     afterHooks.length = 0;
   }
+}
 
-  // Reset file context, source, AST, and settings, to free memory
+/**
+ * Reset file context, source, AST, and settings, to free memory.
+ */
+export function resetFile() {
   resetFileContext();
   resetSourceAndAst();
   resetSettings();

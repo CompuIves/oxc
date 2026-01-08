@@ -204,11 +204,11 @@ fn is_ancestor_export_name_decl<'a>(node: &AstNode<'a>, ctx: &LintContext<'a>) -
 }
 
 impl Rule for FuncStyle {
-    fn from_configuration(value: Value) -> Self {
+    fn from_configuration(value: Value) -> Result<Self, serde_json::error::Error> {
         let obj1 = value.get(0);
         let obj2 = value.get(1);
 
-        Self {
+        Ok(Self {
             style: obj1.and_then(Value::as_str).map(Style::from).unwrap_or_default(),
             allow_arrow_functions: obj2
                 .and_then(|v| v.get("allowArrowFunctions"))
@@ -223,8 +223,9 @@ impl Rule for FuncStyle {
                 .and_then(|v| v.get("namedExports"))
                 .and_then(Value::as_str)
                 .map(NamedExports::from),
-        }
+        })
     }
+
     fn run_once<'a>(&self, ctx: &LintContext) {
         let semantic = ctx.semantic();
         let is_decl_style = self.style == Style::Declaration;
@@ -284,7 +285,7 @@ impl Rule for FuncStyle {
                             let is_ancestor_export = is_ancestor_export_name_decl(node, ctx);
                             if let AstKind::VariableDeclarator(decl) = parent.kind() {
                                 let is_type_annotation =
-                                    self.allow_type_annotation && decl.id.type_annotation.is_some();
+                                    self.allow_type_annotation && decl.type_annotation.is_some();
                                 if is_type_annotation {
                                     continue;
                                 }
@@ -332,7 +333,7 @@ impl Rule for FuncStyle {
                 let parent = semantic.nodes().parent_node(node.id());
                 if let AstKind::VariableDeclarator(decl) = parent.kind() {
                     let is_type_annotation =
-                        self.allow_type_annotation && decl.id.type_annotation.is_some();
+                        self.allow_type_annotation && decl.type_annotation.is_some();
                     if is_type_annotation {
                         continue;
                     }
@@ -357,7 +358,7 @@ fn test() {
     let pass = vec![
         (
             "function foo(){}
-			 function bar(){}",
+             function bar(){}",
             Some(serde_json::json!(["declaration"])),
         ),
         ("foo.bar = function(){};", Some(serde_json::json!(["declaration"]))),
@@ -368,12 +369,12 @@ fn test() {
         ("foo.bar = function(){};", Some(serde_json::json!(["expression"]))),
         (
             "var foo = function(){};
-			 var bar = function(){};",
+             var bar = function(){};",
             Some(serde_json::json!(["expression"])),
         ),
         (
             "var foo = () => {};
-			 var bar = () => {}",
+             var bar = () => {}",
             Some(serde_json::json!(["expression"])),
         ), // { "ecmaVersion": 6 },
         ("var foo = function() { this; }.bind(this);", Some(serde_json::json!(["declaration"]))),
@@ -483,7 +484,7 @@ fn test() {
         ("switch ($0) { case $1: function $2() { } }", Some(serde_json::json!(["declaration"]))),
         (
             "function foo(): void {}
-			 function bar(): void {}",
+             function bar(): void {}",
             Some(serde_json::json!(["declaration"])),
         ),
         ("(function(): void { /* code */ }());", Some(serde_json::json!(["declaration"]))),
@@ -498,12 +499,12 @@ fn test() {
         ("Array.prototype.foo = function(): void {};", Some(serde_json::json!(["declaration"]))),
         (
             "const foo: () => void = function(): void {};
-			 const bar: () => void = function(): void {};",
+             const bar: () => void = function(): void {};",
             Some(serde_json::json!(["expression"])),
         ),
         (
             "const foo: () => void = (): void => {};
-			 const bar: () => void = (): void => {}",
+             const bar: () => void = (): void => {}",
             Some(serde_json::json!(["expression"])),
         ),
         (
@@ -538,13 +539,13 @@ fn test() {
         (
             "export function foo(): void {};",
             Some(
-                serde_json::json!(["expression",{ "overrides": { "namedExports": "declaration" } },			]),
+                serde_json::json!(["expression",{ "overrides": { "namedExports": "declaration" } },            ]),
             ),
         ),
         (
             "export function foo(): void {};",
             Some(
-                serde_json::json!(["declaration",{ "overrides": { "namedExports": "declaration" } },			]),
+                serde_json::json!(["declaration",{ "overrides": { "namedExports": "declaration" } },            ]),
             ),
         ),
         (
@@ -598,7 +599,7 @@ fn test() {
         (
             "export const expression: Fn = function () {}",
             Some(
-                serde_json::json!(["expression", { "allowTypeAnnotation": true,	"overrides": { "namedExports": "declaration" } }]),
+                serde_json::json!(["expression", { "allowTypeAnnotation": true,    "overrides": { "namedExports": "declaration" } }]),
             ),
         ),
         (
@@ -614,61 +615,61 @@ fn test() {
         ),
         (
             "
-					function test(a: string): string;
-					function test(a: number): number;
-					function test(a: unknown) {
-					  return a;
-					}
-					",
+                    function test(a: string): string;
+                    function test(a: number): number;
+                    function test(a: unknown) {
+                      return a;
+                    }
+                    ",
             None,
         ),
         (
             "
-					export function test(a: string): string;
-					export function test(a: number): number;
-					export function test(a: unknown) {
-					  return a;
-					}
-					",
+                    export function test(a: string): string;
+                    export function test(a: number): number;
+                    export function test(a: unknown) {
+                      return a;
+                    }
+                    ",
             None,
         ),
         (
             "
-						export function test(a: string): string;
-					    export function test(a: number): number;
-					    export function test(a: unknown) {
-					      return a;
-					    }
-						",
+                        export function test(a: string): string;
+                        export function test(a: number): number;
+                        export function test(a: unknown) {
+                          return a;
+                        }
+                        ",
             Some(
                 serde_json::json!(["expression", { "overrides": { "namedExports": "expression" } }]),
             ),
         ),
         (
             "
-					switch ($0) {
-						case $1:
-						function test(a: string): string;
-						function test(a: number): number;
-						function test(a: unknown) {
-						return a;
-						}
-					}
-					",
+                    switch ($0) {
+                        case $1:
+                        function test(a: string): string;
+                        function test(a: number): number;
+                        function test(a: unknown) {
+                        return a;
+                        }
+                    }
+                    ",
             None,
         ),
         (
             "
-					switch ($0) {
-						case $1:
-						function test(a: string): string;
-						break;
-						case $2:
-						function test(a: unknown) {
-						return a;
-						}
-					}
-					",
+                    switch ($0) {
+                        case $1:
+                        function test(a: string): string;
+                        break;
+                        case $2:
+                        function test(a: unknown) {
+                        return a;
+                        }
+                    }
+                    ",
             None,
         ),
     ];
@@ -836,59 +837,59 @@ fn test() {
         ("if (foo) function bar(): string {}", None),
         (
             "
-						function test1(a: string): string;
-						function test2(a: number): number;
-						function test3(a: unknown) {
-						  return a;
-						}",
+                        function test1(a: string): string;
+                        function test2(a: number): number;
+                        function test3(a: unknown) {
+                          return a;
+                        }",
             None,
         ),
         (
             "
-						export function test1(a: string): string;
-						export function test2(a: number): number;
-						export function test3(a: unknown) {
-						  return a;
-						}",
+                        export function test1(a: string): string;
+                        export function test2(a: number): number;
+                        export function test3(a: unknown) {
+                          return a;
+                        }",
             None,
         ),
         (
             "
-						export function test1(a: string): string;
-					    export function test2(a: number): number;
-					    export function test3(a: unknown) {
-					      return a;
-					    }
-						",
+                        export function test1(a: string): string;
+                        export function test2(a: number): number;
+                        export function test3(a: unknown) {
+                          return a;
+                        }
+                        ",
             Some(
                 serde_json::json!(["expression", { "overrides": { "namedExports": "expression" } }]),
             ),
         ),
         (
             "
-						switch ($0) {
-							case $1:
-							function test1(a: string): string;
-							function test2(a: number): number;
-							function test3(a: unknown) {
-								return a;
-							}
-						}
-						",
+                        switch ($0) {
+                            case $1:
+                            function test1(a: string): string;
+                            function test2(a: number): number;
+                            function test3(a: unknown) {
+                                return a;
+                            }
+                        }
+                        ",
             None,
         ),
         (
             "
-						switch ($0) {
-							case $1:
-							function test1(a: string): string;
-							break;
-							case $2:
-							function test2(a: unknown) {
-							return a;
-							}
-						}
-						",
+                        switch ($0) {
+                            case $1:
+                            function test1(a: string): string;
+                            break;
+                            case $2:
+                            function test2(a: unknown) {
+                            return a;
+                            }
+                        }
+                        ",
             None,
         ),
     ];

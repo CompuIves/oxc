@@ -4,6 +4,105 @@ All notable changes to this package will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0).
 
+## [0.23.0] - 2026-01-06
+
+### 🚀 Features
+
+- a19cc93 oxfmt: Add debug logging to oxfmt LSP to troubleshoot resolved options at runtime (#17695) (Nicholas Rayburn)
+
+### 🐛 Bug Fixes
+
+- dcfdd41 formatter: Should not set up tailwindcss callback when no tailwindcss configuration is set (#17696) (Dunqing)
+
+## [0.22.0] - 2026-01-05
+
+### 🚀 Features
+
+- 8fd4ea9 oxfmt: `options.embeddedLanguageFormatting` is now `"auto"` by default (#17649) (leaysgur)
+
+### 🐛 Bug Fixes
+
+- 174375d oxfmt,oxlint: Disable mimalloc for 32-bit Arm targets (#17473) (Yaksh Bariya)
+
+### ⚡ Performance
+
+- abb28dc oxfmt: Turn of pretty print from sort-package-json (#17452) (Boshen)
+
+## [0.21.0] - 2025-12-29
+
+### 🚀 Features
+
+- 4df8063 oxfmt: Respect `.gitignore` in sub directries (#17352) (leaysgur)
+
+### 🐛 Bug Fixes
+
+- c6690d1 rust: Remove unsupported tokio io-std feature for WASM compatibility (#17311) (Boshen)
+
+## [0.20.0] - 2025-12-22
+
+### 🚀 Features
+
+- 97a02d1 oxfmt: Add `insertFinalNewline` option (#17251) (leaysgur)
+- a3f3c58 oxfmt: Support TOML(v1.0 only) files (#17113) (leaysgur)
+
+### 🐛 Bug Fixes
+
+- 7b810f4 oxfmt: Use correct root dir with ignore and overrides for nested cwd (#17244) (leaysgur)
+- cdb80d4 oxfmt: Resolve `.editorconfig` root dir from `cwd` (#17093) (leaysgur)
+
+## [0.19.0] - 2025-12-19
+
+### 🚀 Features
+
+- 15dfb55 oxfmt: Respect single nearest `.editorconfig` (#17043) (leaysgur)
+- 8c33ff4 oxfmt: Expose Node.js API: `format(fileName, sourceText, options?)` (#16939) (leaysgur)
+
+### 🐛 Bug Fixes
+
+- d340c87 oxfmt: Update api `FormatOptions` type with `& Record<string, unknown>` (#17036) (leaysgur)
+- 827a256 oxfmt: Place ignorePatterns at bottom of JSON in --migrate prettier (#16926) (Boshen)
+
+## [0.18.0] - 2025-12-15
+
+### 🚀 Features
+
+- 5e3ceb8 oxfmt: Support `oxfmt --stdin-filepath` (#16868) (leaysgur)
+- d4c0bb7 oxfmt: Support `oxfmt --migrate prettier` (JS side) (#16773) (leaysgur)
+- 2b9c3fe oxfmt: Support `oxfmt --migrate [prettier]` (Rust side) (#16771) (leaysgur)
+- 47c8710 oxfmt: Arrange cli mode and update help (#16728) (leaysgur)
+- 559eff1 oxfmt: Support `oxfmt --init` (#16720) (leaysgur)
+- 28e0682 oxfmt: Enable experimental `package.json` sorting by default (#16593) (leaysgur)
+- feffe48 oxfmt: Trace which files are being formatted via `OXC_LOG=debug` (#16627) (Boshen)
+
+### 🐛 Bug Fixes
+
+- bc2e0f8 oxfmt: Report `exitCode` correctly (#16770) (leaysgur)
+- d719988 oxfmt: Make Rust CLI as just formatting CLI (#16768) (leaysgur)
+- 2577814 oxfmt: Remove `jsonc` parser override for `(j|t)sconfig(.*)?.json` (#16762) (leaysgur)
+- 02f59ba oxfmt: Always respect ignored files even specified (#16632) (leaysgur)
+- 37c1a06 oxfmt: Exclude lock files to be formatted (#16629) (leaysgur)
+
+### ⚡ Performance
+
+- 10b4f9f oxfmt: Make time measurement conditional (#16634) (Boshen)
+- 6f3aaba oxfmt: Use `worker_threads` by `tinypool` for prettier formatting (#16618) (leaysgur)
+
+## [0.17.0] - 2025-12-08
+
+### 🚀 Features
+
+- 3184f17 oxfmt: Pass filepath field to prettier formatting (#16591) (Yuji Sugiura)
+- 7bb3304 oxfmt: Pass populated config to prettier formatting (#16584) (leaysgur)
+- 69f84d2 oxfmt: Pass raw config to prettier formatting (#16582) (leaysgur)
+- a83a2ec oxfmt: Expose `setupConfig(configJSON: string)` napi callback (#16579) (leaysgur)
+- af76b0e oxfmt: Support formatting HTML, YAML, GraphQL, Handlerbars, Markdown, CSS files (#16524) (leaysgur)
+- 66b64ef oxfmt: Support formatting JSON files (#16523) (leaysgur)
+- 4767926 oxfmt: Prepare non-js/ts file support with prettier (#16480) (leaysgur)
+- 2b4ce5d oxfmt: Use dedicated `format_by_xxx_formatter` method by `SourceType` (#16417) (leaysgur)
+- 0867d2f oxfmt: Set up JS `formatFile()` function for Rust via napi (#16415) (leaysgur)
+- b6feb66 oxfmt: Rename `embedded.ts` with preparing `formatFile()` function (#16414) (leaysgur)
+- dd2cb62 oxfmt: Not error on explicit `--write` flag used (#16376) (leaysgur)
+
 ## [0.16.0] - 2025-12-01
 
 ### 🚀 Features

@@ -152,10 +152,10 @@ fn is_has_function_return_type(node: &AstNode, ctx: &LintContext<'_>) -> bool {
 }
 
 impl Rule for NoUselessUndefined {
-    fn from_configuration(value: serde_json::Value) -> Self {
-        serde_json::from_value::<DefaultRuleConfig<NoUselessUndefined>>(value)
+    fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
+        Ok(serde_json::from_value::<DefaultRuleConfig<Self>>(value)
             .unwrap_or_default()
-            .into_inner()
+            .into_inner())
     }
 
     fn run<'a>(&self, node: &AstNode<'a>, ctx: &LintContext<'a>) {
@@ -267,6 +267,27 @@ impl Rule for NoUselessUndefined {
                             no_useless_undefined_diagnostic(undefined_literal.span),
                             |fixer| fixer.delete_range(delete_span),
                         );
+                    }
+                    // `function foo(bar = undefined) {}`
+                    AstKind::FormalParameter(assign_pattern) => {
+                        if let Some(initializer) = &assign_pattern.initializer
+                            && initializer.span() == undefined_literal.span
+                        {
+                            let left = &assign_pattern
+                                .type_annotation
+                                .as_ref()
+                                .map_or(assign_pattern.pattern.span().end, |type_annotation| {
+                                    type_annotation.span.end
+                                });
+                            let delete_span = Span::new(*left, undefined_literal.span.end);
+                            if is_has_function_return_type(parent_node, ctx) {
+                                return;
+                            }
+                            ctx.diagnostic_with_fix(
+                                no_useless_undefined_diagnostic(undefined_literal.span),
+                                |fixer| fixer.delete_range(delete_span),
+                            );
+                        }
                     }
                     _ => {}
                 }

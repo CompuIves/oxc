@@ -18,7 +18,7 @@ use crate::{
     utils::{
         assignment_like::AssignmentLike,
         format_node_without_trailing_comments::FormatNodeWithoutTrailingComments,
-        object::format_property_key,
+        object::{format_property_key, should_preserve_quote},
     },
     write,
     write::{function::should_group_function_parameters, semicolon::OptionalSemicolon},
@@ -31,7 +31,25 @@ use super::{
 
 impl<'a> FormatWrite<'a> for AstNode<'a, ClassBody<'a>> {
     fn write(&self, f: &mut Formatter<'_, 'a>) {
+        if f.options().quote_properties.is_consistent() {
+            let quote_needed = self.body.iter().any(|signature| {
+                let key = match signature {
+                    ClassElement::PropertyDefinition(property) => &property.key,
+                    ClassElement::AccessorProperty(property) => &property.key,
+                    ClassElement::MethodDefinition(method) => &method.key,
+                    _ => return false,
+                };
+
+                should_preserve_quote(key, f)
+            });
+            f.context_mut().push_quote_needed(quote_needed);
+        }
+
         write!(f, ["{", block_indent(&self.body()), "}"]);
+
+        if f.options().quote_properties.is_consistent() {
+            f.context_mut().pop_quote_needed();
+        }
     }
 }
 
@@ -321,7 +339,7 @@ impl<'a> Format<'a> for FormatClass<'a, '_> {
             // after the class name, maintaining their position before the extends clause.
             if let Some(super_class) = &super_class {
                 let comments = f.context().comments().comments_before(super_class.span().start);
-                if comments.iter().any(|c| f.comments().is_own_line_comment(c)) {
+                if comments.iter().any(|c| c.preceded_by_newline()) {
                     indent(&FormatTrailingComments::Comments(comments)).fmt(f);
                 }
             }

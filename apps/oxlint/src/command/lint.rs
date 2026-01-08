@@ -277,7 +277,8 @@ pub struct EnablePlugins {
     pub typescript_plugin: OverrideToggle,
 
     /// Enable import plugin and detect ESM problems.
-    /// It is recommended to use alongside the `--tsconfig` option.
+    /// It should be used with the `--tsconfig` flag if your project has a
+    /// tsconfig with a name other than `tsconfig.json`.
     #[bpaf(flag(OverrideToggle::Enable, OverrideToggle::NotSet), hide_usage)]
     pub import_plugin: OverrideToggle,
 
@@ -316,10 +317,6 @@ pub struct EnablePlugins {
     /// Enable the node plugin and detect node usage problems
     #[bpaf(flag(OverrideToggle::Enable, OverrideToggle::NotSet), hide_usage)]
     pub node_plugin: OverrideToggle,
-
-    /// Enable the regex plugin and detect regex usage problems
-    #[bpaf(flag(OverrideToggle::Enable, OverrideToggle::NotSet), hide_usage)]
-    pub regex_plugin: OverrideToggle,
 
     /// Enable the vue plugin and detect vue usage problems
     #[bpaf(flag(OverrideToggle::Enable, OverrideToggle::NotSet), hide_usage)]
@@ -398,7 +395,6 @@ impl EnablePlugins {
         self.react_perf_plugin.inspect(|yes| plugins.set(LintPlugins::REACT_PERF, yes));
         self.promise_plugin.inspect(|yes| plugins.set(LintPlugins::PROMISE, yes));
         self.node_plugin.inspect(|yes| plugins.set(LintPlugins::NODE, yes));
-        self.regex_plugin.inspect(|yes| plugins.set(LintPlugins::REGEX, yes));
         self.vue_plugin.inspect(|yes| plugins.set(LintPlugins::VUE, yes));
 
         // Without this, jest plugins adapted to vitest will not be enabled.

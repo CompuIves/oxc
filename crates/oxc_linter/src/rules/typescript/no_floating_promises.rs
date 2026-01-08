@@ -7,7 +7,7 @@ use crate::{
     utils::TypeOrValueSpecifier,
 };
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, Deserialize)]
 pub struct NoFloatingPromises(Box<NoFloatingPromisesConfig>);
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -111,12 +111,10 @@ declare_oxc_lint!(
 );
 
 impl Rule for NoFloatingPromises {
-    fn from_configuration(value: serde_json::Value) -> Self {
-        Self(Box::new(
-            serde_json::from_value::<DefaultRuleConfig<NoFloatingPromisesConfig>>(value)
-                .unwrap_or_default()
-                .into_inner(),
-        ))
+    fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
+        Ok(serde_json::from_value::<DefaultRuleConfig<Self>>(value)
+            .unwrap_or_default()
+            .into_inner())
     }
 
     fn to_configuration(&self) -> Option<Result<serde_json::Value, serde_json::Error>> {
@@ -150,7 +148,7 @@ mod tests {
             "ignoreVoid": false
         }]);
 
-        let rule = NoFloatingPromises::from_configuration(config_value);
+        let rule = NoFloatingPromises::from_configuration(config_value).unwrap();
 
         assert!(rule.0.check_thenables);
         assert!(!rule.0.ignore_void);
@@ -167,7 +165,7 @@ mod tests {
             "ignoreVoid": false
         }]);
 
-        let rule = NoFloatingPromises::from_configuration(original_config);
+        let rule = NoFloatingPromises::from_configuration(original_config).unwrap();
         let serialized = rule.to_configuration().unwrap().unwrap();
 
         // Verify all fields are present in serialized output
@@ -198,7 +196,7 @@ mod tests {
             "ignoreVoid": true
         }]);
 
-        let rule = NoFloatingPromises::from_configuration(config_value);
+        let rule = NoFloatingPromises::from_configuration(config_value).unwrap();
 
         assert_eq!(rule.0.allow_for_known_safe_calls.len(), 5);
         assert!(!rule.0.check_thenables);

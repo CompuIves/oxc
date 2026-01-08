@@ -4,6 +4,36 @@ All notable changes to this package will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0).
 
+## [0.106.0] - 2025-12-29
+
+### 📚 Documentation
+
+- 1005c0a ast: Fix docs for AssignmentPattern in BindingPattern enum (#17309) (camc314)
+
+## [0.105.0] - 2025-12-22
+
+### 🐛 Bug Fixes
+
+- e08fdf1 linter/plugins: Include hashbang in comments (#17231) (overlookmotel)
+
+## [0.103.0] - 2025-12-15
+
+### 💥 BREAKING CHANGES
+
+- 320c09f ast, parser, linter, codegen, formatter: [**BREAKING**] Rename `CommentKind::Block` to `CommentKind::SinglelineBlock` (#16501) (Dunqing)
+
+### 🚀 Features
+
+- d221921 semantic: ScopeFlags::With (#16291) (Aapo Alasuutari)
+- 30a9076 ast, parser, codegen: Add `CommentKind::MultilineBlock` (#16479) (Dunqing)
+
+## [0.102.0] - 2025-12-08
+
+### 🚀 Features
+
+- 8c10694 semantic: Expose get_comment_at method (#16439) (camc314)
+- 3981e7a ast: Add get_comment_at to lookup a comment by span (#16438) (camc314)
+
 ## [0.100.0] - 2025-12-01
 
 ### 💥 BREAKING CHANGES

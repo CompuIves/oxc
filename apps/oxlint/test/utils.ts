@@ -3,7 +3,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join as pathJoin, sep as pathSep } from "node:path";
 
 import { execa } from "execa";
-import { expect } from "vitest";
+import { expect as defaultExpect, type ExpectStatic } from "vitest";
 
 // Replace backslashes with forward slashes on Windows. Do nothing on Mac/Linux.
 const normalizeSlashes =
@@ -28,10 +28,17 @@ export interface Fixture {
     eslint: boolean;
     // Run Oxlint with fixes. Default: `false`.
     fix: boolean;
+    // Run Oxlint single-threaded. Default: `false`.
+    singleThread: boolean;
   };
 }
 
-const DEFAULT_OPTIONS: Fixture["options"] = { oxlint: true, eslint: false, fix: false };
+const DEFAULT_OPTIONS: Fixture["options"] = {
+  oxlint: true,
+  eslint: false,
+  fix: false,
+  singleThread: false,
+};
 
 /**
  * Get all fixtures in `test/fixtures`, and their options.
@@ -57,16 +64,18 @@ export function getFixtures(): Fixture[] {
       options = DEFAULT_OPTIONS;
     }
 
-    if (typeof options !== "object" || options === null)
+    if (typeof options !== "object" || options === null) {
       throw new TypeError("`options.json` must be an object");
+    }
     options = { ...DEFAULT_OPTIONS, ...options };
     if (
       typeof options.oxlint !== "boolean" ||
       typeof options.eslint !== "boolean" ||
-      typeof options.fix !== "boolean"
+      typeof options.fix !== "boolean" ||
+      typeof options.singleThread !== "boolean"
     ) {
       throw new TypeError(
-        "`oxlint`, `eslint`, and `fix` properties in `options.json` must be booleans",
+        "`oxlint`, `eslint`, `fix`, and `singleThread` properties in `options.json` must be booleans",
       );
     }
 
@@ -88,6 +97,8 @@ interface TestFixtureOptions {
   snapshotName: string;
   // `true` if the command is ESLint
   isESLint: boolean;
+  // Vitest expect function (required for concurrent tests)
+  expect?: ExpectStatic;
 }
 
 /**
@@ -95,6 +106,7 @@ interface TestFixtureOptions {
  * @param options - Options for running the test
  */
 export async function testFixtureWithCommand(options: TestFixtureOptions): Promise<void> {
+  const { expect = defaultExpect } = options;
   const { name: fixtureName, dirPath } = options.fixture,
     pathPrefixLen = dirPath.length + 1;
 
@@ -151,7 +163,6 @@ export async function testFixtureWithCommand(options: TestFixtureOptions): Promi
     }
   }
 
-  // Assert snapshot is as expected
   await expect(snapshot).toMatchFileSnapshot(snapshotPath);
 }
 
@@ -159,7 +170,7 @@ export async function testFixtureWithCommand(options: TestFixtureOptions): Promi
 // Matches `/path/to/oxc`, `/path/to/oxc/`, `/path/to/oxc/whatever`,
 // when preceded by whitespace, `(`, or a quote, and followed by whitespace, `)`, or a quote.
 const PATH_REGEXP = new RegExp(
-  // @ts-expect-error `RegExp.escape` is new in NodeJS v24
+  // @ts-expect-error - `RegExp.escape` is new in NodeJS v24
   `(?<=^|[\\s\\('"\`])${RegExp.escape(REPO_ROOT_PATH)}(${RegExp.escape(pathSep)}[^\\s\\)'"\`]*)?(?=$|[\\s\\)'"\`])`,
   "g",
 );
@@ -191,19 +202,27 @@ function normalizeStdout(stdout: string, fixtureName: string, isESLint: boolean)
 
   let lines = stdout.split("\n");
 
-  // Remove timing and thread count info which can vary between runs
+  // Remove timing and thread count info which can vary between runs.
+  //
+  // Examples, all need to be handled:
+  // `Finished in 123ms on 4 files with 10 rules using 2 threads.`
+  // `Finished in 1.23s on 1 file using 8 threads.`
+  // `Finished in 456us on 2 files with 5 rules using 4 threads.`
   lines[lines.length - 1] = lines[lines.length - 1].replace(
-    /^Finished in \d+(?:\.\d+)?(?:s|ms|us|ns) on (\d+) file(s?) using \d+ threads.$/,
-    "Finished in Xms on $1 file$2 using X threads.",
+    /^Finished in \d+(?:\.\d+)?(?:s|ms|us|ns) on (\d+) file(s?) (?:with (\d+) rule(?:s?) )?using \d+ threads.$/,
+    (_match, filesCount, filePlural, rulesCount) =>
+      `Finished in Xms on ${filesCount} file${filePlural}${rulesCount ? ` with ${rulesCount} rules` : ""} using X threads.`,
   );
 
   // Remove lines from stack traces which are outside `fixtures` directory.
   // Shorten paths in output with `<root>`, `<fixtures>`, or `<fixture>`.
   lines = lines.flatMap((line) => {
     // Handle stack trace lines.
+    // e.g. ` at file:///path/to/oxc/apps/oxlint/test/fixtures/foo/bar.js:1:1`
+    // e.g. ` at whatever (file:///path/to/oxc/apps/oxlint/test/fixtures/foo/bar.js:1:1)`
     // e.g. ` | at file:///path/to/oxc/apps/oxlint/test/fixtures/foo/bar.js:1:1`
     // e.g. ` | at whatever (file:///path/to/oxc/apps/oxlint/test/fixtures/foo/bar.js:1:1)`
-    const match = line.match(/^(\s*\|\s+at (?:.+?\()?)(.+)$/);
+    const match = line.match(/^(\s*\|?\s+at (?:.+?\()?)(.+)$/);
     if (match) {
       let [, preamble, at] = match;
       if (!at.startsWith(FIXTURES_URL)) return [];

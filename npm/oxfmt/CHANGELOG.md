@@ -4,6 +4,49 @@ All notable changes to this package will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0).
 
+## [0.22.0] - 2026-01-05
+
+### 💥 BREAKING CHANGES
+
+- f7da875 oxlint: [**BREAKING**] Remove oxc_language_server binary (#17457) (Boshen)
+
+### 🚀 Features
+
+- 8fd4ea9 oxfmt: `options.embeddedLanguageFormatting` is now `"auto"` by default (#17649) (leaysgur)
+
+## [0.21.0] - 2025-12-29
+
+### 🐛 Bug Fixes
+
+- 0a39cba oxfmt: Update wrong doc comment (#17288) (leaysgur)
+
+## [0.20.0] - 2025-12-22
+
+### 🚀 Features
+
+- 97a02d1 oxfmt: Add `insertFinalNewline` option (#17251) (leaysgur)
+
+## [0.18.0] - 2025-12-15
+
+### 🚀 Features
+
+- afd6c44 oxfmt: Support `quoteProps: consistent` in `Oxfmtrc` (#16721) (leaysgur)
+- 28e0682 oxfmt: Enable experimental `package.json` sorting by default (#16593) (leaysgur)
+
+### ⚡ Performance
+
+- 6f3aaba oxfmt: Use `worker_threads` by `tinypool` for prettier formatting (#16618) (leaysgur)
+
+### 📚 Documentation
+
+- 8babdf9 oxfmt: Improve docs for `.oxfmtrc.jsonc` config fields and add markdownDescription fields to JSON Schema (#16587) (connorshea)
+
+## [0.17.0] - 2025-12-08
+
+### 🚀 Features
+
+- 7374856 formatter/sort-imports: Support `options.internalPattern` (#16372) (leaysgur)
+
 ## [0.16.0] - 2025-12-01
 
 ### 🐛 Bug Fixes

@@ -1,7 +1,7 @@
 use oxc_ast::{
     AstKind,
     ast::{
-        Argument, AssignmentTarget, BindingPatternKind, CallExpression, Expression,
+        Argument, AssignmentTarget, BindingPattern, CallExpression, Expression,
         SimpleAssignmentTarget, UnaryOperator,
     },
 };
@@ -15,8 +15,8 @@ use crate::{
 };
 
 fn prefer_array_find_diagnostic(span: Span) -> OxcDiagnostic {
-    OxcDiagnostic::warn("Prefer 'find' over filtering and accessing the first result")
-        .with_help("Use 'find(predicate)' instead of 'filter(predicate)[0]' or similar patterns")
+    OxcDiagnostic::warn("Prefer `find` over filtering and accessing the first result.")
+        .with_help("Use `find(predicate)` instead of `filter(predicate)[0]` or similar patterns.")
         .with_label(span)
 }
 
@@ -126,7 +126,7 @@ impl Rule for PreferArrayFind {
             }
             AstKind::VariableDeclarator(var_decl) => {
                 // `const [foo] = array.filter()`
-                if let BindingPatternKind::ArrayPattern(array_pat) = &var_decl.id.kind
+                if let BindingPattern::ArrayPattern(array_pat) = &var_decl.id
                     && array_pat.elements.len() == 1
                     && array_pat.elements[0].is_some()
                     && let Some(Expression::CallExpression(array_filter)) = &var_decl.init
@@ -147,7 +147,7 @@ impl Rule for PreferArrayFind {
                                 | AstKind::ExportNamedDeclaration(_)
                         )
                     )
-                    && let Some(ident) = var_decl.id.kind.get_binding_identifier()
+                    && let Some(ident) = var_decl.id.get_binding_identifier()
                 {
                     let mut zero_index_nodes = Vec::new();
                     let mut destructuring_nodes = Vec::new();
@@ -160,8 +160,7 @@ impl Rule for PreferArrayFind {
                                 zero_index_nodes.push(reference);
                             }
                             AstKind::VariableDeclarator(var_declarator) => {
-                                if let BindingPatternKind::ArrayPattern(array_pat) =
-                                    &var_declarator.id.kind
+                                if let BindingPattern::ArrayPattern(array_pat) = &var_declarator.id
                                     && array_pat.elements.len() == 1
                                     && array_pat.elements[0].is_some()
                                 {
@@ -358,12 +357,14 @@ fn test() {
         "let items = array.filter(bar); console.log(items[0]); items = [1,2,3]; console.log(items[0]);",
         "array.filter(foo).pop",
         "pop(array.filter(foo))",
+        // r#"array.filter(foo)["pop"]()"#,
         "array.filter(foo)[pop]()",
         "array.filter(foo).notPop()",
         "array.filter(foo).pop(extraArgument)",
         "array.filter(foo).pop(...[])",
         "array.filter.pop()",
         "filter(foo).pop()",
+        // r#"array["filter"](foo).pop()"#,
         "array[filter](foo).pop()",
         "array.notFilter(foo).pop()",
         "array.filter().pop()",
@@ -371,6 +372,7 @@ fn test() {
         "array.filter(...foo).pop()",
         "array.filter(foo).at",
         "at(array.filter(foo), -1)",
+        // r#"array.filter(foo)["at"](-1)"#,
         "array.filter(foo)[at](-1)",
         "array.filter(foo).notAt(-1)",
         "array.filter(foo).at()",
@@ -392,6 +394,7 @@ fn test() {
         "array.filter(foo).at(-true)",
         "array.filter.at(-1)",
         "filter(foo).at(-1)",
+        // r#"array["filter"](foo).at(-1)"#,
         "array[filter](foo).at(-1)",
         "array.notFilter(foo).at(-1)",
         "array.filter().at(-1)",
@@ -399,6 +402,7 @@ fn test() {
         "array.filter(...foo).at(-1)",
         "array2.filter(foo).at",
         "at(array.filter(foo), 0)",
+        // r#"array.filter(foo)["at"](0)"#,
         "array.filter(foo)[at](0)",
         "array.filter(foo).notAt(0)",
         "array2.filter(foo).at()",
@@ -423,9 +427,13 @@ fn test() {
 
     let fail = vec![
         "array.filter(foo)[0]",
+        "array?.filter(foo)[0]",
         "array.filter(foo, thisArgument)[0]",
+        "array?.filter(foo, thisArgument)[0]",
         "array.filter(foo).shift()",
+        "array?.filter(foo).shift()",
         "array.filter(foo, thisArgument).shift()",
+        "array?.filter(foo, thisArgument).shift()",
         "const item = array
 				// comment 1
 				.filter(
@@ -586,7 +594,9 @@ fn test() {
 				// comment 6
 				;",
         "array.filter(foo).at(0)",
+        "array?.filter(foo).at(0)",
         "array.filter(foo, thisArgument).at(0)",
+        "array?.filter(foo, thisArgument).at(0)",
         "const item = array
 				// comment 1
 				.filter(
@@ -606,11 +616,16 @@ fn test() {
         "array.filter(foo)?.pop()",
     ];
 
+    // TODO: Implement autofix and use these tests.
     let _fix: Vec<(&'static str, &'static str, Option<serde_json::Value>)> = vec![
         ("array.filter(foo)[0]", "array.find(foo)", None),
+        ("array?.filter(foo)[0]", "array?.find(foo)", None),
         ("array.filter(foo, thisArgument)[0]", "array.find(foo, thisArgument)", None),
+        ("array?.filter(foo, thisArgument)[0]", "array?.find(foo, thisArgument)", None),
         ("array.filter(foo).shift()", "array.find(foo)", None),
+        ("array?.filter(foo).shift()", "array?.find(foo)", None),
         ("array.filter(foo, thisArgument).shift()", "array.find(foo, thisArgument)", None),
+        ("array?.filter(foo, thisArgument).shift()", "array?.find(foo, thisArgument)", None),
         (
             "const item = array
 				// comment 1
@@ -957,7 +972,9 @@ fn test() {
             None,
         ),
         ("array.filter(foo).at(0)", "array.find(foo)", None),
+        ("array?.filter(foo).at(0)", "array?.find(foo)", None),
         ("array.filter(foo, thisArgument).at(0)", "array.find(foo, thisArgument)", None),
+        ("array?.filter(foo, thisArgument).at(0)", "array?.find(foo, thisArgument)", None),
         (
             "const item = array
 				// comment 1

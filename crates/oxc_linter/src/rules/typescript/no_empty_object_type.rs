@@ -10,7 +10,7 @@ use oxc_macros::declare_oxc_lint;
 use oxc_semantic::NodeId;
 use oxc_span::Span;
 use schemars::JsonSchema;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::{AstNode, context::LintContext, rule::Rule};
 
@@ -69,7 +69,7 @@ pub struct NoEmptyObjectTypeConfig {
     allow_with_name: Option<Regex>,
 }
 
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Deserialize, JsonSchema)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 enum AllowInterfaces {
     #[default]
@@ -88,7 +88,7 @@ impl From<&str> for AllowInterfaces {
     }
 }
 
-#[derive(Debug, Default, Clone, Copy, Deserialize, JsonSchema)]
+#[derive(Debug, Default, Clone, Copy, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 enum AllowObjectTypes {
     #[default]
@@ -163,7 +163,7 @@ declare_oxc_lint!(
 );
 
 impl Rule for NoEmptyObjectType {
-    fn from_configuration(value: serde_json::Value) -> Self {
+    fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
         let (allow_interfaces, allow_object_types, allow_with_name) = value.get(0).map_or(
             (AllowInterfaces::Never, AllowObjectTypes::Never, None),
             |config| {
@@ -185,11 +185,11 @@ impl Rule for NoEmptyObjectType {
                 )
             },
         );
-        Self(Box::new(NoEmptyObjectTypeConfig {
+        Ok(Self(Box::new(NoEmptyObjectTypeConfig {
             allow_interfaces,
             allow_object_types,
             allow_with_name,
-        }))
+        })))
     }
 
     fn run<'a>(&self, node: &AstNode<'a>, ctx: &LintContext<'a>) {

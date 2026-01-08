@@ -7,7 +7,8 @@
   | sourceType: script
   | ecmaVersion: 2026
   | parserOptions: {"sourceType":"script"}
-  | globals: null
+  | globals: {}
+  | env: {"builtin":true}
    ,-[files/index.cjs:1:1]
  1 | let x;
    : ^
@@ -634,7 +635,7 @@
   |     "moduleReference"
   |   ],
   |   "TSImportType": [
-  |     "argument",
+  |     "source",
   |     "options",
   |     "qualifier",
   |     "typeArguments"
@@ -794,7 +795,8 @@
   | sourceType: module
   | ecmaVersion: 2026
   | parserOptions: {"sourceType":"module"}
-  | globals: null
+  | globals: {}
+  | env: {"builtin":true}
    ,-[files/index.js:1:1]
  1 | let x;
    : ^
@@ -804,14 +806,15 @@
   | sourceType: module
   | ecmaVersion: 2026
   | parserOptions: {"sourceType":"module"}
-  | globals: null
+  | globals: {}
+  | env: {"builtin":true}
    ,-[files/index.mjs:1:1]
  1 | let x;
    : ^
    `----
 
 Found 0 warnings and 4 errors.
-Finished in Xms on 3 files using X threads.
+Finished in Xms on 3 files with 1 rules using X threads.
 ```
 
 # stderr

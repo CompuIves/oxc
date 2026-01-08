@@ -96,18 +96,14 @@ impl Rule for ConsistentGenericConstructors {
     fn run<'a>(&self, node: &AstNode<'a>, ctx: &LintContext<'a>) {
         match node.kind() {
             AstKind::VariableDeclarator(variable_declarator) => {
-                let type_ann = variable_declarator.id.type_annotation.as_ref();
+                let type_ann = variable_declarator.type_annotation.as_ref();
                 let init = variable_declarator.init.as_ref();
                 self.check(type_ann, init, ctx);
             }
-            AstKind::AssignmentPattern(assignment_pattern) => {
-                if !matches!(ctx.nodes().parent_kind(node.id()), AstKind::FormalParameter(_)) {
-                    return;
-                }
-
-                let type_ann = assignment_pattern.left.type_annotation.as_ref();
-                let init = &assignment_pattern.right;
-                self.check(type_ann, Some(init), ctx);
+            AstKind::FormalParameter(formal_parameter) => {
+                let type_ann = formal_parameter.type_annotation.as_ref();
+                let init = formal_parameter.initializer.as_deref();
+                self.check(type_ann, init, ctx);
             }
             AstKind::PropertyDefinition(property_definition) => {
                 let type_ann = property_definition.type_annotation.as_ref();
@@ -118,14 +114,14 @@ impl Rule for ConsistentGenericConstructors {
         }
     }
 
-    fn from_configuration(value: serde_json::Value) -> Self {
-        Self(Box::new(ConsistentGenericConstructorsConfig {
+    fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
+        Ok(Self(Box::new(ConsistentGenericConstructorsConfig {
             option: value
                 .get(0)
                 .and_then(|v| v.as_str())
                 .and_then(|s| PreferGenericType::try_from(s).ok())
                 .unwrap_or_default(),
-        }))
+        })))
     }
 
     fn should_run(&self, ctx: &crate::rules::ContextHost) -> bool {

@@ -1,6 +1,6 @@
 use oxc_ast::{
     AstKind,
-    ast::{BindingPatternKind, Expression, MethodDefinitionKind},
+    ast::{BindingPattern, Expression, MethodDefinitionKind},
 };
 use oxc_diagnostics::OxcDiagnostic;
 use oxc_macros::declare_oxc_lint;
@@ -98,10 +98,10 @@ declare_oxc_lint!(
 );
 
 impl Rule for RequireReturns {
-    fn from_configuration(value: serde_json::Value) -> Self {
-        serde_json::from_value::<DefaultRuleConfig<RequireReturns>>(value)
+    fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
+        Ok(serde_json::from_value::<DefaultRuleConfig<Self>>(value)
             .unwrap_or_default()
-            .into_inner()
+            .into_inner())
     }
 
     fn run_once(&self, ctx: &LintContext) {
@@ -268,8 +268,8 @@ fn is_promise_resolve_with_value(expr: &Expression, ctx: &LintContext) -> Option
                 _ => None,
             })
             // Retrieve symbol_id of resolver, `new Promise((HERE, ...) => {})`
-            .and_then(|first_param| match &first_param.pattern.kind {
-                BindingPatternKind::BindingIdentifier(ident) => Some(ident),
+            .and_then(|first_param| match &first_param.pattern {
+                BindingPattern::BindingIdentifier(ident) => Some(ident),
                 _ => None,
             })
             .and_then(|ident| {

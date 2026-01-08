@@ -1,8 +1,8 @@
-commit: 79586034
+commit: 761c2509
 
-node: v24.10.0
+node: v24.12.0
 
-Passed: 324 of 414 (78.26%)
+Passed: 324 of 412 (78.64%)
 
 Failures:
 
@@ -50,8 +50,8 @@ TypeError: e.has is not a function
 
 ./fixtures/babel/babel-plugin-transform-class-properties-test-fixtures-public-computed-toPrimitive-exec.test.js
 AssertionError: expected [Function] to throw error including '@@toPrimitive must return a primitive…' but got 'Cannot convert object to primitive va…'
-    at Proxy.<anonymous> (./node_modules/.pnpm/@vitest+expect@4.0.10/node_modules/@vitest/expect/dist/index.js:1485:16)
-    at Proxy.<anonymous> (./node_modules/.pnpm/@vitest+expect@4.0.10/node_modules/@vitest/expect/dist/index.js:1090:14)
+    at Proxy.<anonymous> (./node_modules/.pnpm/@vitest+expect@4.0.15/node_modules/@vitest/expect/dist/index.js:1485:16)
+    at Proxy.<anonymous> (./node_modules/.pnpm/@vitest+expect@4.0.15/node_modules/@vitest/expect/dist/index.js:1090:14)
     at Proxy.methodWrapper (./node_modules/.pnpm/chai@6.2.1/node_modules/chai/index.js:1700:25)
     at ./tasks/transform_conformance/fixtures/babel/babel-plugin-transform-class-properties-test-fixtures-public-computed-toPrimitive-exec.test.js:37:5
 
@@ -431,8 +431,8 @@ ReferenceError: _Foo_brand is not defined
 
 ./fixtures/babel/babel-plugin-transform-private-property-in-object-test-fixtures-private-loose-rhs-not-object-exec.test.js
 AssertionError: expected [Function] to throw error including 'right-hand side of \'in\' should be a…' but got '_Class_brand is not defined'
-    at Proxy.<anonymous> (./node_modules/.pnpm/@vitest+expect@4.0.10/node_modules/@vitest/expect/dist/index.js:1485:16)
-    at Proxy.<anonymous> (./node_modules/.pnpm/@vitest+expect@4.0.10/node_modules/@vitest/expect/dist/index.js:1090:14)
+    at Proxy.<anonymous> (./node_modules/.pnpm/@vitest+expect@4.0.15/node_modules/@vitest/expect/dist/index.js:1485:16)
+    at Proxy.<anonymous> (./node_modules/.pnpm/@vitest+expect@4.0.15/node_modules/@vitest/expect/dist/index.js:1090:14)
     at Proxy.methodWrapper (./node_modules/.pnpm/chai@6.2.1/node_modules/chai/index.js:1700:25)
     at ./tasks/transform_conformance/fixtures/babel/babel-plugin-transform-private-property-in-object-test-fixtures-private-loose-rhs-not-object-exec.test.js:176:5
 
@@ -452,18 +452,10 @@ AssertionError: expected true to be false // Object.is equality
 AssertionError: expected 2 to be 5 // Object.is equality
     at ./tasks/transform_conformance/fixtures/babel/babel-plugin-transform-private-property-in-object-test-fixtures-to-native-fields-static-shadow-exec.test.js:18:25
 
-./fixtures/babel/babel-plugin-transform-react-jsx-source-test-fixtures-react-source-basic-sample-exec.test.js
-ReferenceError: transformAsync is not defined
-    at ./tasks/transform_conformance/fixtures/babel/babel-plugin-transform-react-jsx-source-test-fixtures-react-source-basic-sample-exec.test.js:4:16
-
-./fixtures/babel/babel-plugin-transform-react-jsx-source-test-fixtures-react-source-with-source-exec.test.js
-ReferenceError: transformAsync is not defined
-    at ./tasks/transform_conformance/fixtures/babel/babel-plugin-transform-react-jsx-source-test-fixtures-react-source-with-source-exec.test.js:4:16
-
 ./fixtures/babel/babel-preset-env-test-fixtures-plugins-integration-issue-15170-exec.test.js
 AssertionError: expected [Function] to not throw an error but 'ReferenceError: x is not defined' was thrown
-    at Proxy.<anonymous> (./node_modules/.pnpm/@vitest+expect@4.0.10/node_modules/@vitest/expect/dist/index.js:1485:16)
-    at Proxy.<anonymous> (./node_modules/.pnpm/@vitest+expect@4.0.10/node_modules/@vitest/expect/dist/index.js:1090:14)
+    at Proxy.<anonymous> (./node_modules/.pnpm/@vitest+expect@4.0.15/node_modules/@vitest/expect/dist/index.js:1485:16)
+    at Proxy.<anonymous> (./node_modules/.pnpm/@vitest+expect@4.0.15/node_modules/@vitest/expect/dist/index.js:1090:14)
     at Proxy.methodWrapper (./node_modules/.pnpm/chai@6.2.1/node_modules/chai/index.js:1700:25)
     at ./tasks/transform_conformance/fixtures/babel/babel-preset-env-test-fixtures-plugins-integration-issue-15170-exec.test.js:6:9
 

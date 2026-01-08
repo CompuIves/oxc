@@ -52,7 +52,7 @@ impl<'a> FormatWrite<'a> for AstNode<'a, TSUnionType<'a>> {
             union_type_at_top = parent;
         }
 
-        let should_indent = !has_leading_comments && {
+        let should_indent = {
             let parent = union_type_at_top.parent;
 
             // These parents have indent for their content, so we don't need to indent here
@@ -61,7 +61,7 @@ impl<'a> FormatWrite<'a> for AstNode<'a, TSUnionType<'a>> {
                     !f.comments().printed_comments().last().is_some_and(|comment| {
                         comment.span.start
                             > alias.type_parameters().map_or(alias.id.span.end, |tp| tp.span.end)
-                            && f.comments().is_end_of_line_comment(comment)
+                            && comment.followed_by_newline()
                     })
                 }
                 AstNodes::TSTypeAssertion(_)
@@ -120,26 +120,23 @@ impl<'a> FormatWrite<'a> for AstNode<'a, TSUnionType<'a>> {
                         if_group_breaks(&token(")"))
                     ]
                 );
-            } else if should_indent {
-                write!(f, [indent(&types)]);
             } else {
                 write!(f, [types]);
             }
         });
 
-        if has_leading_comments {
+        let format_inner_content = format_with(|f| {
             let only_type = union_type_at_top.types.len() == 1;
             let (has_own_line_comment, has_end_of_line_comment) =
                 leading_comments.iter().fold((false, false), |(own_line, end_of_line), comment| {
                     (
-                        own_line || f.comments().is_own_line_comment(comment),
-                        end_of_line || f.comments().is_end_of_line_comment(comment),
+                        own_line || comment.preceded_by_newline(),
+                        end_of_line || comment.followed_by_newline(),
                     )
                 });
-
             write!(
                 f,
-                [group(&indent(&format_args!(
+                [
                     ((has_own_line_comment && !only_type)
                         || (has_end_of_line_comment && only_type))
                         .then(soft_line_break),
@@ -147,10 +144,14 @@ impl<'a> FormatWrite<'a> for AstNode<'a, TSUnionType<'a>> {
                     (!has_end_of_line_comment && has_own_line_comment && only_type)
                         .then(soft_line_break),
                     group(&content)
-                )))]
+                ]
             );
+        });
+
+        if should_indent && !self.needs_parentheses(f) {
+            write!(f, [group(&indent(&format_inner_content))]);
         } else {
-            write!(f, [group(&content)]);
+            write!(f, [group(&format_inner_content)]);
         }
     }
 }

@@ -22,7 +22,7 @@ fn no_absolute_path_diagnostic(span: Span) -> OxcDiagnostic {
     OxcDiagnostic::warn("Do not import modules using an absolute path").with_label(span)
 }
 
-/// <https://github.com/import-js/eslint-plugin-import/blob/v2.31.0/docs/rules/no-absolute-path.md>
+// <https://github.com/import-js/eslint-plugin-import/blob/v2.31.0/docs/rules/no-absolute-path.md>
 #[derive(Debug, Clone, JsonSchema, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct NoAbsolutePath {
@@ -107,10 +107,10 @@ declare_oxc_lint!(
 );
 
 impl Rule for NoAbsolutePath {
-    fn from_configuration(value: Value) -> Self {
-        serde_json::from_value::<DefaultRuleConfig<NoAbsolutePath>>(value)
+    fn from_configuration(value: Value) -> Result<Self, serde_json::error::Error> {
+        Ok(serde_json::from_value::<DefaultRuleConfig<Self>>(value)
             .unwrap_or_default()
-            .into_inner()
+            .into_inner())
     }
 
     fn run<'a>(&self, node: &AstNode<'a>, ctx: &LintContext<'a>) {

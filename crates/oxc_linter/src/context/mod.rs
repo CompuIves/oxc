@@ -148,6 +148,18 @@ impl<'a> LintContext<'a> {
             .map(|(a, _)| a as u32)
     }
 
+    /// Finds the previous occurrence of the given token in the source code,
+    /// starting from the specified position, skipping over comments.
+    #[expect(clippy::cast_possible_truncation)]
+    pub fn find_prev_token_from(&self, start: u32, token: &str) -> Option<u32> {
+        let source = self.source_range(Span::from(0..start));
+
+        source
+            .rmatch_indices(token)
+            .find(|(a, _)| !self.is_inside_comment(*a as u32))
+            .map(|(a, _)| a as u32)
+    }
+
     /// Finds the next occurrence of the given token within a bounded span,
     /// starting from the specified position, skipping over comments.
     ///
@@ -434,6 +446,47 @@ impl<'a> LintContext<'a> {
         }
     }
 
+    /// Report a lint rule violation and provide multiple suggestions for fixing it.
+    ///
+    /// The second argument is an iterator of [`RuleFix`] values representing
+    /// the available suggestions.
+    ///
+    /// Use this when a rule violation can be fixed in multiple ways and the user
+    /// should choose which fix to apply.
+    pub fn diagnostic_with_suggestions<I>(&self, diagnostic: OxcDiagnostic, suggestions: I)
+    where
+        I: IntoIterator<Item = RuleFix>,
+    {
+        let fixes_result: Vec<Fix> = suggestions
+            .into_iter()
+            .filter_map(|rule_fix| {
+                #[cfg(debug_assertions)]
+                debug_assert!(
+                    self.current_rule_fix_capabilities.supports_fix(rule_fix.kind()),
+                    "Rule `{}` does not support this fix kind. Did you forget to update fix capabilities in declare_oxc_lint?.\n\tSupported fix kinds: {:?}\n\tAttempted fix kind: {:?}",
+                    self.current_rule_name,
+                    FixKind::from(self.current_rule_fix_capabilities),
+                    rule_fix.kind()
+                );
+
+                if self.parent.fix.can_apply(rule_fix.kind()) && !rule_fix.is_empty() {
+                    Some(rule_fix.into_fix(self.source_text()))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        if fixes_result.is_empty() {
+            self.diagnostic(diagnostic);
+        } else {
+            self.add_diagnostic(
+                Message::new(diagnostic, PossibleFixes::Multiple(fixes_result))
+                    .with_section_offset(self.parent.current_sub_host().source_text_offset),
+            );
+        }
+    }
+
     fn create_fix<C, F>(
         &self,
         fix_kind: FixKind,
@@ -521,7 +574,6 @@ fn plugin_name_to_prefix(plugin_name: &'static str) -> &'static str {
         "vitest" => "eslint-plugin-vitest",
         "node" => "eslint-plugin-node",
         "vue" => "eslint-plugin-vue",
-        "regexp" => "eslint-plugin-regexp",
         _ => plugin_name,
     }
 }

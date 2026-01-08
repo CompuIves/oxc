@@ -50,7 +50,7 @@ use crate::{
     ast_nodes::{AstNode, AstNodes},
     best_fitting, format_args,
     formatter::{
-        Buffer, Format, Formatter,
+        Buffer, Format, Formatter, TailwindContextEntry,
         prelude::*,
         separated::FormatSeparatedIter,
         token::number::{NumberFormatOptions, format_number_token},
@@ -69,9 +69,10 @@ use crate::{
         expression::ExpressionLeftSide,
         format_node_without_trailing_comments::FormatNodeWithoutTrailingComments,
         member_chain::MemberChain,
-        object::format_property_key,
+        object::{format_property_key, should_preserve_quote},
         statement_body::FormatStatementBody,
         string::{FormatLiteralStringToken, StringLiteralParentKind},
+        tailwindcss::{is_tailwind_function_call, write_tailwind_string_literal},
     },
     write,
     write::parameters::can_avoid_parentheses,
@@ -80,6 +81,7 @@ use crate::{
 use self::{
     array_expression::FormatArrayExpression,
     arrow_function_expression::is_multiline_template_starting_on_same_line,
+    block_statement::is_empty_block,
     call_arguments::is_simple_module_import,
     class::format_grouped_parameters_with_return_type_for_method,
     object_like::ObjectLike,
@@ -98,7 +100,23 @@ pub trait FormatWrite<'ast, T = ()> {
 
 impl<'a> FormatWrite<'a> for AstNode<'a, IdentifierName<'a>> {
     fn write(&self, f: &mut Formatter<'_, 'a>) {
-        write!(f, text_without_whitespace(self.name().as_str()));
+        let text = text_without_whitespace(self.name().as_str());
+        let is_property_key_parent = matches!(
+            self.parent,
+            AstNodes::ObjectProperty(_)
+                | AstNodes::TSPropertySignature(_)
+                | AstNodes::TSMethodSignature(_)
+                | AstNodes::MethodDefinition(_)
+                | AstNodes::PropertyDefinition(_)
+                | AstNodes::AccessorProperty(_)
+                | AstNodes::ImportAttribute(_)
+        );
+        if is_property_key_parent && f.context().is_quote_needed() {
+            let quote_str = f.options().quote_style.as_str();
+            write!(f, [quote_str, text, quote_str]);
+        } else {
+            write!(f, text);
+        }
     }
 }
 
@@ -138,7 +156,18 @@ impl<'a> FormatWrite<'a> for AstNode<'a, Elision> {
 
 impl<'a> FormatWrite<'a> for AstNode<'a, ObjectExpression<'a>> {
     fn write(&self, f: &mut Formatter<'_, 'a>) {
+        if f.options().quote_properties.is_consistent() {
+            let quote_needed = self.properties.iter().any(|kind| {
+                kind.as_property().is_some_and(|property| should_preserve_quote(&property.key, f))
+            });
+            f.context_mut().push_quote_needed(quote_needed);
+        }
+
         ObjectLike::ObjectExpression(self).fmt(f);
+
+        if f.options().quote_properties.is_consistent() {
+            f.context_mut().pop_quote_needed();
+        }
     }
 }
 
@@ -210,6 +239,25 @@ impl<'a> FormatWrite<'a> for AstNode<'a, CallExpression<'a>> {
         let arguments = self.arguments();
         let optional = self.optional();
 
+        // Check if this is a Tailwind function call (e.g., clsx, cn, tw)
+        let is_tailwind_call = f
+            .options()
+            .experimental_tailwindcss
+            .as_ref()
+            .is_some_and(|opts| is_tailwind_function_call(&self.callee, opts));
+
+        // For nested non-Tailwind calls inside a Tailwind context, disable sorting
+        // to prevent sorting strings inside the nested call's arguments.
+        // (e.g., `classNames("a", x.includes("\n") ? "b" : "c")` - don't sort "\n")
+        let was_disabled =
+            if !is_tailwind_call && let Some(ctx) = f.context_mut().tailwind_context_mut() {
+                let was = ctx.disabled;
+                ctx.disabled = true;
+                Some(was)
+            } else {
+                None
+            };
+
         let is_template_literal_single_arg = arguments.len() == 1
             && arguments.first().unwrap().as_expression().is_some_and(|expr| {
                 is_multiline_template_starting_on_same_line(expr, f.source_text())
@@ -220,7 +268,6 @@ impl<'a> FormatWrite<'a> for AstNode<'a, CallExpression<'a>> {
                 callee.as_ref(),
                 Expression::StaticMemberExpression(_) | Expression::ComputedMemberExpression(_)
             )
-            && !callee.needs_parentheses(f)
             && !is_simple_module_import(self.arguments(), f.comments())
             && !is_test_call_expression(self)
         {
@@ -243,13 +290,42 @@ impl<'a> FormatWrite<'a> for AstNode<'a, CallExpression<'a>> {
                         write!(f, FormatTrailingComments::Comments(callee_trailing_comments));
                     }
                 }
-                write!(f, [optional.then_some("?."), type_arguments, arguments]);
+                write!(f, [optional.then_some("?."), type_arguments]);
+
+                // If this IS a Tailwind function call, push the Tailwind context
+                let tailwind_ctx_to_push = if is_tailwind_call {
+                    f.options()
+                        .experimental_tailwindcss
+                        .as_ref()
+                        .map(|opts| TailwindContextEntry::new(false, opts.preserve_whitespace))
+                } else {
+                    None
+                };
+
+                // Push Tailwind context before formatting arguments
+                if let Some(ctx) = tailwind_ctx_to_push {
+                    f.context_mut().push_tailwind_context(ctx);
+                }
+
+                write!(f, arguments);
+
+                // Pop Tailwind context after formatting
+                if tailwind_ctx_to_push.is_some() {
+                    f.context_mut().pop_tailwind_context();
+                }
             });
             if matches!(callee.as_ref(), Expression::CallExpression(_)) {
                 write!(f, [group(&format_inner)]);
             } else {
                 write!(f, [format_inner]);
             }
+        }
+
+        // Restore the previous disabled state
+        if let Some(was) = was_disabled
+            && let Some(ctx) = f.context_mut().tailwind_context_mut()
+        {
+            ctx.disabled = was;
         }
     }
 }
@@ -526,6 +602,7 @@ fn expression_statement_needs_semicolon<'a>(
                     | Expression::TSTypeAssertion(_)
                     | Expression::ArrowFunctionExpression(_)
                     | Expression::JSXElement(_)
+                    | Expression::JSXFragment(_)
                     | Expression::TemplateLiteral(_) => true,
                     Expression::UnaryExpression(unary) => {
                         matches!(
@@ -906,15 +983,17 @@ impl<'a> FormatWrite<'a> for AstNode<'a, DebuggerStatement> {
 
 impl<'a> FormatWrite<'a> for AstNode<'a, BindingPattern<'a>> {
     fn write(&self, f: &mut Formatter<'_, 'a>) {
-        write!(f, self.kind());
-        if self.optional() {
-            write!(f, "?");
-        } else if let AstNodes::VariableDeclarator(declarator) = self.parent {
+        Format::fmt(self, f);
+        if let AstNodes::VariableDeclarator(declarator) = self.parent {
             write!(f, declarator.definite.then_some("!"));
         }
-        if let Some(type_annotation) = &self.type_annotation() {
-            write!(f, type_annotation);
-        }
+    }
+}
+
+impl<'a> FormatWrite<'a> for AstNode<'a, FormalParameterRest<'a>> {
+    fn write(&self, f: &mut Formatter<'_, 'a>) {
+        write!(f, [self.rest()]);
+        write!(f, self.type_annotation());
     }
 }
 
@@ -947,32 +1026,7 @@ impl<'a> FormatWrite<'a> for AstNode<'a, ObjectPattern<'a>> {
 
 impl<'a> FormatWrite<'a> for AstNode<'a, BindingProperty<'a>> {
     fn write(&self, f: &mut Formatter<'_, 'a>) {
-        let group_id = f.group_id("assignment");
-        let format_inner = format_with(|f| {
-            if self.computed() {
-                write!(f, "[");
-            }
-            if !self.shorthand() {
-                write!(f, self.key());
-            }
-            if self.computed() {
-                write!(f, "]");
-            }
-            if self.shorthand() {
-                write!(f, self.value());
-            } else {
-                write!(
-                    f,
-                    [
-                        ":",
-                        group(&indent(&soft_line_break_or_space())).with_group_id(Some(group_id)),
-                        line_suffix_boundary(),
-                        indent_if_group_breaks(&self.value(), group_id)
-                    ]
-                );
-            }
-        });
-        write!(f, group(&format_inner));
+        AssignmentLike::BindingProperty(self).fmt(f);
     }
 }
 
@@ -1021,14 +1075,34 @@ impl<'a> FormatWrite<'a> for AstNode<'a, NumericLiteral<'a>> {
 
 impl<'a> FormatWrite<'a> for AstNode<'a, StringLiteral<'a>> {
     fn write(&self, f: &mut Formatter<'_, 'a>) {
-        let is_jsx = matches!(self.parent, AstNodes::JSXAttribute(_));
-        FormatLiteralStringToken::new(
-            f.source_text().text_for(self),
-            /* jsx */
-            is_jsx,
-            StringLiteralParentKind::Expression,
-        )
-        .fmt(f);
+        // Check if we're in a Tailwind context via stack (O(1) lookup)
+        // This handles nested string literals inside JSXAttribute/CallExpression values
+        let tailwind_ctx = f.context().tailwind_context().copied().filter(|ctx| {
+            // Skip:
+            // - if context is disabled (e.g., inside nested non-Tailwind call expressions)
+            // - empty string literals (which have no classes to sort)
+            if ctx.disabled || self.value.is_empty() {
+                return false;
+            }
+
+            // No whitespace means only one class, so no need to sort
+            let content = f.source_text().text_for(self);
+            content.as_bytes().iter().any(|&b| b.is_ascii_whitespace())
+        });
+
+        if let Some(ctx) = tailwind_ctx {
+            // We're inside a Tailwind context - sort this string literal as Tailwind classes
+            write_tailwind_string_literal(self, ctx, f);
+        } else {
+            // Not in Tailwind context - use normal string literal formatting
+            let is_jsx = matches!(self.parent, AstNodes::JSXAttribute(_));
+            FormatLiteralStringToken::new(
+                f.source_text().text_for(self),
+                is_jsx,
+                StringLiteralParentKind::Expression,
+            )
+            .fmt(f);
+        }
     }
 }
 
@@ -1475,13 +1549,6 @@ impl<'a> Format<'a> for FormatTSSignature<'a, '_> {
                 }
             }
             Semicolons::AsNeeded => {
-                let [is_computed, has_no_type_annotation] = match self.signature.as_ref() {
-                    TSSignature::TSPropertySignature(property) => {
-                        [property.computed, property.type_annotation.is_none()]
-                    }
-                    _ => [false, false],
-                };
-
                 // Needs semicolon anyway when:
                 // 1. It's a non-computed property signature with type annotation followed by
                 //    a call signature that has type parameters
@@ -1489,14 +1556,16 @@ impl<'a> Format<'a> for FormatTSSignature<'a, '_> {
                 // 2. It's a non-computed property signature without type annotation followed by
                 //    a call signature or method signature
                 //    e.g for: `a; () => void` or `a; method(): void`
-                let needs_semicolon = !is_computed
+                let needs_semicolon = matches!(
+                    self.signature.as_ref(), TSSignature::TSPropertySignature(property) if !property.computed
                     && self.next_signature.is_some_and(|signature| match signature.as_ref() {
                         TSSignature::TSCallSignatureDeclaration(call) => {
-                            has_no_type_annotation || call.type_parameters.is_some()
+                            property.type_annotation.is_none() || call.type_parameters.is_some()
                         }
-                        TSSignature::TSMethodSignature(_) => has_no_type_annotation,
+                        TSSignature::TSMethodSignature(_) => property.type_annotation.is_none(),
                         _ => false,
-                    });
+                    })
+                );
 
                 if needs_semicolon {
                     write!(f, [";"]);
@@ -1510,6 +1579,18 @@ impl<'a> Format<'a> for FormatTSSignature<'a, '_> {
 
 impl<'a> Format<'a> for AstNode<'a, Vec<'a, TSSignature<'a>>> {
     fn fmt(&self, f: &mut Formatter<'_, 'a>) {
+        if f.options().quote_properties.is_consistent() {
+            let quote_needed = self.as_ref().iter().any(|signature| {
+                let key = match signature {
+                    TSSignature::TSPropertySignature(property) => &property.key,
+                    TSSignature::TSMethodSignature(property) => &property.key,
+                    _ => return false,
+                };
+                should_preserve_quote(key, f)
+            });
+            f.context_mut().push_quote_needed(quote_needed);
+        }
+
         let mut joiner = f.join_nodes_with_soft_line();
 
         let mut iter = self.iter().peekable();
@@ -1518,6 +1599,10 @@ impl<'a> Format<'a> for AstNode<'a, Vec<'a, TSSignature<'a>>> {
                 signature.span(),
                 &FormatTSSignature { signature, next_signature: iter.peek().copied() },
             );
+        }
+
+        if f.options().quote_properties.is_consistent() {
+            f.context_mut().pop_quote_needed();
         }
     }
 }
@@ -1614,7 +1699,7 @@ impl<'a> FormatWrite<'a> for AstNode<'a, TSModuleBlock<'a>> {
         let span = self.span();
 
         write!(f, "{");
-        if body.is_empty() && directives.is_empty() {
+        if is_empty_block(&self.body) && directives.is_empty() {
             write!(f, [format_dangling_comments(span).with_block_indent()]);
         } else {
             write!(f, [block_indent(&format_args!(directives, body))]);

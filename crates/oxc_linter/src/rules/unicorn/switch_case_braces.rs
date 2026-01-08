@@ -30,7 +30,7 @@ fn switch_case_braces_diagnostic_unnecessary_braces(span: Span) -> OxcDiagnostic
         .with_label(span)
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct SwitchCaseBraces(Box<SwitchCaseBracesConfig>);
 
 impl Default for SwitchCaseBraces {
@@ -95,12 +95,10 @@ declare_oxc_lint!(
 );
 
 impl Rule for SwitchCaseBraces {
-    fn from_configuration(value: serde_json::Value) -> Self {
-        Self(Box::new(
-            serde_json::from_value::<DefaultRuleConfig<SwitchCaseBracesConfig>>(value)
-                .unwrap_or_default()
-                .into_inner(),
-        ))
+    fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
+        Ok(serde_json::from_value::<DefaultRuleConfig<Self>>(value)
+            .unwrap_or_default()
+            .into_inner())
     }
 
     fn run<'a>(&self, node: &AstNode<'a>, ctx: &LintContext<'a>) {

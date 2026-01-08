@@ -45,8 +45,14 @@ impl<'a> AnyJsxTagWithChildren<'a, '_> {
             && arrow.expression
         {
             f.context().comments().comments_before(arrow.span.end)
-        } else {
+        } else if matches!(self.parent(), AstNodes::ConditionalExpression(_)) {
             f.context().comments().end_of_line_comments_after(self.span().end)
+        } else {
+            // Fall back to default trailing comments behavior
+            return match self {
+                Self::Element(element) => element.format_trailing_comments(f),
+                Self::Fragment(fragment) => fragment.format_trailing_comments(f),
+            };
         };
         FormatTrailingComments::Comments(trailing_comments).fmt(f);
     }
@@ -138,6 +144,9 @@ impl<'a> Format<'a> for AnyJsxTagWithChildren<'a, '_> {
                         .fmt_children(children, f);
 
                     match format_children {
+                        FormatChildrenResult::SingleChild(child) => {
+                            write!(f, group(&format_args!(format_opening, child, format_closing)));
+                        }
                         FormatChildrenResult::ForceMultiline(multiline) => {
                             write!(f, [format_opening, multiline, format_closing]);
                         }

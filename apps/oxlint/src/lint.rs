@@ -77,7 +77,7 @@ impl CliRunner {
             }
         };
 
-        let handler = if cfg!(any(test, feature = "force_test_reporter")) {
+        let handler = if cfg!(any(test, feature = "testing")) {
             GraphicalReportHandler::new_themed(miette::GraphicalTheme::none())
         } else {
             GraphicalReportHandler::new()
@@ -92,7 +92,7 @@ impl CliRunner {
                 print_and_flush_stdout(
                     stdout,
                     &format!(
-                        "Failed to parse configuration file.\n{}\n",
+                        "Failed to parse oxlint configuration file.\n{}\n",
                         render_report(&handler, &err)
                     ),
                 );
@@ -165,9 +165,20 @@ impl CliRunner {
         }
 
         let walker = Walk::new(&paths, &ignore_options, override_builder);
-        let paths = walker.paths();
+        let mut paths = walker.paths();
 
-        let mut external_plugin_store = ExternalPluginStore::default();
+        // NAPI tests build `oxlint` with `testing` feature enabled.
+        // In NAPI tests, sort file paths if oxlint is run with `--threads 1`.
+        // This guarantees files are linted in a deterministic order.
+        //
+        // Note: Sorting paths would not be sufficient to guarantee deterministic linting order unless
+        // `--threads 1` is also used, because otherwise linting happens in parallel on multiple threads,
+        // which also produces non-determinism.
+        if cfg!(feature = "testing") && misc_options.threads == Some(1) {
+            paths.sort_unstable();
+        }
+
+        let mut external_plugin_store = ExternalPluginStore::new(self.external_linter.is_some());
 
         let search_for_nested_configs = !disable_nested_config &&
             // If the `--config` option is explicitly passed, we should not search for nested config files
@@ -220,7 +231,7 @@ impl CliRunner {
                 print_and_flush_stdout(
                     stdout,
                     &format!(
-                        "Failed to parse configuration file.\n{}\n",
+                        "Failed to parse oxlint configuration file.\n{}\n",
                         render_report(&handler, &OxcDiagnostic::error(e.to_string()))
                     ),
                 );
@@ -335,7 +346,7 @@ impl CliRunner {
             if let Err(err) = res {
                 print_and_flush_stdout(
                     stdout,
-                    &format!("Failed to setup external plugin options: {err}\n"),
+                    &format!("Failed to setup JS plugin options:\n{err}\n"),
                 );
                 return CliRunResult::InvalidOptionConfig;
             }
@@ -352,21 +363,6 @@ impl CliRunner {
             .with_report_unused_directives(report_unused_directives);
 
         let number_of_files = files_to_lint.len();
-
-        // Due to the architecture of the import plugin and JS plugins,
-        // linting a large number of files with both enabled can cause resource exhaustion.
-        // See: https://github.com/oxc-project/oxc/issues/15863
-        if number_of_files > 10_000 && use_cross_module && has_external_linter {
-            print_and_flush_stdout(
-                stdout,
-                &format!(
-                    "Failed to run oxlint.\n{}\n",
-                    render_report(&handler, &OxcDiagnostic::error(format!("Linting {number_of_files} files with both import plugin and JS plugins enabled can cause resource exhaustion.")).with_help("See https://github.com/oxc-project/oxc/issues/15863 for more details."))
-                ),
-            );
-            return CliRunResult::TooManyFilesWithImportAndJsPlugins;
-        }
-
         let tsconfig = basic_options.tsconfig;
         if let Some(path) = tsconfig.as_ref() {
             if path.is_file() {
@@ -404,10 +400,16 @@ impl CliRunner {
             }
         };
 
-        // Configure the file system for external linter if needed
+        // Configure the file system for external linter if needed.
+        // When using the copy-to-fixed-allocator approach (cross-module + JS plugins),
+        // we use `OsFileSystem` instead of `RawTransferFileSystem`, because we use standard allocators for parsing.
         let file_system = if has_external_linter {
             #[cfg(all(feature = "napi", target_pointer_width = "64", target_endian = "little"))]
-            {
+            if use_cross_module {
+                // Use standard file system - source text will be copied to fixed-size allocator later
+                None
+            } else {
+                // Use raw transfer file system - source text goes directly to fixed-size allocator
                 Some(
                     &crate::js_plugins::RawTransferFileSystem
                         as &(dyn oxc_linter::RuntimeFileSystem + Sync + Send),
@@ -589,7 +591,7 @@ impl CliRunner {
                     print_and_flush_stdout(
                         stdout,
                         &format!(
-                            "Failed to parse configuration file.\n{}\n",
+                            "Failed to parse oxlint configuration file.\n{}\n",
                             render_report(handler, &OxcDiagnostic::error(e.to_string()))
                         ),
                     );
@@ -1153,6 +1155,16 @@ mod test {
     }
 
     #[test]
+    // Test to ensure that a vitest rule based on the jest rule is
+    // handled correctly when it has a different name.
+    // e.g. `vitest/no-restricted-vi-methods` vs `jest/no-restricted-jest-methods`
+    fn test_disable_vitest_rules() {
+        let args =
+            &["-c", ".oxlintrc-vitest.json", "--report-unused-disable-directives", "test.js"];
+        Tester::new().with_cwd("fixtures/disable_vitest_rules".into()).test_and_snapshot(args);
+    }
+
+    #[test]
     fn test_two_rules_with_same_rule_name_from_different_plugins() {
         // Issue: <https://github.com/oxc-project/oxc/issues/8485>
         let args = &["-c", ".oxlintrc.json", "test.js"];
@@ -1437,9 +1449,6 @@ mod test {
     #[test]
     #[cfg(all(not(target_os = "windows"), not(target_endian = "big")))]
     fn test_tsgolint_fix() {
-        // Note: tsgolint fixes this lint rule by providing two string manipulations
-        // the first removing `as` and the second removing `string` This results in the two spaces
-        // after `str` but before `;`, this is ok, as it's not guaranteed that our fixers are stylistically correct.
         Tester::test_fix_with_args(
             "fixtures/tsgolint_fix/fix.ts",
             "// This file has a fixable tsgolint error: no-unnecessary-type-assertion
@@ -1452,7 +1461,7 @@ export { redundant };
             "// This file has a fixable tsgolint error: no-unnecessary-type-assertion
 // The type assertion `as string` is unnecessary because str is already a string
 const str: string = 'hello';
-const redundant = str  ;
+const redundant = str;
 
 export { redundant };
 ",

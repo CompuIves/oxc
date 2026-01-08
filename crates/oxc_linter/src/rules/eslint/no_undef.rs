@@ -30,9 +30,13 @@ declare_oxc_lint!(
     ///
     /// Disallow the use of undeclared variables.
     ///
+    /// This rule can be disabled for TypeScript code, as the TypeScript compiler
+    /// enforces this check.
+    ///
     /// ### Why is this bad?
     ///
-    /// It is most likely a potential ReferenceError caused by a misspelling of a variable or parameter name.
+    /// It is most likely a potential ReferenceError caused by a misspelling
+    /// of a variable or parameter name.
     ///
     /// ### Examples
     ///
@@ -48,8 +52,10 @@ declare_oxc_lint!(
 );
 
 impl Rule for NoUndef {
-    fn from_configuration(value: serde_json::Value) -> Self {
-        serde_json::from_value::<DefaultRuleConfig<NoUndef>>(value).unwrap_or_default().into_inner()
+    fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
+        Ok(serde_json::from_value::<DefaultRuleConfig<Self>>(value)
+            .unwrap_or_default()
+            .into_inner())
     }
 
     fn run_once(&self, ctx: &LintContext) {

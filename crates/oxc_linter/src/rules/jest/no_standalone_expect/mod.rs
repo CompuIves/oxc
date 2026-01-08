@@ -5,6 +5,7 @@ use oxc_semantic::NodeId;
 use oxc_span::{CompactStr, Span};
 use rustc_hash::FxHashMap;
 use schemars::JsonSchema;
+use serde::Deserialize;
 
 #[cfg(test)]
 mod tests;
@@ -12,7 +13,7 @@ mod tests;
 use crate::{
     AstNode,
     context::LintContext,
-    rule::Rule,
+    rule::{DefaultRuleConfig, Rule},
     utils::{
         JestFnKind, JestGeneralFnKind, KnownMemberExpressionParentKind, ParsedExpectFnCall,
         PossibleJestNode, collect_possible_jest_call_node, get_node_name,
@@ -21,16 +22,16 @@ use crate::{
 };
 
 fn no_standalone_expect_diagnostic(span: Span) -> OxcDiagnostic {
-    OxcDiagnostic::warn("Expect must be inside of a test block.")
+    OxcDiagnostic::warn("`expect` must be inside of a test block.")
         .with_help("Did you forget to wrap `expect` in a `test` or `it` block?")
         .with_label(span)
 }
 
 /// <https://github.com/jest-community/eslint-plugin-jest/blob/v28.9.0/docs/rules/no-standalone-expect.md>
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, Deserialize)]
 pub struct NoStandaloneExpect(Box<NoStandaloneExpectConfig>);
 
-#[derive(Debug, Default, Clone, JsonSchema)]
+#[derive(Debug, Default, Clone, JsonSchema, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct NoStandaloneExpectConfig {
     /// An array of function names that should also be treated as test blocks.
@@ -70,6 +71,17 @@ declare_oxc_lint!(
     ///     expect(1).toBe(1);
     /// });
     /// ```
+    ///
+    /// This rule is compatible with [eslint-plugin-vitest](https://github.com/vitest-dev/eslint-plugin-vitest/blob/main/docs/rules/no-standalone-expect.md),
+    /// to use it, add the following configuration to your `.oxlintrc.json`:
+    ///
+    /// ```json
+    /// {
+    ///   "rules": {
+    ///      "vitest/no-standalone-expect": "error"
+    ///   }
+    /// }
+    /// ```
     NoStandaloneExpect,
     jest,
     correctness,
@@ -77,15 +89,10 @@ declare_oxc_lint!(
 );
 
 impl Rule for NoStandaloneExpect {
-    fn from_configuration(value: serde_json::Value) -> Self {
-        let additional_test_block_functions = value
-            .get(0)
-            .and_then(|v| v.get("additionalTestBlockFunctions"))
-            .and_then(serde_json::Value::as_array)
-            .map(|v| v.iter().filter_map(serde_json::Value::as_str).map(CompactStr::from).collect())
-            .unwrap_or_default();
-
-        Self(Box::new(NoStandaloneExpectConfig { additional_test_block_functions }))
+    fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
+        Ok(serde_json::from_value::<DefaultRuleConfig<Self>>(value)
+            .unwrap_or_default()
+            .into_inner())
     }
 
     fn run_once(&self, ctx: &LintContext<'_>) {
@@ -232,6 +239,16 @@ fn is_var_declarator_or_test_block<'a>(
             let node_name = get_node_name(&call_expr.callee);
             if additional_test_block_functions.contains(&node_name) {
                 return true;
+            }
+
+            let parent = ctx.nodes().parent_node(node.id());
+            if matches!(parent.kind(), AstKind::CallExpression(_)) {
+                return is_var_declarator_or_test_block(
+                    parent,
+                    additional_test_block_functions,
+                    id_nodes_mapping,
+                    ctx,
+                );
             }
         }
         AstKind::ArrayExpression(_) | AstKind::ObjectExpression(_) => {

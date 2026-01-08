@@ -4,6 +4,42 @@ All notable changes to this package will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0).
 
+## [0.107.0] - 2026-01-05
+
+### ⚡ Performance
+
+- ea82b50 transformer: Mark all diagnostic functions as `#[cold]` (#17486) (camc314)
+
+## [0.106.0] - 2025-12-29
+
+### 🚀 Features
+
+- 289bff7 transformer: Export `ESFeature` from options (#17347) (shulaoda)
+- e031056 codegen: Add `sourcemap` feature flag (#17305) (Boshen)
+
+### ⚡ Performance
+
+- e35049b transformer: Avoid unneccessary vec allocation (#17270) (camc314)
+
+## [0.105.0] - 2025-12-22
+
+### ⚡ Performance
+
+- 14e5016 transformer/enum: Avoid cloning HashMap in IdentifierReferenceRename (#17210) (camc314)
+
+## [0.104.0] - 2025-12-19
+
+### 🐛 Bug Fixes
+
+- 3002649 transformer/typescript: Remove unused import equals declaration (#16776) (Dunqing)
+
+## [0.103.0] - 2025-12-15
+
+### 🐛 Bug Fixes
+
+- 99c022e transformer: Revert "fix(transformer): validate JSX pragma values and reject invalid identifiers" (#16793) (Copilot)
+- 853c20d transformer: Validate JSX pragma values and reject invalid identifiers (#16675) (Copilot)
+
 ## [0.99.0] - 2025-11-24
 
 ### 💥 BREAKING CHANGES

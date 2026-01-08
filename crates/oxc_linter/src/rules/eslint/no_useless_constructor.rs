@@ -1,9 +1,8 @@
 use oxc_ast::{
     AstKind,
     ast::{
-        Argument, BindingPattern, BindingPatternKind, BindingRestElement, CallExpression,
-        Expression, FormalParameter, FormalParameters, FunctionBody, MethodDefinition, Statement,
-        TSAccessibility,
+        Argument, BindingPattern, CallExpression, Expression, FormalParameterRest,
+        FormalParameters, FunctionBody, MethodDefinition, Statement, TSAccessibility,
     },
 };
 use oxc_diagnostics::OxcDiagnostic;
@@ -113,19 +112,23 @@ impl Rule for NoUselessConstructor {
         let Some(body) = &constructor.value.body else {
             return;
         };
-        // allow `private private constructor() {}`. However, `public private
-        // constructor() {}` is the same as `constructor() {}` and so is not allowed.
-        if constructor.accessibility.is_some_and(|access| {
-            matches!(access, TSAccessibility::Private | TSAccessibility::Protected)
-        }) {
-            return;
-        }
 
         let class = ctx.nodes().ancestors(node.id()).find_map(|parent| parent.kind().as_class());
         debug_assert!(class.is_some(), "Found a constructor outside of a class definition");
         let Some(class) = class else {
             return;
         };
+
+        match &constructor.accessibility {
+            Some(TSAccessibility::Private | TSAccessibility::Protected) => {
+                return;
+            }
+            Some(TSAccessibility::Public) if class.super_class.is_some() => {
+                return;
+            }
+            _ => {}
+        }
+
         if class.declare {
             return;
         }
@@ -150,7 +153,13 @@ fn lint_empty_constructor<'a>(
 
     // allow constructors with parameter properties since they actually declare
     // class members
-    if constructor.value.params.items.iter().any(FormalParameter::has_modifier) {
+    if constructor
+        .value
+        .params
+        .items
+        .iter()
+        .any(|param| param.has_modifier() || !param.decorators.is_empty())
+    {
         return;
     }
 
@@ -173,6 +182,7 @@ fn lint_redundant_super_call<'a>(
 
     if is_only_simple_params(params)
         && !is_overriding(params)
+        && !has_decorated_params(params)
         && (is_spread_arguments(super_args) || is_passing_through(params, super_args))
     {
         ctx.diagnostic_with_fix(
@@ -184,6 +194,10 @@ fn lint_redundant_super_call<'a>(
 
 fn is_overriding(params: &FormalParameters) -> bool {
     params.items.iter().any(|param| param.r#override)
+}
+
+fn has_decorated_params(params: &FormalParameters) -> bool {
+    params.items.iter().any(|param| !param.decorators.is_empty())
 }
 
 /// Check if a function body only contains a single `super()` call. Ignores directives.
@@ -199,10 +213,11 @@ fn is_single_super_call<'a, 'f>(body: &'f FunctionBody<'a>) -> Option<&'f CallEx
     if call.callee.is_super() { Some(call) } else { None }
 }
 
-/// Returns `false` if any parameter is an array/object unpacking binding or an
-/// assignment pattern.
+/// Returns `false` if any parameter is an array/object unpacking binding or has
+/// a default value (initializer).
 fn is_only_simple_params(params: &FormalParameters) -> bool {
-    params.iter_bindings().all(|param| param.kind.is_binding_identifier())
+    params.iter_bindings().all(BindingPattern::is_binding_identifier)
+        && params.items.iter().all(|param| param.initializer.is_none())
 }
 
 fn is_spread_arguments(super_args: &[Argument<'_>]) -> bool {
@@ -234,16 +249,16 @@ fn is_passing_through<'a>(
 }
 
 fn is_matching_identifier_pair<'a>(param: &BindingPattern<'a>, arg: &Argument<'a>) -> bool {
-    match (&param.kind, arg) {
-        (BindingPatternKind::BindingIdentifier(param), Argument::Identifier(arg)) => {
+    match (&param, arg) {
+        (BindingPattern::BindingIdentifier(param), Argument::Identifier(arg)) => {
             param.name == arg.name
         }
         _ => false,
     }
 }
-fn is_matching_rest_spread_pair<'a>(rest: &BindingRestElement<'a>, arg: &Argument<'a>) -> bool {
-    match (&rest.argument.kind, arg) {
-        (BindingPatternKind::BindingIdentifier(param), Argument::SpreadElement(spread)) => {
+fn is_matching_rest_spread_pair<'a>(rest: &FormalParameterRest<'a>, arg: &Argument<'a>) -> bool {
+    match (&rest.rest.argument, arg) {
+        (BindingPattern::BindingIdentifier(param), Argument::SpreadElement(spread)) => {
             matches!(&spread.argument, Expression::Identifier(ident) if param.name == ident.name)
         }
         _ => false,
@@ -324,6 +339,205 @@ fn test() {
         // ",
     ];
 
+    let pass_typescript = vec![
+        "class A {}",
+        "
+			class A {
+			  constructor() {
+			    doSomething();
+			  }
+			}
+			    ",
+        "
+			class A extends B {
+			  constructor() {}
+			}
+			    ",
+        "
+			class A extends B {
+			  constructor() {
+			    super('foo');
+			  }
+			}
+			    ",
+        "
+			class A extends B {
+			  constructor(foo, bar) {
+			    super(foo, bar, 1);
+			  }
+			}
+			    ",
+        "
+			class A extends B {
+			  constructor() {
+			    super();
+			    doSomething();
+			  }
+			}
+			    ",
+        "
+			class A extends B {
+			  constructor(...args) {
+			    super(...args);
+			    doSomething();
+			  }
+			}
+			    ",
+        "
+			class A {
+			  dummyMethod() {
+			    doSomething();
+			  }
+			}
+			    ",
+        "
+			class A extends B.C {
+			  constructor() {
+			    super(foo);
+			  }
+			}
+			    ",
+        "
+			class A extends B.C {
+			  constructor([a, b, c]) {
+			    super(...arguments);
+			  }
+			}
+			    ",
+        "
+			class A extends B.C {
+			  constructor(a = f()) {
+			    super(...arguments);
+			  }
+			}
+			    ",
+        "
+			class A extends B {
+			  constructor(a, b, c) {
+			    super(a, b);
+			  }
+			}
+			    ",
+        "
+			class A extends B {
+			  constructor(foo, bar) {
+			    super(foo);
+			  }
+			}
+			    ",
+        "
+			class A extends B {
+			  constructor(test) {
+			    super();
+			  }
+			}
+			    ",
+        "
+			class A extends B {
+			  constructor() {
+			    foo;
+			  }
+			}
+			    ",
+        "
+			class A extends B {
+			  constructor(foo, bar) {
+			    super(bar);
+			  }
+			}
+			    ",
+        "
+			declare class A {
+			  constructor();
+			}
+			    ",
+        "
+			class A {
+			  constructor();
+			}
+			    ",
+        "
+			abstract class A {
+			  constructor();
+			}
+			    ",
+        "
+			class A {
+			  constructor(private name: string) {}
+			}
+			    ",
+        "
+			class A {
+			  constructor(public name: string) {}
+			}
+			    ",
+        "
+			class A {
+			  constructor(protected name: string) {}
+			}
+			    ",
+        "
+			class A {
+			  private constructor() {}
+			}
+			    ",
+        "
+			class A {
+			  protected constructor() {}
+			}
+			    ",
+        "
+			class A extends B {
+			  public constructor() {}
+			}
+			    ",
+        "
+			class A extends B {
+			  protected constructor(foo, bar) {
+			    super(bar);
+			  }
+			}
+			    ",
+        "
+			class A extends B {
+			  private constructor(foo, bar) {
+			    super(bar);
+			  }
+			}
+			    ",
+        "
+			class A extends B {
+			  public constructor(foo) {
+			    super(foo);
+			  }
+			}
+			    ",
+        "
+			class A extends B {
+			  public constructor(foo) {}
+			}
+			    ",
+        "
+			class A {
+			  constructor(foo);
+			}
+			    ",
+        "
+			class A extends Object {
+			  constructor(@Foo foo: string) {
+			    super(foo);
+			  }
+			}
+			    ",
+        "
+			class A extends Object {
+			  constructor(foo: string, @Bar() bar) {
+			    super(foo, bar);
+			  }
+			}
+			    ",
+    ];
+
     let fail = vec![
         "class A { constructor(){} }",
         "class A { 'constructor'(){} }",
@@ -343,6 +557,68 @@ fn test() {
         "class A { public constructor(){} }",
     ];
 
+    let fail_typescript = vec![
+        "
+			class A {
+			  constructor() {}
+			}
+			      ",
+        "
+			class A extends B {
+			  constructor() {
+			    super();
+			  }
+			}
+			      ",
+        "
+			class A extends B {
+			  constructor(foo) {
+			    super(foo);
+			  }
+			}
+			      ",
+        "
+			class A extends B {
+			  constructor(foo, bar) {
+			    super(foo, bar);
+			  }
+			}
+			      ",
+        "
+			class A extends B {
+			  constructor(...args) {
+			    super(...args);
+			  }
+			}
+			      ",
+        "
+			class A extends B.C {
+			  constructor() {
+			    super(...arguments);
+			  }
+			}
+			      ",
+        "
+			class A extends B {
+			  constructor(a, b, ...c) {
+			    super(...arguments);
+			  }
+			}
+			      ",
+        "
+			class A extends B {
+			  constructor(a, b, ...c) {
+			    super(a, b, ...c);
+			  }
+			}
+			      ",
+        "
+			class A {
+			  public constructor() {}
+			}
+			      ",
+    ];
+
     let fix = vec![
         ("class A { constructor(){} }", "class A {  }"),
         (
@@ -350,6 +626,9 @@ fn test() {
             "class A extends B {  foo() { bar(); } }",
         ),
     ];
+
+    let pass = [pass, pass_typescript].concat();
+    let fail = [fail, fail_typescript].concat();
 
     Tester::new(NoUselessConstructor::NAME, NoUselessConstructor::PLUGIN, pass, fail)
         .expect_fix(fix)

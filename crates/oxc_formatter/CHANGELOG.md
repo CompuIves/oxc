@@ -4,6 +4,111 @@ All notable changes to this package will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0).
 
+## [0.23.0] - 2026-01-06
+
+### 🐛 Bug Fixes
+
+- 3b4aced formatter: Should not treat multi-type arguments of TSTypeReference as a complex type (#17708) (Dunqing)
+- dcfdd41 formatter: Should not set up tailwindcss callback when no tailwindcss configuration is set (#17696) (Dunqing)
+- 6f65901 formatter: Return original classes when there are no tailwindcss classes sort callback (#17689) (Dunqing)
+
+### ⚡ Performance
+
+- c6a99fd formatter: Don't call `sort_tailwind_classes` if no classes need to be sorted (#17698) (Dunqing)
+
+## [0.22.0] - 2026-01-05
+
+### 🚀 Features
+
+- 8fd4ea9 oxfmt: `options.embeddedLanguageFormatting` is now `"auto"` by default (#17649) (leaysgur)
+
+### 🐛 Bug Fixes
+
+- c9b5d7d formatter/sort_imports: Handle alignable_comment correctly (#17646) (leaysgur)
+- 453222d formatter: Missing comment handling for end-of-line comments in member chains (#17659) (Dunqing)
+- 0805ff2 formatter: Incorrect inline comment placement in try-catch (#17657) (Dunqing)
+- 3a0c782 formatter: Don't move comments into optional call parentheses (#17582) (magic-akari)
+
+## [0.21.0] - 2025-12-29
+
+### 🚀 Features
+
+- 7c3dae3 formatter: Support Vitest test functions (#17340) (leaysgur)
+- b00da37 formatter: Normalize line break for directive (#17303) (Dunqing)
+
+### 🐛 Bug Fixes
+
+- 1bf0ffc formatter: Incorrect JSX text wrapping when the expression container is an arrow function that will break (#17445) (Dunqing)
+- 42ad9d6 formatter: JSXFragment missed a leading semicolon when semicolon is disabled (#17386) (Dunqing)
+- c8c5341 formatter: Complete `is_complex_type_arguments()` (take2) (#17362) (leaysgur)
+- 745bc5d formatter: Do not consider rest param as simple (#17354) (leaysgur)
+- e836f37 formatter: Fix `Deno()` to not detect as test functions (#17339) (leaysgur)
+- 09848b3 formatter: Handle more test functions (#17337) (leaysgur)
+- a55bfc1 formatter: Count emoji sequences correctly (#17331) (leaysgur)
+- 0a39cba oxfmt: Update wrong doc comment (#17288) (leaysgur)
+- 2d556cb formatter: Should treat TSMappedType as a complex type in assignment-like formatting (#17257) (Dunqing)
+- fa5cef3 formatter: Shouldn't treat `TaggedTemplateExpression` as a simple argument in the member chain (#17256) (Dunqing)
+- 6ad3951 formatter: Trailing comments of JSX in call arguments are moved out the of call (#17255) (Dunqing)
+
+## [0.20.0] - 2025-12-22
+
+### 🚀 Features
+
+- 97a02d1 oxfmt: Add `insertFinalNewline` option (#17251) (leaysgur)
+- a3f3c58 oxfmt: Support TOML(v1.0 only) files (#17113) (leaysgur)
+
+## [0.18.0] - 2025-12-15
+
+### 💥 BREAKING CHANGES
+
+- 320c09f ast, parser, linter, codegen, formatter: [**BREAKING**] Rename `CommentKind::Block` to `CommentKind::SinglelineBlock` (#16501) (Dunqing)
+
+### 🚀 Features
+
+- afd6c44 oxfmt: Support `quoteProps: consistent` in `Oxfmtrc` (#16721) (leaysgur)
+- 686f2b7 formatter: Support `consistent` quote props (#16677) (Dunqing)
+- 28e0682 oxfmt: Enable experimental `package.json` sorting by default (#16593) (leaysgur)
+- 30a9076 ast, parser, codegen: Add `CommentKind::MultilineBlock` (#16479) (Dunqing)
+
+### 🐛 Bug Fixes
+
+- a0efc41 formatter: Incorrect formatting for member chain call with an empty arguments call argument (#16875) (Dunqing)
+- e973965 formatter: Incorrect indentation of long assignment pattern in object (#16709) (Dunqing)
+- 2a63d74 formatter: Should not insert a semicolon for non-property signatures when no semicolon is set (#16700) (Dunqing)
+- 2495a39 formatter/sort-imports: Do not move leading comment if empty line found (#16676) (leaysgur)
+- 0d5da26 formatter: Disable layout assertions on some 32-bit platforms (#16625) (Dunqing)
+
+### ⚡ Performance
+
+- c7db70b formatter: Optimize formatting of JSX element/fragment with a single child (#16631) (Dunqing)
+- 4843475 formatter: Do not write elements to the flat buffer if the layout is multline (#16630) (Dunqing)
+
+### 📚 Documentation
+
+- 8babdf9 oxfmt: Improve docs for `.oxfmtrc.jsonc` config fields and add markdownDescription fields to JSON Schema (#16587) (connorshea)
+
+## [0.17.0] - 2025-12-08
+
+### 🚀 Features
+
+- 7bb3304 oxfmt: Pass populated config to prettier formatting (#16584) (leaysgur)
+- 69f84d2 oxfmt: Pass raw config to prettier formatting (#16582) (leaysgur)
+- 930533f formatter: Convert single `\r` to `\n` in string and add a debug assertion to ensure that there is no `\r` in the text (#16531) (Dunqing)
+- 80e6999 formatter: Add debug assertion to ensure that there is no empty content is passed in (#16475) (Dunqing)
+- 7374856 formatter/sort-imports: Support `options.internalPattern` (#16372) (leaysgur)
+
+### 🐛 Bug Fixes
+
+- 40b0134 formatter: Incorrect formatting of `useImperativeHandle` hook (#16533) (Dunqing)
+- 75393e7 formatter: Incorrect handling of `CRLF` for multiline block comment (#16528) (Dunqing)
+- ee0756b formatter: JSX text wrapping incorrect 2 (#16320) (Dunqing)
+- 36308b8 formatter: Fix indent for new expression with type cast (#16380) (leaysgur)
+
+### ⚡ Performance
+
+- 6f16a8f formatter: Avoid using an indent with a empty content (#16474) (Dunqing)
+- 201c98f formatter: Early return when no comments need to be printed (#16432) (Dunqing)
+
 ## [0.16.0] - 2025-12-01
 
 ### 💥 BREAKING CHANGES

@@ -198,7 +198,7 @@ impl Oxc {
         }
 
         // Phase 7: Apply minification
-        let minifier_return = Self::apply_minification(&allocator, &mut program, &options);
+        let minifier_return = self.apply_minification(&allocator, &mut program, &options);
 
         // Phase 8: Generate code
         self.codegen(&path, &program, minifier_return, run_options, &codegen_options);
@@ -310,6 +310,7 @@ impl Oxc {
     }
 
     fn apply_minification<'a>(
+        &mut self,
         allocator: &'a Allocator,
         program: &mut Program<'a>,
         options: &OxcOptions,
@@ -318,7 +319,19 @@ impl Oxc {
             return None;
         }
         let compress = if options.run.compress {
-            options.compress.map(|_| CompressOptions::smallest())
+            options.compress.map(|_| {
+                let mut compress_options = CompressOptions::smallest();
+                if let Some(transform_options) = &options.transformer
+                    && let Some(target) = &transform_options.target
+                    && let Ok(targets) =
+                        oxc_compat::EngineTargets::from_target(target).map_err(|err| {
+                            self.diagnostics.push(OxcDiagnostic::error(err));
+                        })
+                {
+                    compress_options.target = targets;
+                }
+                compress_options
+            })
         } else {
             None
         };
@@ -539,12 +552,11 @@ impl Oxc {
             let formatter = Formatter::new(&allocator, format_options);
             let formatted = formatter.format(&ret.program);
             if run_options.formatter {
+                self.formatter_ir_text = formatted.document().to_string();
                 self.formatter_formatted_text = match formatted.print() {
                     Ok(printer) => printer.into_code(),
                     Err(err) => err.to_string(),
                 };
-
-                self.formatter_ir_text = formatted.into_document().to_string();
             }
         }
     }

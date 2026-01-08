@@ -124,8 +124,8 @@ declare_oxc_lint!(
     /// });
     /// ```
     ///
-    /// This rule is compatible with [eslint-plugin-vitest](https://github.com/veritem/eslint-plugin-vitest/blob/v1.1.9/docs/rules/consistent-test-it.md),
-    /// to use it, add the following configuration to your `.eslintrc.json`:
+    /// This rule is compatible with [eslint-plugin-vitest](https://github.com/vitest-dev/eslint-plugin-vitest/blob/v1.1.9/docs/rules/consistent-test-it.md),
+    /// to use it, add the following configuration to your `.oxlintrc.json`:
     ///
     /// ```json
     /// {
@@ -142,9 +142,9 @@ declare_oxc_lint!(
 );
 
 impl Rule for ConsistentTestIt {
-    fn from_configuration(value: serde_json::Value) -> Self {
+    fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
         if value.is_null() {
-            return Self::default();
+            return Ok(Self::default());
         }
 
         let config_value = value.get(0).unwrap_or(&value);
@@ -157,7 +157,7 @@ impl Rule for ConsistentTestIt {
             config.within_describe = config.r#fn;
         }
 
-        Self(Box::new(config))
+        Ok(Self(Box::new(config)))
     }
 
     fn run_once(&self, ctx: &LintContext) {

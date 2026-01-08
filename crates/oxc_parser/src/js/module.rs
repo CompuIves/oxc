@@ -132,35 +132,71 @@ impl<'a> ParserImpl<'a> {
                     }
                 }
             }
-        } else if token_after_import.kind() == Kind::Defer && self.at(Kind::Star) {
-            // `import defer * ...`
-            phase = Some(ImportPhase::Defer);
-            has_default_specifier = false;
-        } else if token_after_import.kind() == Kind::Source
-            && self.cur_kind().is_binding_identifier()
-        {
-            // `import source something ...`
-            let kind = self.cur_kind();
-            let identifier_after_source = self.parse_binding_identifier();
-            if kind == Kind::From {
-                // `import source from ...`
-                if self.at(Kind::From) {
-                    // `import source from from ...`
+        } else if token_after_import.kind() == Kind::Defer {
+            if self.at(Kind::Star) {
+                // `import defer * ...`
+                phase = Some(ImportPhase::Defer);
+                has_default_specifier = false;
+            } else if self.at(Kind::LCurly) {
+                // `import defer { ... } from 'source'`
+                self.error(diagnostics::named_import_not_allowed_in_defer(
+                    token_after_import.span(),
+                ));
+                phase = Some(ImportPhase::Defer);
+                has_default_specifier = false;
+            } else if self.cur_kind().is_binding_identifier()
+                && self.cur_kind() != Kind::From
+                && self.cur_kind() != Kind::As
+            {
+                // `import defer x from 'source'`
+                self.error(diagnostics::default_import_not_allowed_in_defer(
+                    token_after_import.span(),
+                ));
+                // Parse the identifier as the default specifier to continue recovery
+                identifier_after_import = Some(self.parse_binding_identifier());
+                phase = Some(ImportPhase::Defer);
+            }
+            // else: `import defer from 'source'` - defer is the binding name, no phase
+        } else if token_after_import.kind() == Kind::Source {
+            if self.cur_kind().is_binding_identifier() {
+                // `import source something ...`
+                let kind = self.cur_kind();
+                let identifier_after_source = self.parse_binding_identifier();
+                if kind == Kind::From {
+                    // `import source from ...`
+                    if self.at(Kind::From) {
+                        // `import source from from ...`
+                        identifier_after_import = Some(identifier_after_source);
+                        phase = Some(ImportPhase::Source);
+                        has_default_specifier = true;
+                    } else if self.at(Kind::Str) {
+                        // `import source from 'source'`
+                        has_default_specifier = true;
+                        should_parse_specifiers = false;
+                    }
+                } else {
+                    self.expect_without_advance(Kind::From);
+                    // `import source something from ...`
                     identifier_after_import = Some(identifier_after_source);
                     phase = Some(ImportPhase::Source);
                     has_default_specifier = true;
-                } else if self.at(Kind::Str) {
-                    // `import source from 'source'`
-                    has_default_specifier = true;
-                    should_parse_specifiers = false;
                 }
-            } else {
-                self.expect_without_advance(Kind::From);
-                // `import source something from ...`
-                identifier_after_import = Some(identifier_after_source);
+            } else if self.at(Kind::Star) {
+                // `import source * as ns from 'source'`
+                self.error(diagnostics::only_default_import_allowed_in_source_phase(
+                    token_after_import.span(),
+                ));
                 phase = Some(ImportPhase::Source);
-                has_default_specifier = true;
+                has_default_specifier = false;
+            } else if self.at(Kind::LCurly) {
+                // `import source { ... } from 'source'`
+                self.error(diagnostics::only_default_import_allowed_in_source_phase(
+                    token_after_import.span(),
+                ));
+                phase = Some(ImportPhase::Source);
+                has_default_specifier = false;
             }
+            // else: `import source from 'source'` - source is the binding name, no phase
         }
 
         let specifiers = if self.at(Kind::Str) {
@@ -228,6 +264,7 @@ impl<'a> ParserImpl<'a> {
         };
 
         if let Some(default_specifier) = default_specifier {
+            let default_span = default_specifier.span;
             specifiers.push(self.ast.import_declaration_specifier_import_default_specifier(
                 default_specifier.span,
                 default_specifier,
@@ -235,9 +272,21 @@ impl<'a> ParserImpl<'a> {
             if self.eat(Kind::Comma) {
                 match self.cur_kind() {
                     // import defaultExport, * as name from "module-name";
-                    Kind::Star => specifiers.push(self.parse_import_namespace_specifier()),
+                    Kind::Star => {
+                        if self.is_ts && import_kind == ImportOrExportKind::Type {
+                            self.error(diagnostics::type_only_import_default_and_named(
+                                default_span,
+                            ));
+                        }
+                        specifiers.push(self.parse_import_namespace_specifier());
+                    }
                     // import defaultExport, { export1 [ , [...] ] } from "module-name";
                     Kind::LCurly => {
+                        if self.is_ts && import_kind == ImportOrExportKind::Type {
+                            self.error(diagnostics::type_only_import_default_and_named(
+                                default_span,
+                            ));
+                        }
                         let mut import_specifiers = self.parse_import_specifiers(import_kind);
                         specifiers.append(&mut import_specifiers);
                     }
@@ -336,6 +385,11 @@ impl<'a> ParserImpl<'a> {
             _ => ImportAttributeKey::Identifier(self.parse_identifier_name()),
         };
         self.expect(Kind::Colon);
+        if !self.at(Kind::Str) {
+            return self.fatal_error(diagnostics::import_attribute_value_must_be_string_literal(
+                self.cur_token().span(),
+            ));
+        }
         let value = self.parse_literal_string();
         self.ast.import_attribute(self.end_span(span), key, value)
     }
@@ -1231,17 +1285,6 @@ mod test {
             let specifiers = decl.specifiers.as_ref().unwrap();
             assert_eq!(specifiers.len(), 1);
             assert_eq!(specifiers[0].name(), "defer");
-        });
-
-        let src = "import type foo, { bar } from 'bar';";
-        parse_and_assert_import_declarations(src, |declarations| {
-            assert_eq!(declarations.len(), 1);
-            let decl = declarations[0];
-            assert_eq!(decl.import_kind, ImportOrExportKind::Type);
-            let specifiers = decl.specifiers.as_ref().unwrap();
-            assert_eq!(specifiers.len(), 2);
-            assert_eq!(specifiers[0].name(), "foo");
-            assert_eq!(specifiers[1].name(), "bar");
         });
 
         let src = "import foo = bar";

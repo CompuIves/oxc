@@ -3,7 +3,7 @@ use std::borrow::Cow;
 use oxc_ast::{
     AstKind,
     ast::{
-        AssignmentTarget, AssignmentTargetProperty, BindingPatternKind, Expression, Function,
+        AssignmentTarget, AssignmentTargetProperty, BindingPattern, Expression, Function,
         FunctionType, ObjectAssignmentTarget, PropertyKind,
     },
 };
@@ -225,19 +225,19 @@ declare_oxc_lint!(
 );
 
 impl Rule for FuncNames {
-    fn from_configuration(value: serde_json::Value) -> Self {
+    fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
         let Some(functions_config) = value.get(0) else {
-            return Self::default();
+            return Ok(Self::default());
         };
         let generators_config =
             value.get(1).and_then(|v| v.get("generators")).unwrap_or(functions_config);
 
-        Self {
+        Ok(Self {
             config: FuncNamesConfig {
                 functions: FuncNamesConfigType::from(functions_config),
                 generators: FuncNamesConfigType::from(generators_config),
             },
-        }
+        })
     }
 
     fn run<'a>(&self, node: &AstNode<'a>, ctx: &LintContext<'a>) {
@@ -367,7 +367,7 @@ fn has_inferred_name<'a>(function: &Function<'a>, parent_node: &AstNode<'a>) -> 
 
     match parent_node.kind() {
         AstKind::VariableDeclarator(declarator) => {
-            matches!(declarator.id.kind, BindingPatternKind::BindingIdentifier(_))
+            matches!(declarator.id, BindingPattern::BindingIdentifier(_))
                 && declarator.init.as_ref().is_some_and(|init| is_same_function(init, function))
         }
         AstKind::ObjectProperty(property) => is_same_function(&property.value, function),
@@ -382,9 +382,9 @@ fn has_inferred_name<'a>(function: &Function<'a>, parent_node: &AstNode<'a>) -> 
             matches!(target.binding, AssignmentTarget::AssignmentTargetIdentifier(_))
                 && is_same_function(&target.init, function)
         }
-        AstKind::AssignmentPattern(pattern) => {
-            matches!(pattern.left.kind, BindingPatternKind::BindingIdentifier(_))
-                && is_same_function(&pattern.right, function)
+        AstKind::FormalParameter(pattern) => {
+            matches!(pattern.pattern, BindingPattern::BindingIdentifier(_))
+                && pattern.initializer.as_ref().is_some_and(|init| init.span() == function.span)
         }
         AstKind::AssignmentTargetPropertyIdentifier(ident) => {
             ident.init.as_ref().is_some_and(|expr| is_same_function(expr, function))

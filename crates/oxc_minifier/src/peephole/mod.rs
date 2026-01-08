@@ -104,6 +104,49 @@ impl<'a> PeepholeOptimizations {
         }
         None
     }
+
+    /// Checks if a member expression's base object may be mutated.
+    ///
+    /// This is used to prevent incorrect transformations like:
+    /// `x.y || (x = {}, x.y = 3)` → `x.y ||= (x = {}, 3)`
+    ///
+    /// The `||=` operator evaluates `x.y` (capturing `x`) before the RHS reassigns `x`,
+    /// which would change the semantics.
+    pub fn member_object_may_be_mutated(
+        assignment_target: &AssignmentTarget<'a>,
+        ctx: &Ctx<'a, '_>,
+    ) -> bool {
+        let object = match assignment_target {
+            AssignmentTarget::ComputedMemberExpression(member_expr) => &member_expr.object,
+            AssignmentTarget::PrivateFieldExpression(member_expr) => &member_expr.object,
+            AssignmentTarget::StaticMemberExpression(member_expr) => &member_expr.object,
+            _ => return false,
+        };
+
+        Self::is_expression_that_reference_may_change(object, ctx)
+    }
+
+    /// Checks if an expression's reference may change due to mutation.
+    ///
+    /// Returns `true` if the expression references a symbol that may be mutated,
+    /// or if the expression is not a simple identifier/this reference.
+    pub fn is_expression_that_reference_may_change(
+        expr: &Expression<'a>,
+        ctx: &Ctx<'a, '_>,
+    ) -> bool {
+        match expr {
+            Expression::Identifier(id) => {
+                if let Some(symbol_id) = ctx.scoping().get_reference(id.reference_id()).symbol_id()
+                {
+                    ctx.scoping().symbol_is_mutated(symbol_id)
+                } else {
+                    true
+                }
+            }
+            Expression::ThisExpression(_) => false,
+            _ => true,
+        }
+    }
 }
 
 impl<'a> Traverse<'a, MinifierState<'a>> for PeepholeOptimizations {
@@ -169,6 +212,7 @@ impl<'a> Traverse<'a, MinifierState<'a>> for PeepholeOptimizations {
                 Self::remove_unused_function_declaration(stmt, ctx);
             }
             Statement::ClassDeclaration(_) => Self::remove_unused_class_declaration(stmt, ctx),
+            Statement::ImportDeclaration(_) => Self::remove_unused_import_specifiers(stmt, ctx),
             _ => {}
         }
         Self::try_fold_expression_stmt(stmt, ctx);
@@ -246,6 +290,7 @@ impl<'a> Traverse<'a, MinifierState<'a>> for PeepholeOptimizations {
             }
             Expression::CallExpression(_) => {
                 Self::fold_call_expression(expr, ctx);
+                Self::substitute_iife_call(expr, ctx);
                 Self::remove_dead_code_call_expression(expr, ctx);
                 Self::replace_concat_chain(expr, ctx);
                 Self::replace_known_global_methods(expr, ctx);
@@ -488,6 +533,9 @@ impl<'a> Traverse<'a, MinifierState<'a>> for DeadCodeElimination {
             Statement::ExpressionStatement(_) => {
                 PeepholeOptimizations::try_fold_expression_stmt(stmt, ctx);
             }
+            Statement::ImportDeclaration(_) => {
+                PeepholeOptimizations::remove_unused_import_specifiers(stmt, ctx);
+            }
             _ => {}
         }
     }
@@ -519,6 +567,7 @@ impl<'a> Traverse<'a, MinifierState<'a>> for DeadCodeElimination {
             Expression::ChainExpression(_) => PeepholeOptimizations::fold_chain_expr(e, ctx),
             Expression::CallExpression(_) => {
                 PeepholeOptimizations::fold_call_expression(e, ctx);
+                PeepholeOptimizations::substitute_iife_call(e, ctx);
                 PeepholeOptimizations::remove_dead_code_call_expression(e, ctx);
             }
             Expression::ConditionalExpression(_) => {

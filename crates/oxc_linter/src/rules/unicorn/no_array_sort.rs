@@ -69,10 +69,10 @@ declare_oxc_lint!(
 );
 
 impl Rule for NoArraySort {
-    fn from_configuration(value: Value) -> Self {
-        serde_json::from_value::<DefaultRuleConfig<NoArraySort>>(value)
+    fn from_configuration(value: Value) -> Result<Self, serde_json::error::Error> {
+        Ok(serde_json::from_value::<DefaultRuleConfig<Self>>(value)
             .unwrap_or_default()
-            .into_inner()
+            .into_inner())
     }
 
     fn run<'a>(&self, node: &AstNode<'a>, ctx: &LintContext<'a>) {
@@ -156,9 +156,9 @@ fn test() {
         ("sorted = [...array]?.sort(compareFn)", None),
         ("sorted = array.sort(compareFn)", None),
         ("sorted = array?.sort(compareFn)", None),
-        ("array.sort()", Some(serde_json::json!([{"allowExpressionStatement": false}]))),
-        ("array?.sort()", Some(serde_json::json!([{"allowExpressionStatement": false}]))),
-        ("[...array].sort()", Some(serde_json::json!([{"allowExpressionStatement": false}]))),
+        ("array.sort()", Some(serde_json::json!([{ "allowExpressionStatement": false }]))),
+        ("array?.sort()", Some(serde_json::json!([{ "allowExpressionStatement": false }]))),
+        ("[...array].sort()", Some(serde_json::json!([{ "allowExpressionStatement": false }]))),
         ("sorted = [...(0, array)].sort()", None),
     ];
 
@@ -168,7 +168,7 @@ fn test() {
         (
             "a.sort()",
             "a.toSorted()",
-            Some(serde_json::json!([{"allowExpressionStatement": false}])),
+            Some(serde_json::json!([{ "allowExpressionStatement": false }])),
         ),
         ("sorted = array?.sort()", "sorted = array?.toSorted()", None),
     ];

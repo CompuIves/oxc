@@ -83,13 +83,17 @@ declare_oxc_lint!(
 );
 
 fn is_relative_path(path: &str) -> bool {
-    path.starts_with("./")
+    // A path is considered relative if it starts with "/", "./", or "../"
+    // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Statements/import#module_specifier_resolution
+    path.starts_with("./") || path.starts_with("../") || path.starts_with('/')
 }
 
 /// <https://github.com/import-js/eslint-plugin-import/blob/v2.29.1/docs/rules/first.md>
 impl Rule for First {
-    fn from_configuration(value: serde_json::Value) -> Self {
-        serde_json::from_value::<DefaultRuleConfig<First>>(value).unwrap_or_default().into_inner()
+    fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
+        Ok(serde_json::from_value::<DefaultRuleConfig<Self>>(value)
+            .unwrap_or_default()
+            .into_inner())
     }
 
     fn run_once(&self, ctx: &LintContext<'_>) {
@@ -169,6 +173,17 @@ fn test() {
             export { x, y }",
             None,
         ),
+        // Relative imports with absolute-first
+        (
+            r"import { y } from 'bar';
+              import { x } from '../foo';",
+            Some(json!(["absolute-first"])),
+        ),
+        (
+            r"import { y } from 'bar';
+              import { x } from '/foo';",
+            Some(json!(["absolute-first"])),
+        ),
     ];
 
     let fail = vec![
@@ -207,6 +222,17 @@ fn test() {
               export { x };
               import F3 = require('mod');",
             None,
+        ),
+        // Relative imports with absolute-first
+        (
+            r"import { x } from '../foo';
+              import { y } from 'bar';",
+            Some(json!(["absolute-first"])),
+        ),
+        (
+            r"import { x } from '/foo';
+              import { y } from 'bar';",
+            Some(json!(["absolute-first"])),
         ),
     ];
 

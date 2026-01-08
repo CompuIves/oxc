@@ -4,6 +4,40 @@ All notable changes to this package will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0).
 
+## [0.106.0] - 2025-12-29
+
+### 🚀 Features
+
+- e031056 codegen: Add `sourcemap` feature flag (#17305) (Boshen)
+
+### ⚡ Performance
+
+- 722fffa codegen: Restructure print_comments to avoid index comparisons in loop (#17402) (camc314)
+- 7ec39d0 codegen: Use print_ascii_byte in more places (#17401) (camc314)
+- 510ec00 codegen: Avoid allocation in PrivateIdentifier gen when not mangling (#17395) (camc314)
+
+## [0.104.0] - 2025-12-19
+
+### 🚀 Features
+
+- 67e9f9e codegen: Keep comments on the export specifiers (#16943) (夕舞八弦)
+
+## [0.103.0] - 2025-12-15
+
+### 💥 BREAKING CHANGES
+
+- 320c09f ast, parser, linter, codegen, formatter: [**BREAKING**] Rename `CommentKind::Block` to `CommentKind::SinglelineBlock` (#16501) (Dunqing)
+
+### 🚀 Features
+
+- 30a9076 ast, parser, codegen: Add `CommentKind::MultilineBlock` (#16479) (Dunqing)
+
+## [0.102.0] - 2025-12-08
+
+### 🚀 Features
+
+- a607cc4 codegen: Preserve comments between CatchClause's param and body (#16167) (copilot-swe-agent)
+
 ## [0.100.0] - 2025-12-01
 
 ### 💥 BREAKING CHANGES

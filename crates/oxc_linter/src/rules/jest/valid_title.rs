@@ -17,9 +17,45 @@ use crate::{
     utils::{JestFnKind, JestGeneralFnKind, PossibleJestNode, parse_general_jest_fn_call},
 };
 
-fn valid_title_diagnostic(error_message: &str, help_text: &str, span: Span) -> OxcDiagnostic {
-    OxcDiagnostic::warn(format!("{error_message:?}"))
-        .with_help(format!("{help_text:?}"))
+fn title_must_be_string_diagnostic(span: Span) -> OxcDiagnostic {
+    OxcDiagnostic::warn("Title must be a string")
+        .with_help("Replace your title with a string")
+        .with_label(span)
+}
+
+fn empty_title_diagnostic(span: Span) -> OxcDiagnostic {
+    OxcDiagnostic::warn("Should not have an empty title")
+        .with_help("Write a meaningful title for your test")
+        .with_label(span)
+}
+
+fn duplicate_prefix_diagnostic(span: Span) -> OxcDiagnostic {
+    OxcDiagnostic::warn("Should not have duplicate prefix")
+        .with_help("The function name already has the prefix, try to remove the duplicate prefix")
+        .with_label(span)
+}
+
+fn accidental_space_diagnostic(span: Span) -> OxcDiagnostic {
+    OxcDiagnostic::warn("Should not have leading or trailing spaces")
+        .with_help("Remove the leading or trailing spaces")
+        .with_label(span)
+}
+
+fn disallowed_word_diagnostic(word: &str, span: Span) -> OxcDiagnostic {
+    OxcDiagnostic::warn(format!("{word} is not allowed in test title"))
+        .with_help("It is included in the `disallowedWords` of your config file, try to remove it from your title")
+        .with_label(span)
+}
+
+fn must_match_diagnostic(message: &str, span: Span) -> OxcDiagnostic {
+    OxcDiagnostic::warn(message.to_string())
+        .with_help("Make sure the title matches the `mustMatch` of your config file")
+        .with_label(span)
+}
+
+fn must_not_match_diagnostic(message: &str, span: Span) -> OxcDiagnostic {
+    OxcDiagnostic::warn(message.to_string())
+        .with_help("Make sure the title does not match the `mustNotMatch` of your config file")
         .with_label(span)
 }
 
@@ -107,7 +143,7 @@ declare_oxc_lint!(
 );
 
 impl Rule for ValidTitle {
-    fn from_configuration(value: serde_json::Value) -> Self {
+    fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
         let config = value.get(0);
         let get_as_bool = |name: &str| -> bool {
             config
@@ -133,7 +169,8 @@ impl Rule for ValidTitle {
             .and_then(|v| v.get("mustMatch"))
             .and_then(compile_matcher_patterns)
             .unwrap_or_default();
-        Self(Box::new(ValidTitleConfig {
+
+        Ok(Self(Box::new(ValidTitleConfig {
             ignore_type_of_test_name,
             ignore_type_of_describe_name,
             allow_arguments,
@@ -141,7 +178,7 @@ impl Rule for ValidTitle {
             ignore_space,
             must_not_match_patterns,
             must_match_patterns,
-        }))
+        })))
     }
 
     fn run_on_jest_node<'a, 'c>(
@@ -226,12 +263,12 @@ impl ValidTitle {
                     return;
                 }
                 if need_report_name {
-                    Message::TitleMustBeString.diagnostic(ctx, arg.span());
+                    ctx.diagnostic(title_must_be_string_diagnostic(arg.span()));
                 }
             }
             _ => {
                 if need_report_name {
-                    Message::TitleMustBeString.diagnostic(ctx, arg.span());
+                    ctx.diagnostic(title_must_be_string_diagnostic(arg.span()));
                 }
             }
         }
@@ -360,7 +397,7 @@ fn validate_title(
     ctx: &LintContext,
 ) {
     if title.is_empty() {
-        Message::EmptyTitle.diagnostic(ctx, span);
+        ctx.diagnostic(empty_title_diagnostic(span));
         return;
     }
 
@@ -373,20 +410,14 @@ fn validate_title(
         };
 
         if let Some(matched) = disallowed_words_reg.find(title) {
-            let error = format!("{} is not allowed in test title", matched.as_str());
-            ctx.diagnostic(valid_title_diagnostic(
-                &error,
-                "It is included in the `disallowedWords` of your config file, try to remove it from your title",
-                span,
-            ));
+            ctx.diagnostic(disallowed_word_diagnostic(matched.as_str(), span));
         }
         return;
     }
 
     let trimmed_title = title.trim();
     if !valid_title.ignore_space && trimmed_title != title {
-        let (error, help) = Message::AccidentalSpace.detail();
-        ctx.diagnostic_with_fix(valid_title_diagnostic(error, help, span), |fixer| {
+        ctx.diagnostic_with_fix(accidental_space_diagnostic(span), |fixer| {
             let inner_span = span.shrink(1);
             let raw_text = fixer.source_range(inner_span);
             let trimmed_raw = raw_text.trim().to_string();
@@ -400,8 +431,7 @@ fn validate_title(
     };
 
     if first_word == un_prefixed_name {
-        let (error, help) = Message::DuplicatePrefix.detail();
-        ctx.diagnostic_with_fix(valid_title_diagnostic(error, help, span), |fixer| {
+        ctx.diagnostic_with_fix(duplicate_prefix_diagnostic(span), |fixer| {
             // Use raw source text to preserve escape sequences
             let inner_span = span.shrink(1);
             let raw_text = fixer.source_range(inner_span);
@@ -426,11 +456,7 @@ fn validate_title(
             Some(message) => message.as_str(),
             None => &format!("{un_prefixed_name} should match {raw_pattern}"),
         };
-        ctx.diagnostic(valid_title_diagnostic(
-            message,
-            "Make sure the title matches the `mustMatch` of your config file",
-            span,
-        ));
+        ctx.diagnostic(must_match_diagnostic(message, span));
     }
 
     if let Some((regex, message)) = valid_title.must_not_match_patterns.get(&jest_fn_name)
@@ -442,11 +468,7 @@ fn validate_title(
             None => &format!("{un_prefixed_name} should not match {raw_pattern}"),
         };
 
-        ctx.diagnostic(valid_title_diagnostic(
-            message,
-            "Make sure the title not matches the `mustNotMatch` of your config file",
-            span,
-        ));
+        ctx.diagnostic(must_not_match_diagnostic(message, span));
     }
 }
 
@@ -458,39 +480,6 @@ fn does_binary_expression_contain_string_node(expr: &BinaryExpression) -> bool {
     match &expr.left {
         Expression::BinaryExpression(left) => does_binary_expression_contain_string_node(left),
         _ => false,
-    }
-}
-
-enum Message {
-    TitleMustBeString,
-    EmptyTitle,
-    DuplicatePrefix,
-    AccidentalSpace,
-}
-
-impl Message {
-    fn detail(&self) -> (&'static str, &'static str) {
-        match self {
-            Self::TitleMustBeString => {
-                ("Title must be a string", "Replace your title with a string")
-            }
-            Self::EmptyTitle => {
-                ("Should not have an empty title", "Write a meaningful title for your test")
-            }
-            Self::DuplicatePrefix => (
-                "Should not have duplicate prefix",
-                "The function name has already contains the prefix, try remove the duplicate prefix",
-            ),
-            Self::AccidentalSpace => (
-                "Should not have leading or trailing spaces",
-                "Remove the leading or trailing spaces",
-            ),
-        }
-    }
-
-    fn diagnostic(&self, ctx: &LintContext, span: Span) {
-        let (error, help) = self.detail();
-        ctx.diagnostic(valid_title_diagnostic(error, help, span));
     }
 }
 

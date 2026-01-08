@@ -4,6 +4,7 @@ use oxc_macros::declare_oxc_lint;
 use oxc_span::Span;
 use oxc_syntax::operator::BinaryOperator;
 use schemars::JsonSchema;
+use serde::Serialize;
 use serde_json::Value;
 
 use crate::{AstNode, context::LintContext, rule::Rule};
@@ -82,7 +83,7 @@ pub struct NoInstanceofBuiltinsConfig {
     strategy: Strategy,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, JsonSchema)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, JsonSchema, Serialize)]
 #[serde(rename_all = "camelCase")]
 enum Strategy {
     Strict,
@@ -128,6 +129,49 @@ declare_oxc_lint!(
 );
 
 impl Rule for NoInstanceofBuiltins {
+    fn from_configuration(value: Value) -> Result<Self, serde_json::error::Error> {
+        let mut include = Vec::<String>::new();
+        let mut exclude = Vec::<String>::new();
+        let mut use_error_is_error = false;
+        let mut strategy = Strategy::Loose;
+
+        if let Value::Array(arr) = value
+            && let Some(Value::Object(map)) = arr.first()
+        {
+            if let Some(Value::Array(inc)) = map.get("include") {
+                for v in inc {
+                    if let Value::String(s) = v {
+                        include.push(s.clone());
+                    }
+                }
+            }
+            if let Some(Value::Array(exc)) = map.get("exclude") {
+                for v in exc {
+                    if let Value::String(s) = v {
+                        exclude.push(s.clone());
+                    }
+                }
+            }
+            if let Some(Value::Bool(b)) = map.get("useErrorIsError") {
+                use_error_is_error = *b;
+            }
+            if let Some(Value::String(b)) = map.get("strategy") {
+                match b.as_str() {
+                    "strict" => strategy = Strategy::Strict,
+                    "loose" => strategy = Strategy::Loose,
+                    _ => {}
+                }
+            }
+        }
+
+        Ok(Self(Box::new(NoInstanceofBuiltinsConfig {
+            include,
+            exclude,
+            use_error_is_error,
+            strategy,
+        })))
+    }
+
     fn run<'a>(&self, node: &AstNode<'a>, ctx: &LintContext<'a>) {
         let AstKind::BinaryExpression(bin) = node.kind() else { return };
         if bin.operator != BinaryOperator::Instanceof {
@@ -163,49 +207,6 @@ impl Rule for NoInstanceofBuiltins {
         {
             ctx.diagnostic(no_instanceof_builtins_diagnostic(bin.span));
         }
-    }
-
-    fn from_configuration(value: Value) -> Self {
-        let mut include = Vec::<String>::new();
-        let mut exclude = Vec::<String>::new();
-        let mut use_error_is_error = false;
-        let mut strategy = Strategy::Loose;
-
-        if let Value::Array(arr) = value
-            && let Some(Value::Object(map)) = arr.first()
-        {
-            if let Some(Value::Array(inc)) = map.get("include") {
-                for v in inc {
-                    if let Value::String(s) = v {
-                        include.push(s.clone());
-                    }
-                }
-            }
-            if let Some(Value::Array(exc)) = map.get("exclude") {
-                for v in exc {
-                    if let Value::String(s) = v {
-                        exclude.push(s.clone());
-                    }
-                }
-            }
-            if let Some(Value::Bool(b)) = map.get("useErrorIsError") {
-                use_error_is_error = *b;
-            }
-            if let Some(Value::String(b)) = map.get("strategy") {
-                match b.as_str() {
-                    "strict" => strategy = Strategy::Strict,
-                    "loose" => strategy = Strategy::Loose,
-                    _ => {}
-                }
-            }
-        }
-
-        Self(Box::new(NoInstanceofBuiltinsConfig {
-            include,
-            exclude,
-            use_error_is_error,
-            strategy,
-        }))
     }
 }
 

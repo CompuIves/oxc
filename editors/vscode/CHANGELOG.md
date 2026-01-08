@@ -4,6 +4,56 @@ All notable changes to this package will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0).
 
+## [1.37.0] - 2026-01-05
+
+### 🐛 Bug Fixes
+
+- 2e8f469 vscode: Search for `node_modules/.bin/oxlint.exe` too (bun setup) (#17597) (Sysix)
+
+### ⚡ Performance
+
+- 605dbf1 vscode: Restrict searching for oxlint/oxfmt binaries only 3 levels deep + 10s timeout (#17345) (Sysix)
+
+## [1.36.0] - 2025-12-29
+
+### 🚀 Features
+
+- 5988dfa vscode: Show language server version inside sidebar status item tooltip (#17360) (Sysix)
+- d9aa426 vscode: Support diagnostic pull mode (#17211) (Sysix)
+
+## [1.35.0] - 2025-12-22
+
+### 🐛 Bug Fixes
+
+- fc6e715 vscode: Lsp server path in quotes (only windows) (#17126) (Sysix)
+
+### 📚 Documentation
+
+- c14afd3 editor: Improve description for 'no-unused-disable-directives'  settings options (#17236) (connorshea)
+
+## [1.34.0] - 2025-12-19
+
+### 🚀 Features
+
+- 552f9ef vscode: Auto-generate VSCode README configuration from package.json (#16970) (Copilot)
+- ae1e5bc vscode: Add support for tsgolint binary configuration (#16921) (ColemanDunn)
+
+## [1.33.0] - 2025-12-15
+
+### 🚀 Features
+
+- a082040 editor: Adjust oxlint oxfmt config file editor supporting (#16616) (Liang Mi)
+
+## [1.32.0] - 2025-12-08
+
+### 🚀 Features
+
+- 2d6bb85 editors: Toggle client after vscode config changing (#16162) (Liang Mi)
+
+### 🛡️ Security
+
+- d90ef9f deps: Update dependency rolldown to v1.0.0-beta.53 (#16428) (renovate[bot])
+
 ## [1.30.0] - 2025-11-24
 
 ### 🚀 Features

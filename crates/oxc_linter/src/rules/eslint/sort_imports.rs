@@ -11,6 +11,7 @@ use oxc_diagnostics::OxcDiagnostic;
 use oxc_macros::declare_oxc_lint;
 use oxc_span::Span;
 use schemars::JsonSchema;
+use serde::Serialize;
 
 use crate::{context::LintContext, rule::Rule};
 
@@ -49,6 +50,7 @@ pub struct SortImportsOptions {
     /// When `true`, the rule allows import groups separated by blank lines to be treated independently.
     allow_separated_groups: bool,
     /// Specifies the sort order of different import syntaxes.
+    /// Must include all 4 kinds or else this will fall back to default.
     member_syntax_sort_order: MemberSyntaxSortOrder,
 }
 
@@ -71,6 +73,8 @@ declare_oxc_lint!(
     ///
     /// ### Why is this bad?
     ///
+    /// Consistent import sorting can be useful for readability and maintainability of code.
+    ///
     /// ### Examples
     ///
     /// Examples of **incorrect** code for this rule:
@@ -88,9 +92,9 @@ declare_oxc_lint!(
 );
 
 impl Rule for SortImports {
-    fn from_configuration(value: serde_json::Value) -> Self {
+    fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
         let Some(config) = value.get(0) else {
-            return Self(Box::default());
+            return Ok(Self(Box::default()));
         };
 
         let ignore_case =
@@ -132,13 +136,13 @@ impl Rule for SortImports {
             })
             .unwrap_or_default();
 
-        Self(Box::new(SortImportsOptions {
+        Ok(Self(Box::new(SortImportsOptions {
             ignore_case,
             ignore_declaration_sort,
             ignore_member_sort,
             allow_separated_groups,
             member_syntax_sort_order,
-        }))
+        })))
     }
 
     fn run_once(&self, ctx: &LintContext) {
@@ -359,7 +363,8 @@ impl SortImports {
     }
 }
 
-#[derive(Debug, Clone, JsonSchema)]
+#[derive(Debug, Clone, JsonSchema, Serialize)]
+#[schemars(transparent)]
 struct MemberSyntaxSortOrder(Vec<ImportKind>);
 
 impl Default for MemberSyntaxSortOrder {
@@ -380,6 +385,7 @@ impl std::ops::Deref for MemberSyntaxSortOrder {
         &self.0
     }
 }
+
 impl MemberSyntaxSortOrder {
     fn get_group_index_by_import_decl(&self, decl: &ImportDeclaration) -> usize {
         // import "foo.js" -> ImportKind::None
@@ -411,17 +417,17 @@ impl MemberSyntaxSortOrder {
     }
 }
 
-#[derive(Debug, Default, Clone, Hash, Eq, PartialEq, JsonSchema)]
+#[derive(Debug, Default, Clone, Hash, Eq, PartialEq, JsonSchema, Serialize)]
 #[serde(rename_all = "lowercase")]
 enum ImportKind {
-    // import from 'foo.js'
+    // `import 'foo.js';`
     #[default]
     None,
-    // import * from 'foo.js'
+    // `import * as foo from 'foo.js';`
     All,
-    // import { a, b } from 'foo.js'
+    // `import { a, b } from 'foo.js';`
     Multiple,
-    // import a from 'foo.js'
+    // `import a from 'foo.js';`
     Single,
 }
 
@@ -458,22 +464,22 @@ fn get_first_local_member_name<'a>(decl: &ImportDeclaration<'a>) -> Option<Cow<'
 
 // Calculates number of lines between two nodes. It is assumed that the given `left` span appears before
 // the given `right` span in the source code. Lines are counted from the end of the `left` span till the
-// start of the `right` span. If the given span are on the same line, or `right` span is appears before `left` span,
-// it returns `0`.
+// start of the `right` span. If the given span are on the same or consecutive lines, or `right` span is
+// appears before `left` span, it returns `0`.
 fn get_number_of_lines_between(left: Span, right: Span, ctx: &LintContext) -> usize {
     if left.end >= right.start {
         return 0;
     }
     let between_span = Span::new(left.end, right.start);
-    let count = ctx.source_range(between_span).lines().count();
+    let count = ctx.source_range(between_span).chars().filter(|c| *c == '\n').count();
 
-    // In same line
-    if count < 2 {
+    if count < 1 {
         return 0;
     }
 
-    // In different lines, need to subtract 2 because the count includes the first and last line.
-    count - 2
+    // In different lines, need to subtract 1, because we need new line 2 time to have 1 line
+    // between node
+    count - 1
 }
 
 #[test]
@@ -582,6 +588,13 @@ fn test() {
             "import b from 'b';
 
             import a from 'a';",
+            Some(serde_json::json!([{ "allowSeparatedGroups": true }])),
+        ),
+        // No leading whitespaces - issue #15990
+        (
+            "import b from 'b';
+
+import a from 'a';",
             Some(serde_json::json!([{ "allowSeparatedGroups": true }])),
         ),
         (

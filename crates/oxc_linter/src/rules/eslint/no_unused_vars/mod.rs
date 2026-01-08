@@ -15,7 +15,7 @@ use options::{IgnorePattern, NoUnusedVarsOptions};
 use oxc_ast::AstKind;
 use oxc_macros::declare_oxc_lint;
 use oxc_semantic::{AstNode, ScopeFlags, SymbolFlags};
-use oxc_span::GetSpan;
+use oxc_span::{GetSpan, Span};
 use symbol::Symbol;
 
 use crate::{
@@ -202,8 +202,8 @@ impl Deref for NoUnusedVars {
 }
 
 impl Rule for NoUnusedVars {
-    fn from_configuration(value: serde_json::Value) -> Self {
-        Self(Box::new(NoUnusedVarsOptions::try_from(value).unwrap()))
+    fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
+        Ok(Self(Box::new(NoUnusedVarsOptions::try_from(value).unwrap_or_default())))
     }
 
     fn run_once(&self, ctx: &LintContext) {
@@ -308,6 +308,12 @@ impl NoUnusedVars {
                 }
                 ctx.diagnostic(diagnostic::param(symbol, &self.args_ignore_pattern));
             }
+            AstKind::FormalParameterRest(_) => {
+                if NoUnusedVars::is_allowed_binding_rest_element(symbol) {
+                    return;
+                }
+                ctx.diagnostic(diagnostic::param(symbol, &self.vars_ignore_pattern));
+            }
             AstKind::BindingRestElement(_) => {
                 if NoUnusedVars::is_allowed_binding_rest_element(symbol) {
                     return;
@@ -320,7 +326,7 @@ impl NoUnusedVars {
                 }
                 ctx.diagnostic(diagnostic::declared(symbol, &IgnorePattern::<&str>::None, false));
             }
-            AstKind::TSInterfaceDeclaration(_) => {
+            AstKind::TSInterfaceDeclaration(_) | AstKind::TSTypeAliasDeclaration(_) => {
                 if symbol.is_in_declared_module() {
                     return;
                 }
@@ -332,12 +338,26 @@ impl NoUnusedVars {
                 }
                 ctx.diagnostic(diagnostic::declared(symbol, &self.vars_ignore_pattern, false));
             }
-            AstKind::CatchParameter(_) => {
-                ctx.diagnostic(diagnostic::declared(
-                    symbol,
-                    &self.caught_errors_ignore_pattern,
-                    false,
-                ));
+            AstKind::CatchParameter(catch) => {
+                // NOTE: these are safe suggestions as deleting unused catch
+                // bindings wont have any side effects.
+                ctx.diagnostic_with_suggestion(
+                    diagnostic::declared(symbol, &self.caught_errors_ignore_pattern, false),
+                    |fixer| {
+                        let Span { start, end, .. } = catch.span();
+
+                        let (Some(paren_start), Some(paren_end_offset)) = (
+                            ctx.find_prev_token_from(start, "("),
+                            ctx.find_next_token_from(end, ")"),
+                        ) else {
+                            return fixer.noop();
+                        };
+
+                        let paren_end = end + paren_end_offset;
+                        let delete_span = Span::new(paren_start, paren_end + 1);
+                        fixer.delete_range(delete_span)
+                    },
+                );
             }
             _ => ctx.diagnostic(diagnostic::declared(symbol, &IgnorePattern::<&str>::None, false)),
         }

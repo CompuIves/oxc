@@ -35,8 +35,12 @@ pub struct ExpectExpect(Box<ExpectExpectConfig>);
 #[serde(rename_all = "camelCase", default)]
 pub struct ExpectExpectConfig {
     /// A list of function names that should be treated as assertion functions.
+    ///
+    /// NOTE: The default value is `["expect"]` for Jest and
+    /// `["expect", "expectTypeOf", "assert", "assertType"]` for Vitest.
+    #[serde(rename = "assertFunctionNames")]
     assert_function_names_jest: Vec<CompactStr>,
-    /// A list of function names that should be treated as assertion functions for Vitest.
+    #[schemars(skip)] // Skipped because this field isn't exposed to the user.
     assert_function_names_vitest: Vec<CompactStr>,
     /// An array of function names that should also be treated as test blocks.
     additional_test_block_functions: Vec<CompactStr>,
@@ -84,8 +88,8 @@ declare_oxc_lint!(
     /// test('should assert something', () => {});
     /// ```
     ///
-    /// This rule is compatible with [eslint-plugin-vitest](https://github.com/veritem/eslint-plugin-vitest/blob/v1.1.9/docs/rules/expect-expect.md),
-    /// to use it, add the following configuration to your `.eslintrc.json`:
+    /// This rule is compatible with [eslint-plugin-vitest](https://github.com/vitest-dev/eslint-plugin-vitest/blob/v1.1.9/docs/rules/expect-expect.md),
+    /// to use it, add the following configuration to your `.oxlintrc.json`:
     ///
     /// ```json
     /// {
@@ -101,7 +105,7 @@ declare_oxc_lint!(
 );
 
 impl Rule for ExpectExpect {
-    fn from_configuration(value: serde_json::Value) -> Self {
+    fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
         let default_assert_function_names_jest = vec!["expect".into()];
         let default_assert_function_names_vitest =
             vec!["expect".into(), "expectTypeOf".into(), "assert".into(), "assertType".into()];
@@ -128,11 +132,11 @@ impl Rule for ExpectExpect {
             .map(|v| v.iter().filter_map(serde_json::Value::as_str).map(CompactStr::from).collect())
             .unwrap_or_default();
 
-        Self(Box::new(ExpectExpectConfig {
+        Ok(Self(Box::new(ExpectExpectConfig {
             assert_function_names_jest,
             assert_function_names_vitest,
             additional_test_block_functions,
-        }))
+        })))
     }
 
     fn run_on_jest_node<'a, 'c>(

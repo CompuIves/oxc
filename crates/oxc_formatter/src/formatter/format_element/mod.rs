@@ -7,7 +7,7 @@ use std::hash::{Hash, Hasher};
 use std::ptr;
 use std::{borrow::Cow, ops::Deref};
 
-use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+use unicode_width::UnicodeWidthStr;
 
 use oxc_allocator::Vec as ArenaVec;
 
@@ -25,7 +25,11 @@ const _: () = {
             size_of::<FormatElement>() == 40,
             "`FormatElement` size exceeds 40 bytes, expected 40 bytes in 64-bit platforms"
         );
-    } else {
+    } else if cfg!(target_family = "wasm") || align_of::<u64>() == 8 {
+        // Some 32-bit platforms have 8-byte alignment for `u64` and `f64`, while others have 4-byte alignment.
+        //
+        // Skip these assertions on 32-bit platforms where `u64` / `f64` have 4-byte alignment, because
+        // some layout calculations may be incorrect. https://github.com/oxc-project/oxc/pull/13716
         assert!(
             size_of::<FormatElement>() == 24,
             "`FormatElement` size exceeds 24 bytes, expected 24 bytes in 32-bit platforms"
@@ -40,7 +44,11 @@ const _: () = {
             size_of::<FormatElement>() == 24,
             "`FormatElement` size exceeds 24 bytes, expected 24 bytes in 64-bit platforms"
         );
-    } else {
+    } else if cfg!(target_family = "wasm") || align_of::<u64>() == 8 {
+        // Some 32-bit platforms have 8-byte alignment for `u64` and `f64`, while others have 4-byte alignment.
+        //
+        // Skip these assertions on 32-bit platforms where `u64` / `f64` have 4-byte alignment, because
+        // some layout calculations may be incorrect. https://github.com/oxc-project/oxc/pull/13716
         assert!(
             size_of::<FormatElement>() == 16,
             "`FormatElement` size exceeds 16 bytes, expected 16 bytes in 32-bit platforms"
@@ -87,6 +95,11 @@ pub enum FormatElement<'a> {
 
     /// A [Tag] that marks the start/end of some content to which some special formatting is applied.
     Tag(Tag),
+
+    /// A Tailwind CSS class sorting marker.
+    /// The usize is an index into the collected tailwind classes array.
+    /// During printing, this will be replaced with the sorted class name.
+    TailwindClass(usize),
 }
 
 impl std::fmt::Debug for FormatElement<'_> {
@@ -103,6 +116,9 @@ impl std::fmt::Debug for FormatElement<'_> {
             }
             FormatElement::Interned(interned) => fmt.debug_list().entries(&**interned).finish(),
             FormatElement::Tag(tag) => fmt.debug_tuple("Tag").field(tag).finish(),
+            FormatElement::TailwindClass(index) => {
+                fmt.debug_tuple("TailwindClass").field(index).finish()
+            }
         }
     }
 }
@@ -193,7 +209,6 @@ pub const LINE_TERMINATORS: [char; 3] = ['\r', LINE_SEPARATOR, PARAGRAPH_SEPARAT
 
 /// Replace the line terminators matching the provided list with "\n"
 /// since its the only line break type supported by the printer
-#[expect(unused)]
 pub fn normalize_newlines<const N: usize>(text: &str, terminators: [char; N]) -> Cow<'_, str> {
     let mut result = String::new();
     let mut last_end = 0;
@@ -271,7 +286,8 @@ impl FormatElements for FormatElement<'_> {
             | FormatElement::LineSuffixBoundary
             | FormatElement::Space
             | FormatElement::Tag(_)
-            | FormatElement::HardSpace => false,
+            | FormatElement::HardSpace
+            | FormatElement::TailwindClass(_) => false,
         }
     }
 
@@ -445,7 +461,10 @@ impl TextWidth {
 
     /// Calculates width from text, handling tabs, newlines, and Unicode.
     ///
-    /// Returns early on newline detection for efficiency.
+    /// NOTE: Uses `UnicodeWidthStr::width()` for accurate emoji sequence handling.
+    /// Counting by `char` can lead to incorrect widths for complex Unicode sequences.
+    /// e.g. "🗑️" (U+1F5D1 U+FE0F) is a single emoji with width 2, but counting chars gives width 1.
+    #[expect(clippy::cast_possible_truncation)]
     pub fn from_text(text: &str, indent_width: IndentWidth) -> TextWidth {
         // Fast path for empty text
         if text.is_empty() {
@@ -453,17 +472,22 @@ impl TextWidth {
         }
 
         let mut width = 0u32;
-
-        #[expect(clippy::cast_lossless)]
-        for c in text.chars() {
-            let char_width = match c {
-                '\t' => indent_width.value(),
-                '\n' => return Self::multiline(width),
-                #[expect(clippy::cast_possible_truncation)]
-                c => c.width().unwrap_or(0) as u8,
-            };
-            width += char_width as u32;
+        let mut segment_start = 0;
+        for (i, c) in text.char_indices() {
+            match c {
+                '\t' => {
+                    width += text[segment_start..i].width() as u32;
+                    width += u32::from(indent_width.value());
+                    segment_start = i + 1; // Skip the tab character
+                }
+                '\n' => {
+                    width += text[segment_start..i].width() as u32;
+                    return Self::multiline(width);
+                }
+                _ => {}
+            }
         }
+        width += text[segment_start..].width() as u32;
 
         Self::single(width)
     }
@@ -545,6 +569,31 @@ mod tests {
         let width = TextWidth::from_text("你好", indent_width(2));
         debug_assert_eq!(width.value(), 4); // Each CJK char is width 2
         debug_assert!(!width.is_multiline());
+    }
+
+    #[test]
+    fn from_text_handles_emoji_sequences() {
+        use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+
+        // Emoji with variation selector: 🗑️ = U+1F5D1 + U+FE0F
+        let emoji = "🗑️";
+
+        // Counting by char gives wrong width
+        let wrong: usize = emoji.chars().filter_map(UnicodeWidthChar::width).sum();
+        debug_assert_eq!(wrong, 1);
+        // Need to count by str for correct width
+        debug_assert_eq!(emoji.width(), 2);
+        // Verify `TextWidth` also gets it right
+        let width = TextWidth::from_text(emoji, indent_width(2));
+        debug_assert_eq!(width.value(), 2);
+
+        // Emoji with text
+        let width = TextWidth::from_text("🗑️ DELETE", indent_width(2));
+        debug_assert_eq!(width.value(), 9); // 2 (emoji) + 1 (space) + 6 (DELETE)
+
+        // Another emoji with variation selector: ⚠️ = U+26A0 + U+FE0F
+        let width = TextWidth::from_text("⚠️", indent_width(2));
+        debug_assert_eq!(width.value(), 2);
     }
 
     #[test]

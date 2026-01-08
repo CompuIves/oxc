@@ -20,14 +20,24 @@ impl<'a> FormatWrite<'a> for AstNode<'a, TryStatement<'a>> {
         let finalizer = self.finalizer();
         write!(f, ["try", space()]);
 
-        // Use `write` rather than `write!` in order to avoid printing leading comments for `block`.
-        block.write(f);
+        if f.comments().has_leading_own_line_comment(block.span.start) {
+            // Use `write` rather than `write!` in order to avoid printing leading own line comments for `block`.
+            block.write(f);
+        } else {
+            write!(f, block);
+        }
+
         if let Some(handler) = handler {
             write!(f, [space(), handler]);
         }
         if let Some(finalizer) = finalizer {
             write!(f, [space(), "finally", space()]);
-            finalizer.write(f);
+            if f.comments().has_leading_own_line_comment(finalizer.span.start) {
+                // Use `write` rather than `write!` in order to avoid printing leading own line comments for `finalizer`.
+                finalizer.write(f);
+            } else {
+                write!(f, finalizer);
+            }
         }
     }
 }
@@ -36,11 +46,7 @@ impl<'a> FormatWrite<'a> for AstNode<'a, CatchClause<'a>> {
     fn write(&self, f: &mut Formatter<'_, 'a>) {
         let comments = f.context().comments();
         let leading_comments = comments.comments_before(self.span.start);
-        let has_line_comment = leading_comments.iter().any(|comment| {
-            comment.is_line()
-                || comments.is_own_line_comment(comment)
-                || comments.is_end_of_line_comment(comment)
-        });
+        let has_line_comment = leading_comments.iter().any(|comment| comment.has_newlines_around());
 
         if has_line_comment {
             // `try {} /* comment */\n catch (e) {}`
@@ -60,8 +66,13 @@ impl<'a> FormatWrite<'a> for AstNode<'a, CatchClause<'a>> {
 
         write!(f, ["catch", space(), self.param(), space()]);
 
-        // Use `write` rather than `write!` in order to avoid printing leading comments for `block`.
-        self.body().write(f);
+        let block = self.body();
+        if f.comments().has_leading_own_line_comment(block.span.start) {
+            // Use `write` rather than `write!` in order to avoid printing leading own line comments for `block`.
+            block.write(f);
+        } else {
+            write!(f, block);
+        }
     }
 }
 
@@ -74,13 +85,13 @@ impl<'a> FormatWrite<'a> for AstNode<'a, CatchParameter<'a>> {
         let leading_comments = f.context().comments().comments_before(span.start);
         let leading_comment_with_break = leading_comments
             .iter()
-            .any(|comment| comment.is_line() || f.source_text().lines_after(comment.span.end) > 0);
+            .any(|comment| comment.is_line() || comment.followed_by_newline());
 
         let trailing_comments =
             f.context().comments().comments_before_character(self.span().end, b')');
-        let trailing_comment_with_break = trailing_comments.iter().any(|comment| {
-            comment.is_line() || f.source_text().get_lines_before(comment.span, f.comments()) > 0
-        });
+        let trailing_comment_with_break = trailing_comments
+            .iter()
+            .any(|comment| comment.is_line() || comment.preceded_by_newline());
 
         if leading_comment_with_break || trailing_comment_with_break {
             write!(
@@ -90,6 +101,7 @@ impl<'a> FormatWrite<'a> for AstNode<'a, CatchParameter<'a>> {
                     let printed_len_before_pattern =
                         f.context().comments().printed_comments().len();
                     write!(f, self.pattern());
+                    write!(f, self.type_annotation());
                     if trailing_comments.is_empty() ||
                     // The `pattern` cannot print comments that are below it, so we need to check whether there
                     // are any trailing comments that haven't been printed yet. If there are, print them.
@@ -103,6 +115,7 @@ impl<'a> FormatWrite<'a> for AstNode<'a, CatchParameter<'a>> {
             );
         } else {
             write!(f, self.pattern());
+            write!(f, self.type_annotation());
         }
 
         self.format_trailing_comments(f);

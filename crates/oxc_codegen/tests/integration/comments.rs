@@ -26,6 +26,11 @@ fn unit() {
         "function foo() { return /*i18n*/ {} }",
         "function foo() {\n\treturn (\t/*i18n*/ {});\n}\n",
     );
+
+    test_same("export { /** @deprecated */ parseAst } from \"rolldown/parseAst\";\n");
+    test_same("export { /** @deprecated */ parseAst };\n");
+    test_same("export { parseAst as /** @deprecated */ b } from \"rolldown/parseAst\";\n");
+    test_same("export { parseAst as /** @deprecated */ b };\n");
 }
 
 pub mod jsdoc {
@@ -181,6 +186,19 @@ catch(e) {
   // should never happen
 }
 ",
+            // Inline comment between catch param and body
+            "try { console.log('test'); }
+catch (err) /* v8 ignore next */ { console.error(err); }",
+            // Multiple comments between catch param and body
+            "try { something(); }
+catch (err) /* c8 ignore next */ /* istanbul ignore next */ { handle(err); }",
+            // Line comment between catch param and body.
+            // NOTE: Line comments after `)` are classified as trailing comments by the parser,
+            // so they are not preserved. Use block comments instead.
+            // See: https://github.com/oxc-project/oxc/pull/16167#discussion_r2567604139
+            "try { something(); }
+catch (err) // v8 ignore next
+{ handle(err); }",
         ];
 
         snapshot("coverage", &cases);
@@ -492,6 +510,13 @@ delete /* @__PURE__ */ (() => {})();",
             "const Foo = /* @__PURE__ */ (() => {})()<X>",
             "const Foo = /* @__PURE__ */ <Foo>(() => {})()!",
             "const Foo = /* @__PURE__ */ <Foo>(() => {})()! as X satisfies Y",
+            // https://github.com/oxc-project/oxc/issues/17670 - annotation before parenthesized arrow function
+            r"/* @__NO_SIDE_EFFECTS__ */ ((options, extraOptions) => {
+  return defineCustomElement(options, extraOptions, hydrate);
+})",
+            r"/* @__NO_SIDE_EFFECTS__ */ ((x) => x)",
+            r"/* @__NO_SIDE_EFFECTS__ */ (function() {})",
+            r"/* @__NO_SIDE_EFFECTS__ */ (function foo() {})",
         ];
 
         snapshot("pure_comments", &cases);

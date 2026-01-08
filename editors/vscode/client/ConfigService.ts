@@ -1,9 +1,20 @@
 import * as path from "node:path";
-import { ConfigurationChangeEvent, Uri, workspace, WorkspaceFolder } from "vscode";
+import {
+  CancellationTokenSource,
+  ConfigurationChangeEvent,
+  Uri,
+  workspace,
+  WorkspaceFolder,
+} from "vscode";
+import { DiagnosticPullMode } from "vscode-languageclient";
 import { validateSafeBinaryPath } from "./PathValidator";
 import { IDisposable } from "./types";
 import { VSCodeConfig } from "./VSCodeConfig";
-import { WorkspaceConfig, WorkspaceConfigInterface } from "./WorkspaceConfig";
+import {
+  OxfmtWorkspaceConfigInterface,
+  OxlintWorkspaceConfigInterface,
+  WorkspaceConfig,
+} from "./WorkspaceConfig";
 
 export class ConfigService implements IDisposable {
   public static readonly namespace = "oxc";
@@ -19,7 +30,7 @@ export class ConfigService implements IDisposable {
 
   constructor() {
     this.vsCodeConfig = new VSCodeConfig();
-    const workspaceFolders = workspace.workspaceFolders;
+    const { workspaceFolders } = workspace;
     if (workspaceFolders) {
       for (const folder of workspaceFolders) {
         this.addWorkspaceConfig(folder);
@@ -33,10 +44,27 @@ export class ConfigService implements IDisposable {
     this._disposables.push(disposeChangeListener);
   }
 
-  public get languageServerConfig(): { workspaceUri: string; options: WorkspaceConfigInterface }[] {
+  public get oxlintServerConfig(): {
+    workspaceUri: string;
+    options: OxlintWorkspaceConfigInterface;
+  }[] {
+    return [...this.workspaceConfigs.entries()].map(([path, config]) => {
+      const options = config.toOxlintConfig();
+
+      return {
+        workspaceUri: Uri.file(path).toString(),
+        options,
+      };
+    });
+  }
+
+  public get formatterServerConfig(): {
+    workspaceUri: string;
+    options: OxfmtWorkspaceConfigInterface;
+  }[] {
     return [...this.workspaceConfigs.entries()].map(([path, config]) => ({
       workspaceUri: Uri.file(path).toString(),
-      options: config.toLanguageServerConfig(),
+      options: config.toOxfmtConfig(),
     }));
   }
 
@@ -61,31 +89,120 @@ export class ConfigService implements IDisposable {
     return false;
   }
 
-  public getUserServerBinPath(): string | undefined {
-    let bin = this.vsCodeConfig.binPathOxlint;
-    if (!bin) {
+  public async getOxlintServerBinPath(): Promise<string | undefined> {
+    return this.searchBinaryPath(this.vsCodeConfig.binPathOxlint, "oxlint");
+  }
+
+  public async getOxfmtServerBinPath(): Promise<string | undefined> {
+    return this.searchBinaryPath(this.vsCodeConfig.binPathOxfmt, "oxfmt");
+  }
+
+  public shouldRequestDiagnostics(
+    textDocumentUri: Uri,
+    diagnosticPullMode: DiagnosticPullMode,
+  ): boolean {
+    if (!this.vsCodeConfig.enable) {
+      return false;
+    }
+
+    const textDocumentPath = textDocumentUri.path;
+
+    for (const [workspaceUri, workspaceConfig] of this.workspaceConfigs.entries()) {
+      if (textDocumentPath.startsWith(workspaceUri)) {
+        return workspaceConfig.shouldRequestDiagnostics(diagnosticPullMode);
+      }
+    }
+    return false;
+  }
+
+  private async searchBinaryPath(
+    settingsBinary: string | undefined,
+    defaultBinaryName: string,
+  ): Promise<string | undefined> {
+    if (!settingsBinary) {
+      return this.searchNodeModulesBin(defaultBinaryName);
+    }
+
+    if (!workspace.isTrusted) {
       return;
     }
 
     // validates the given path is safe to use
-    if (validateSafeBinaryPath(bin) === false) {
-      return;
+    if (!validateSafeBinaryPath(settingsBinary)) {
+      return undefined;
     }
 
-    if (!path.isAbsolute(bin)) {
-      // if the path is not absolute, resolve it to the first workspace folder
+    if (!path.isAbsolute(settingsBinary)) {
       const cwd = this.workspaceConfigs.keys().next().value;
       if (!cwd) {
-        return;
+        return undefined;
       }
-      bin = path.normalize(path.join(cwd, bin));
-      // strip the leading slash on Windows
-      if (process.platform === "win32" && bin.startsWith("\\")) {
-        bin = bin.slice(1);
-      }
+      // if the path is not absolute, resolve it to the first workspace folder
+      settingsBinary = path.normalize(path.join(cwd, settingsBinary));
+      settingsBinary = this.removeWindowsLeadingSlash(settingsBinary);
     }
 
-    return bin;
+    if (process.platform !== "win32" && settingsBinary.endsWith(".exe")) {
+      // on non-Windows, remove `.exe` extension if present
+      settingsBinary = settingsBinary.slice(0, -4);
+    }
+
+    try {
+      await workspace.fs.stat(Uri.file(settingsBinary));
+      return settingsBinary;
+    } catch {}
+
+    // on Windows, also check for `.exe` extension (bun uses `.exe` for its binaries)
+    if (process.platform === "win32") {
+      if (!settingsBinary.endsWith(".exe")) {
+        settingsBinary += ".exe";
+      }
+
+      try {
+        await workspace.fs.stat(Uri.file(settingsBinary));
+        return settingsBinary;
+      } catch {}
+    }
+
+    // no valid binary found
+    return undefined;
+  }
+
+  /**
+   * strip the leading slash on Windows
+   */
+  private removeWindowsLeadingSlash(path: string): string {
+    if (process.platform === "win32" && path.startsWith("\\")) {
+      return path.slice(1);
+    }
+    return path;
+  }
+
+  /**
+   * Search for the binary in all workspaces' node_modules/.bin directories.
+   * If multiple workspaces contain the binary, the first one found is returned.
+   */
+  private async searchNodeModulesBin(binaryName: string): Promise<string | undefined> {
+    const cts = new CancellationTokenSource();
+    setTimeout(() => cts.cancel(), 10000); // cancel after 10 seconds
+
+    try {
+      // bun package manager uses `.exe` extension on Windows
+      // search for both with and without `.exe` extension
+      const extension = process.platform === "win32" ? "{,.exe}" : "";
+      // maybe use `tinyglobby` later for better performance, VSCode can be slow on globbing large projects.
+      const files = await workspace.findFiles(
+        // search workspace root plus up to 3 subdirectory levels for the binary path
+        `{,*/,*/*,*/*/*}/node_modules/.bin/${binaryName}${extension}`,
+        undefined,
+        1,
+        cts.token,
+      );
+
+      return files.length > 0 ? files[0].fsPath : undefined;
+    } catch {
+      return undefined;
+    }
   }
 
   private async onVscodeConfigChange(event: ConfigurationChangeEvent): Promise<void> {

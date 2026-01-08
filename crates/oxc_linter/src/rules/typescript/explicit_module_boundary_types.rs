@@ -162,10 +162,10 @@ declare_oxc_lint!(
 );
 
 impl Rule for ExplicitModuleBoundaryTypes {
-    fn from_configuration(value: Value) -> Self {
-        serde_json::from_value::<DefaultRuleConfig<ExplicitModuleBoundaryTypes>>(value)
+    fn from_configuration(value: Value) -> Result<Self, serde_json::error::Error> {
+        Ok(serde_json::from_value::<DefaultRuleConfig<Self>>(value)
             .unwrap_or_default()
-            .into_inner()
+            .into_inner())
     }
 
     fn run<'a>(&self, node: &AstNode<'a>, ctx: &LintContext<'a>) {
@@ -529,7 +529,7 @@ impl<'a> Visit<'a> for ExplicitTypesChecker<'a, '_> {
     }
 
     fn visit_variable_declarator(&mut self, var: &VariableDeclarator<'a>) {
-        if self.rule.allow_typed_function_expressions && var.id.type_annotation.is_some() {
+        if self.rule.allow_typed_function_expressions && var.type_annotation.is_some() {
             return;
         }
         let Some(init) = &var.init else {
@@ -646,7 +646,7 @@ impl<'a> Visit<'a> for ExplicitTypesChecker<'a, '_> {
             self.visit_formal_parameter(param);
         }
         if let Some(rest) = &it.rest {
-            if let Some(ty) = &rest.argument.type_annotation {
+            if let Some(ty) = &rest.type_annotation {
                 if !self.rule.allow_arguments_explicitly_typed_as_any
                     && matches!(ty.type_annotation, TSType::TSAnyKeyword(_))
                 {
@@ -658,9 +658,8 @@ impl<'a> Visit<'a> for ExplicitTypesChecker<'a, '_> {
         }
     }
     fn visit_formal_parameter(&mut self, it: &FormalParameter<'a>) {
-        let param = &it.pattern;
         // let name = param.get_identifier_name();
-        if let Some(ty) = &param.type_annotation {
+        if let Some(ty) = &it.type_annotation {
             if !self.rule.allow_arguments_explicitly_typed_as_any
                 && matches!(ty.type_annotation, TSType::TSAnyKeyword(_))
             {
@@ -669,7 +668,7 @@ impl<'a> Visit<'a> for ExplicitTypesChecker<'a, '_> {
             return;
         }
 
-        if matches!(param.kind, BindingPatternKind::AssignmentPattern(_)) {
+        if it.initializer.is_some() {
             return;
         }
 
@@ -707,7 +706,7 @@ mod test {
         let cases: Vec<(ExplicitModuleBoundaryTypesConfig, Value)> =
             vec![(ExplicitModuleBoundaryTypesConfig::default(), json!([{}]))];
         for (expected, value) in cases {
-            let actual = ExplicitModuleBoundaryTypes::from_configuration(value);
+            let actual = ExplicitModuleBoundaryTypes::from_configuration(value).unwrap();
             assert_eq!(*actual, expected);
         }
     }

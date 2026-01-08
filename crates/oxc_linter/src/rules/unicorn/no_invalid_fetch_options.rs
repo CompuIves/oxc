@@ -6,9 +6,8 @@ use oxc_allocator::Box;
 use oxc_ast::{
     AstKind,
     ast::{
-        Argument, BindingPattern, Expression, FormalParameter, ObjectExpression,
-        ObjectPropertyKind, PropertyKey, TSLiteral, TSLiteralType, TSType, TSTypeAnnotation,
-        TemplateLiteral,
+        Argument, Expression, FormalParameter, ObjectExpression, ObjectPropertyKind, PropertyKey,
+        TSLiteral, TSLiteralType, TSType, TSTypeAnnotation, TemplateLiteral,
     },
 };
 use oxc_diagnostics::OxcDiagnostic;
@@ -123,6 +122,7 @@ fn is_invalid_fetch_options<'a>(
                 Expression::StaticMemberExpression(s) => {
                     let symbols = ctx.scoping();
                     let Expression::Identifier(ident_ref) = &s.object else {
+                        method_name = UNKNOWN_METHOD_NAME;
                         continue;
                     };
                     let reference_id = ident_ref.reference_id();
@@ -154,6 +154,8 @@ fn is_invalid_fetch_options<'a>(
                         if let Some(value_ident) = enum_member_res {
                             method_name = value_ident.into();
                         }
+                    } else {
+                        method_name = UNKNOWN_METHOD_NAME;
                     }
                 }
                 Expression::StringLiteral(value_ident) => {
@@ -187,7 +189,7 @@ fn is_invalid_fetch_options<'a>(
                             }
                         },
                         AstKind::FormalParameter(FormalParameter {
-                            pattern: BindingPattern { type_annotation: Some(annotation), .. },
+                            type_annotation: Some(annotation),
                             ..
                         }) => {
                             let TSTypeAnnotation { type_annotation, .. } = &**annotation;
@@ -222,7 +224,9 @@ fn is_invalid_fetch_options<'a>(
                         _ => {}
                     }
                 }
-                _ => {}
+                _ => {
+                    method_name = UNKNOWN_METHOD_NAME;
+                }
             }
         }
     }
@@ -296,6 +300,17 @@ fn test() {
          body: "",
         });"#,
         ("const response = await fetch('', { method, headers, body, });"),
+        (r#"fetch("/url", { method: logic ? "PATCH" : "POST", body: "some body" });"#),
+        (r#"new Request("/url", { method: logic ? "PATCH" : "POST", body: "some body" });"#),
+        (r#"fetch("/url", { method: getMethod(), body: "some body" });"#),
+        (r"const method = 'POST' as const; await fetch('some-url', { method, body: '' });"),
+        (r"const options = { method: 'POST' } as const; await fetch('some-url', { method: options.method, body: '' });"),
+        (r"const options = { method: 'POST' }; await fetch('some-url', { method: options.method, body: '' });"),
+        (r"const options = { method: 'POST' } as const; new Request('some-url', { method: options.method, body: '' });"),
+        (r#"fetch("/url", { method: getOptions().method, body: "some body" });"#),
+        (r#"new Request("/url", { method: getOptions().method, body: "some body" });"#),
+        (r#"fetch("/url", { method: (options).method, body: "some body" });"#),
+        (r#"new Request("/url", { method: (options).method, body: "some body" });"#),
     ];
 
     let fail = vec![

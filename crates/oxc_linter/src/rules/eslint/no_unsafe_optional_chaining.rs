@@ -64,10 +64,10 @@ declare_oxc_lint!(
 );
 
 impl Rule for NoUnsafeOptionalChaining {
-    fn from_configuration(value: serde_json::Value) -> Self {
-        serde_json::from_value::<DefaultRuleConfig<NoUnsafeOptionalChaining>>(value)
+    fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
+        Ok(serde_json::from_value::<DefaultRuleConfig<Self>>(value)
             .unwrap_or_default()
-            .into_inner()
+            .into_inner())
     }
 
     fn run<'a>(&self, node: &AstNode<'a>, ctx: &LintContext<'a>) {
@@ -120,10 +120,10 @@ impl Rule for NoUnsafeOptionalChaining {
                     Self::check_unsafe_usage(expr, ctx);
                 }
             }
-            AstKind::AssignmentPattern(pat) if pat.left.kind.is_destructuring_pattern() => {
+            AstKind::AssignmentPattern(pat) if pat.left.is_destructuring_pattern() => {
                 Self::check_unsafe_usage(&pat.right, ctx);
             }
-            AstKind::VariableDeclarator(decl) if decl.id.kind.is_destructuring_pattern() => {
+            AstKind::VariableDeclarator(decl) if decl.id.is_destructuring_pattern() => {
                 if let Some(expr) = &decl.init {
                     Self::check_unsafe_usage(expr, ctx);
                 }

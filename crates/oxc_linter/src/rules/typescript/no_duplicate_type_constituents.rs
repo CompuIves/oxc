@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::rule::{DefaultRuleConfig, Rule};
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, Deserialize)]
 pub struct NoDuplicateTypeConstituents(Box<NoDuplicateTypeConstituentsConfig>);
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Default)]
@@ -68,12 +68,10 @@ declare_oxc_lint!(
 );
 
 impl Rule for NoDuplicateTypeConstituents {
-    fn from_configuration(value: serde_json::Value) -> Self {
-        Self(Box::new(
-            serde_json::from_value::<DefaultRuleConfig<NoDuplicateTypeConstituentsConfig>>(value)
-                .unwrap_or_default()
-                .into_inner(),
-        ))
+    fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
+        Ok(serde_json::from_value::<DefaultRuleConfig<Self>>(value)
+            .unwrap_or_default()
+            .into_inner())
     }
 
     fn to_configuration(&self) -> Option<Result<serde_json::Value, serde_json::Error>> {

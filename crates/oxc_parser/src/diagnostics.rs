@@ -327,12 +327,30 @@ pub fn extends_clause_must_precede_implements(span: Span, implements_span: Span)
         .with_help("Move the 'extends' clause before the 'implements' clause")
 }
 
+// Classes can only extend a single class. ts(1174)
+#[cold]
+pub fn classes_can_only_extend_single_class(span: Span) -> OxcDiagnostic {
+    ts_error("1174", "Classes can only extend a single class.")
+        .with_label(span)
+        .with_help("Remove the extra base class or use interfaces for multiple inheritance")
+}
+
 // 'implements' clause already seen. ts(1175)
 #[cold]
 pub fn implements_clause_already_seen(span: Span, seen_span: Span) -> OxcDiagnostic {
     ts_error("1175", "'implements' clause already seen")
         .with_labels([seen_span, span])
         .with_help("Merge the two 'implements' clauses into one by a ','")
+}
+
+// A type-only import can specify a default import or named bindings, but not both. ts(1363)
+#[cold]
+pub fn type_only_import_default_and_named(specifier_span: Span) -> OxcDiagnostic {
+    ts_error(
+        "1363",
+        "A type-only import can specify a default import or named bindings, but not both.",
+    )
+    .with_label(specifier_span)
 }
 
 #[cold]
@@ -420,7 +438,9 @@ pub fn for_await(span: Span) -> OxcDiagnostic {
 
 #[cold]
 pub fn new_dynamic_import(span: Span) -> OxcDiagnostic {
-    OxcDiagnostic::error("Cannot use new with dynamic import").with_label(span)
+    OxcDiagnostic::error("Cannot use new with dynamic import")
+        .with_label(span)
+        .with_help("Wrap this with parenthesis")
 }
 
 #[cold]
@@ -471,9 +491,17 @@ pub fn identifier_async(x0: &str, span1: Span) -> OxcDiagnostic {
 }
 
 #[cold]
-pub fn identifier_generator(x0: &str, span1: Span) -> OxcDiagnostic {
-    OxcDiagnostic::error(format!("Cannot use `{x0}` as an identifier in a generator context"))
-        .with_label(span1)
+pub fn identifier_generator(x0: &str, span1: Span, looks_like_expression: bool) -> OxcDiagnostic {
+    let diagnostic =
+        OxcDiagnostic::error(format!("Cannot use `{x0}` as an identifier in a generator context"))
+            .with_label(span1);
+    if looks_like_expression {
+        diagnostic.with_help(format!(
+            "Wrap this in parentheses if you want to use a `{x0}` expression here"
+        ))
+    } else {
+        diagnostic
+    }
 }
 
 #[cold]
@@ -683,6 +711,11 @@ pub fn duplicate_export(x0: &str, span1: Span, span2: Span) -> OxcDiagnostic {
 }
 
 #[cold]
+pub fn duplicate_default_export(spans: impl IntoIterator<Item = Span>) -> OxcDiagnostic {
+    ts_error("2528", "A module cannot have multiple default exports.").with_labels(spans)
+}
+
+#[cold]
 pub fn import_meta(span: Span) -> OxcDiagnostic {
     OxcDiagnostic::error("The only valid meta property for import is import.meta").with_label(span)
 }
@@ -798,6 +831,11 @@ pub fn cannot_appear_on_a_type_parameter(
     ts_error("1273", format!("'{}' modifier cannot be used on a type parameter.", modifier.kind))
         .with_label(modifier.span)
         .with_allowed_modifier_help(allowed)
+}
+
+#[cold]
+pub fn a_parameter_cannot_have_question_mark_and_initializer(span: Span) -> OxcDiagnostic {
+    ts_error("1015", "A parameter cannot have a question mark and an initializer.").with_label(span)
 }
 
 #[cold]
@@ -1135,5 +1173,30 @@ pub fn identifier_expected_jsx_no_hyphen(span: Span) -> OxcDiagnostic {
 #[cold]
 pub fn jsx_attribute_value_empty_expression(span: Span) -> OxcDiagnostic {
     ts_error("17000", "JSX attributes must only be assigned a non-empty 'expression'.")
+        .with_label(span)
+}
+
+#[cold]
+pub fn import_attribute_value_must_be_string_literal(span: Span) -> OxcDiagnostic {
+    OxcDiagnostic::error("Only string literals are allowed as module attribute values.")
+        .with_label(span)
+        .with_help("Wrap this with quotes")
+}
+
+// TS18058
+#[cold]
+pub fn default_import_not_allowed_in_defer(span: Span) -> OxcDiagnostic {
+    ts_error("18058", "Default imports are not allowed in a deferred import.").with_label(span)
+}
+
+// TS18059
+#[cold]
+pub fn named_import_not_allowed_in_defer(span: Span) -> OxcDiagnostic {
+    ts_error("18059", "Named imports are not allowed in a deferred import.").with_label(span)
+}
+
+#[cold]
+pub fn only_default_import_allowed_in_source_phase(span: Span) -> OxcDiagnostic {
+    OxcDiagnostic::error("Only a single default import is allowed in a source phase import.")
         .with_label(span)
 }

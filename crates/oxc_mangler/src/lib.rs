@@ -299,11 +299,6 @@ impl<'t> Mangler<'t> {
 
         assert!(scoping.has_scope_child_ids(), "child_id needs to be generated");
 
-        // TODO: implement opt-out of direct-eval in a branch of scopes.
-        if scoping.root_scope_flags().contains_direct_eval() {
-            return;
-        }
-
         let (exported_names, exported_symbols) = if self.options.top_level {
             Mangler::collect_exported_symbols(program)
         } else {
@@ -318,15 +313,22 @@ impl<'t> Mangler<'t> {
         let mut slots = Vec::from_iter_in(iter::repeat_n(0, scoping.symbols_len()), temp_allocator);
 
         // Stores the lived scope ids for each slot. Keyed by slot number.
-        let mut slot_liveness: Vec<BitSet> = Vec::new_in(temp_allocator);
+        // Pre-allocate capacity based on number of symbols (upper bound for slots).
+        let mut slot_liveness: Vec<BitSet> =
+            Vec::with_capacity_in(scoping.symbols_len(), temp_allocator);
         let mut tmp_bindings = Vec::with_capacity_in(100, temp_allocator);
 
         let mut reusable_slots = Vec::new_in(temp_allocator);
+        // Pre-computed BitSet for ancestor membership tests - reused across iterations
+        let mut ancestor_set = BitSet::new_in(scoping.scopes_len(), temp_allocator);
         // Walk down the scope tree and assign a slot number for each symbol.
         // It is possible to do this in a loop over the symbol list,
         // but walking down the scope tree seems to generate a better code.
         for (scope_id, bindings) in scoping.iter_bindings() {
             if bindings.is_empty() {
+                continue;
+            }
+            if scoping.scope_flags(scope_id).contains_direct_eval() {
                 continue;
             }
 
@@ -372,6 +374,14 @@ impl<'t> Mangler<'t> {
                 );
             }
 
+            // Pre-compute the set of ancestors from root to scope_id (exclusive) for O(1) membership tests.
+            // This avoids repeated `take_while` comparisons in the inner loop.
+            ancestor_set.clear();
+            for ancestor_id in scoping.scope_ancestors(scope_id).skip(1) {
+                ancestor_set.set_bit(ancestor_id.index());
+            }
+
+            let scope_id_index = scope_id.index();
             for (&symbol_id, &assigned_slot) in tmp_bindings.iter().zip(&reusable_slots) {
                 slots[symbol_id.index()] = assigned_slot;
 
@@ -391,16 +401,34 @@ impl<'t> Mangler<'t> {
                     .map(|reference| ast_nodes.get_node(reference.node_id()).scope_id());
 
                 // Calculate the scope ids that this symbol is alive in.
-                let lived_scope_ids = referenced_scope_ids
+                // For each used_scope_id, we walk up the ancestor chain and collect scopes
+                // that are descendants of scope_id (i.e., not in ancestor_set and not scope_id itself).
+                let slot_liveness_bitset = &mut slot_liveness[assigned_slot as usize];
+                for used_scope_id in referenced_scope_ids
                     .chain(redeclared_scope_ids)
                     .chain([scope_id, declared_scope_id])
-                    .flat_map(|used_scope_id| {
-                        scoping.scope_ancestors(used_scope_id).take_while(|s_id| *s_id != scope_id)
-                    });
-
-                // Since the slot is now assigned to this symbol, it is alive in all the scopes that this symbol is alive in.
-                for scope_id in lived_scope_ids {
-                    slot_liveness[assigned_slot as usize].set_bit(scope_id.index());
+                {
+                    for ancestor_id in scoping.scope_ancestors(used_scope_id) {
+                        let ancestor_index = ancestor_id.index();
+                        // Stop when we reach scope_id or any of its ancestors
+                        if ancestor_index == scope_id_index || ancestor_set.has_bit(ancestor_index)
+                        {
+                            break;
+                        }
+                        if slot_liveness_bitset.has_bit(ancestor_index) {
+                            debug_assert!(
+                                scoping.scope_ancestors(ancestor_id).skip(1).all(|a| {
+                                    let idx = a.index();
+                                    slot_liveness_bitset.has_bit(idx)
+                                        || idx == scope_id_index
+                                        || ancestor_set.has_bit(idx)
+                                }),
+                                "Invariant violated: ancestor chain should be fully marked live"
+                            );
+                            break;
+                        }
+                        slot_liveness_bitset.set_bit(ancestor_index);
+                    }
                 }
             }
         }
@@ -425,7 +453,12 @@ impl<'t> Mangler<'t> {
             let name = loop {
                 let name = generate_name(count);
                 count += 1;
-                // Do not mangle keywords and unresolved references
+                // Do not mangle keywords and unresolved references.
+                // Note: We don't need to exclude variable names from direct-eval-containing
+                // scopes because those scopes are skipped entirely during slot assignment
+                // (their variables keep original names). Mangled names only apply to scopes
+                // unaffected by eval, so there's no risk of shadowing variables that eval
+                // needs to access.
                 let n = name.as_str();
                 if !oxc_syntax::keyword::is_reserved_keyword(n)
                     && !is_special_name(n)
@@ -509,9 +542,13 @@ impl<'t> Mangler<'t> {
 
         for (symbol_id, slot) in slots.iter().copied().enumerate() {
             let symbol_id = SymbolId::from_usize(symbol_id);
-            if scoping.symbol_scope_id(symbol_id) == root_scope_id
+            let symbol_scope_id = scoping.symbol_scope_id(symbol_id);
+            if symbol_scope_id == root_scope_id
                 && (!self.options.top_level || exported_symbols.contains(&symbol_id))
             {
+                continue;
+            }
+            if scoping.scope_flags(symbol_scope_id).contains_direct_eval() {
                 continue;
             }
             if is_special_name(scoping.symbol_name(symbol_id)) {
@@ -574,12 +611,7 @@ impl<'t> Mangler<'t> {
             .elements
             .iter()
             .map(|class_elements| {
-                class_elements
-                    .iter()
-                    .filter_map(|element| {
-                        if element.is_private { Some(element.name.to_string()) } else { None }
-                    })
-                    .count()
+                class_elements.iter().filter(|element| element.is_private).count()
             })
             .collect();
         let parent_private_member_count: IndexVec<ClassId, usize> = classes

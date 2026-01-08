@@ -40,6 +40,9 @@ declare_oxc_lint!(
     /// Disallows negating the left operand of relational operators to prevent logical errors
     /// caused by misunderstanding operator precedence or accidental use of negation.
     ///
+    /// This rule can be disabled for TypeScript code, as the TypeScript compiler
+    /// enforces this check.
+    ///
     /// ### Why is this bad?
     ///
     /// Negating the left operand of relational operators can result in unexpected behavior due to
@@ -69,10 +72,10 @@ declare_oxc_lint!(
 );
 
 impl Rule for NoUnsafeNegation {
-    fn from_configuration(value: serde_json::Value) -> Self {
-        serde_json::from_value::<DefaultRuleConfig<NoUnsafeNegation>>(value)
+    fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
+        Ok(serde_json::from_value::<DefaultRuleConfig<Self>>(value)
             .unwrap_or_default()
-            .into_inner()
+            .into_inner())
     }
 
     fn run<'a>(&self, node: &AstNode<'a>, ctx: &LintContext<'a>) {

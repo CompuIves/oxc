@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use oxc_ast::{
     AstKind,
-    ast::{BindingPatternKind, ObjectPattern},
+    ast::{BindingPattern, ObjectPattern},
 };
 use oxc_diagnostics::OxcDiagnostic;
 use oxc_macros::declare_oxc_lint;
@@ -47,7 +47,7 @@ fn assignment(span: Span, namespace_name: &str) -> OxcDiagnostic {
         .with_label(span)
 }
 
-/// <https://github.com/import-js/eslint-plugin-import/blob/v2.29.1/docs/rules/namespace.md>
+// <https://github.com/import-js/eslint-plugin-import/blob/v2.29.1/docs/rules/namespace.md>
 #[derive(Debug, Default, Clone, JsonSchema, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Namespace {
@@ -112,10 +112,10 @@ declare_oxc_lint!(
 );
 
 impl Rule for Namespace {
-    fn from_configuration(value: serde_json::Value) -> Self {
-        serde_json::from_value::<DefaultRuleConfig<Namespace>>(value)
+    fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
+        Ok(serde_json::from_value::<DefaultRuleConfig<Self>>(value)
             .unwrap_or_default()
-            .into_inner()
+            .into_inner())
     }
 
     fn run_once(&self, ctx: &LintContext<'_>) {
@@ -204,7 +204,7 @@ impl Rule for Namespace {
                         );
                     }
                     AstKind::VariableDeclarator(decl) => {
-                        let BindingPatternKind::ObjectPattern(pattern) = &decl.id.kind else {
+                        let BindingPattern::ObjectPattern(pattern) = &decl.id else {
                             return;
                         };
 
@@ -313,7 +313,7 @@ fn check_deep_namespace_for_object_pattern(
             continue;
         };
 
-        if let BindingPatternKind::ObjectPattern(pattern) = &property.value.kind
+        if let BindingPattern::ObjectPattern(pattern) = &property.value
             && let Some(module_source) = get_module_request_name(&name, module)
         {
             let mut next_namespaces = namespaces.to_owned();

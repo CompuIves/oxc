@@ -8,10 +8,14 @@ mod source_line;
 use oxc_allocator::{Allocator, Vec as ArenaVec};
 
 use crate::{
-    formatter::format_element::{FormatElement, LineMode, document::Document},
+    JsLabels, SortImportsOptions,
+    formatter::format_element::{
+        FormatElement, LineMode,
+        document::Document,
+        tag::{LabelId, Tag},
+    },
     ir_transform::sort_imports::{
-        group_config::{GroupName, parse_groups_from_strings},
-        partitioned_chunk::PartitionedChunk,
+        group_config::parse_groups_from_strings, partitioned_chunk::PartitionedChunk,
         source_line::SourceLine,
     },
 };
@@ -19,30 +23,27 @@ use crate::{
 /// An IR transform that sorts import statements according to specified options.
 /// Heavily inspired by ESLint's `@perfectionist/sort-imports` rule.
 /// <https://perfectionist.dev/rules/sort-imports>
-pub struct SortImportsTransform {
-    options: options::SortImportsOptions,
-    groups: Vec<Vec<GroupName>>,
-}
+pub struct SortImportsTransform;
 
 impl SortImportsTransform {
-    pub fn new(options: options::SortImportsOptions) -> Self {
-        // Parse string based groups into our internal representation for performance
-        let groups = parse_groups_from_strings(&options.groups);
-        Self { options, groups }
-    }
-
     /// Transform the given `Document` by sorting import statements according to the specified options.
     ///
     // NOTE: `Document` and its `FormatElement`s are already well-formatted.
     // It means that:
     // - There is no redundant spaces, no consecutive line breaks, etc...
     // - Last element is always `FormatElement::Line(Hard)`.
-    pub fn transform<'a>(&self, document: &Document<'a>, allocator: &'a Allocator) -> Document<'a> {
+    pub fn transform<'a>(
+        document: &Document<'a>,
+        options: &SortImportsOptions,
+        allocator: &'a Allocator,
+    ) -> Option<ArenaVec<'a, FormatElement<'a>>> {
         // Early return for empty files
         if document.len() == 1 && matches!(document[0], FormatElement::Line(LineMode::Hard)) {
-            return document.clone();
+            return None;
         }
 
+        // Parse string based groups into our internal representation for performance
+        let groups = parse_groups_from_strings(&options.groups);
         let prev_elements: &[FormatElement<'a>] = document;
 
         // Roughly speaking, sort-imports is a process of swapping lines.
@@ -68,19 +69,56 @@ impl SortImportsTransform {
         //   - If this is the case, we should check `Tag::StartLabelled(JsLabels::ImportDeclaration)`
         let mut lines = vec![];
         let mut current_line_start = 0;
+        // Track if we're inside an alignable block comment (identified by `JsLabels::AlignableBlockComment`)
+        let mut in_alignable_block_comment = false;
+        // Track if current line is a standalone alignable comment (no import on same line)
+        let mut is_standalone_alignable_comment = false;
+
         for (idx, el) in prev_elements.iter().enumerate() {
+            // Check for alignable block comment boundaries.
+            // These comments are split across multiple lines with hard_line_break() between them,
+            // so we need to track when we're inside one to avoid flushing lines prematurely.
+            if let FormatElement::Tag(Tag::StartLabelled(id)) = el {
+                if *id == LabelId::of(JsLabels::AlignableBlockComment) {
+                    in_alignable_block_comment = true;
+                    is_standalone_alignable_comment = true;
+                } else if *id == LabelId::of(JsLabels::ImportDeclaration) {
+                    // An import on the same line means the comment is attached to it, not standalone
+                    is_standalone_alignable_comment = false;
+                }
+            } else if matches!(el, FormatElement::Tag(Tag::EndLabelled)) {
+                // EndLabelled doesn't carry the label ID, but since AlignableBlockComment
+                // doesn't nest with other labels in practice, we can safely reset here.
+                if in_alignable_block_comment {
+                    in_alignable_block_comment = false;
+                }
+            }
+
             if let FormatElement::Line(mode) = el
                 && matches!(mode, LineMode::Empty | LineMode::Hard)
             {
+                // If we're inside an alignable block comment, don't flush the line yet.
+                // Wait until the comment is closed so the entire comment is treated as one line.
+                if in_alignable_block_comment {
+                    continue;
+                }
+
                 // Flush current line
                 if current_line_start < idx {
-                    lines.push(SourceLine::from_element_range(
-                        prev_elements,
-                        current_line_start..idx,
-                        *mode,
-                    ));
+                    let line = if is_standalone_alignable_comment {
+                        // Standalone alignable comment: directly create CommentOnly
+                        SourceLine::CommentOnly(current_line_start..idx, *mode)
+                    } else {
+                        SourceLine::from_element_range(
+                            prev_elements,
+                            current_line_start..idx,
+                            *mode,
+                        )
+                    };
+                    lines.push(line);
                 }
                 current_line_start = idx + 1;
+                is_standalone_alignable_comment = false;
 
                 // We need this explicitly to detect boundaries later.
                 if matches!(mode, LineMode::Empty) {
@@ -125,12 +163,12 @@ impl SortImportsTransform {
                 }
                 // `SourceLine::Empty` and `SourceLine::CommentOnly` can be boundaries depending on options.
                 // Otherwise, they will be the leading/trailing lines of `PartitionedChunk::Imports`.
-                SourceLine::Empty if !self.options.partition_by_newline => {
+                SourceLine::Empty if !options.partition_by_newline => {
                     current_chunk.add_imports_line(line);
                 }
                 // TODO: Support more flexible comment handling?
                 // e.g. Specific text by regex, only line comments, etc.
-                SourceLine::CommentOnly(..) if !self.options.partition_by_comment => {
+                SourceLine::CommentOnly(..) if !options.partition_by_comment => {
                     current_chunk.add_imports_line(line);
                 }
                 // This `SourceLine` is a boundary!
@@ -153,8 +191,8 @@ impl SortImportsTransform {
         // After sorting, flatten everything back to `FormatElement`s.
         let mut next_elements = ArenaVec::with_capacity_in(prev_elements.len(), allocator);
 
-        let mut chunks_iter = chunks.into_iter().enumerate().peekable();
-        while let Some((_idx, chunk)) = chunks_iter.next() {
+        let mut chunks_iter = chunks.into_iter().peekable();
+        while let Some(chunk) = chunks_iter.next() {
             match chunk {
                 // Boundary chunks: Just output as-is
                 PartitionedChunk::Boundary(line) => {
@@ -162,36 +200,47 @@ impl SortImportsTransform {
                 }
                 // Import chunks: Sort and output
                 PartitionedChunk::Imports(_) => {
-                    // For ease of implementation, we will convert `ImportChunk` into multiple `SortableImport`s.
+                    // Convert `ImportChunk` into `SortableImport`s.
                     //
-                    // `SortableImport` is a logical unit of 1 import statement + its N leading lines.
-                    // And there may be trailing lines after all import statements in the chunk.
+                    // `SortableImport` is a logical unit of 1 import statement with its leading lines.
+                    // `OrphanContent` tracks comments separated by empty lines with their slot positions.
+                    //
+                    // Comments attach based on empty line separation:
+                    // - Comments directly before an `import` (no empty line) → `SortableImport.leading_lines`
+                    // - Comments followed by an empty line → `orphan_contents` (stay at slot position)
+                    //
                     // e.g.
                     // ```
-                    // const THIS_IS_BOUNDARY = true;
-                    // // comment for A
-                    // import A from "a"; // sortable1
-                    // import B from "b"; // sortable2
+                    // // orphan (after_slot: None)
                     //
-                    // // comment for C and empty line above + below
+                    // // leading for A
+                    // import A from "a";
+                    // // orphan (after_slot: Some(0))
                     //
-                    // // another comment for C
-                    // import C from "c"; // sortable3
-                    // // trailing comment and empty line below for this chunk
-                    //
-                    // const YET_ANOTHER_BOUNDARY = true;
+                    // // leading for B
+                    // import B from "b";
+                    // // chunk trailing
                     // ```
-                    let (sorted_imports, trailing_lines) =
-                        chunk.into_sorted_import_units(&self.groups, &self.options);
+                    let (sorted_imports, orphan_contents, trailing_lines) =
+                        chunk.into_sorted_import_units(&groups, options);
 
-                    // Output sorted import units
+                    // Output leading orphan content (after_slot: None)
+                    for orphan in &orphan_contents {
+                        if orphan.after_slot.is_none() {
+                            for line in &orphan.lines {
+                                line.write(prev_elements, &mut next_elements, true);
+                            }
+                        }
+                    }
+
+                    // Output sorted import units with orphan content at their slot positions
                     let mut prev_group_idx = None;
                     let mut prev_was_ignored = false;
-                    for sorted_import in sorted_imports {
+                    for (slot_idx, sorted_import) in sorted_imports.iter().enumerate() {
                         // Insert newline when:
                         // 1. Group changes
                         // 2. Previous import was not ignored (don't insert after ignored)
-                        if self.options.newlines_between {
+                        if options.newlines_between {
                             let current_group_idx = sorted_import.group_idx;
                             if let Some(prev_idx) = prev_group_idx
                                 && prev_idx != current_group_idx
@@ -204,16 +253,25 @@ impl SortImportsTransform {
                         }
 
                         // Output leading lines and import line
-                        for line in sorted_import.leading_lines {
+                        for line in &sorted_import.leading_lines {
                             line.write(
                                 prev_elements,
                                 &mut next_elements,
-                                self.options.partition_by_newline,
+                                options.partition_by_newline,
                             );
                         }
                         sorted_import.import_line.write(prev_elements, &mut next_elements, false);
+
+                        // Output orphan content that belongs after this slot
+                        for orphan in &orphan_contents {
+                            if orphan.after_slot == Some(slot_idx) {
+                                for line in &orphan.lines {
+                                    line.write(prev_elements, &mut next_elements, false);
+                                }
+                            }
+                        }
                     }
-                    // And output trailing lines
+                    // And output chunk's trailing lines
                     //
                     // Special care is needed for the last empty line.
                     // We should preserve it only if the next chunk is a boundary.
@@ -235,7 +293,7 @@ impl SortImportsTransform {
                     // ```
                     let next_chunk_is_boundary = chunks_iter
                         .peek()
-                        .is_some_and(|(_, c)| matches!(c, PartitionedChunk::Boundary(_)));
+                        .is_some_and(|c| matches!(c, PartitionedChunk::Boundary(_)));
                     for (idx, line) in trailing_lines.iter().enumerate() {
                         let is_last_empty_line =
                             idx == trailing_lines.len() - 1 && matches!(line, SourceLine::Empty);
@@ -249,6 +307,6 @@ impl SortImportsTransform {
             }
         }
 
-        Document::from(next_elements)
+        Some(next_elements)
     }
 }

@@ -12,10 +12,8 @@ const multiRootWorkspaceConfig = {
 };
 writeFileSync(multiRootWorkspaceFile, JSON.stringify(multiRootWorkspaceConfig, null, 2));
 
-const ext = process.platform === "win32" ? ".exe" : "";
-
 const baseTest = {
-  files: "out/**/*.spec.js",
+  files: "out_test/integration/**/*.spec.js",
   workspaceFolder: "./test_workspace",
   launchArgs: [
     // This disables all extensions except the one being tested
@@ -28,29 +26,13 @@ const baseTest = {
 
 const allTestSuites = new Map([
   [
-    "single-folder",
+    "unit",
     {
       ...baseTest,
-      env: {
-        SINGLE_FOLDER_WORKSPACE: "true",
-        SERVER_PATH_DEV: path.resolve(
-          import.meta.dirname,
-          `./target/debug/oxc_language_server${ext}`,
-        ),
-      },
-    },
-  ],
-  [
-    "multi-root",
-    {
-      ...baseTest,
+      files: "out_test/unit/**/*.spec.js",
       workspaceFolder: multiRootWorkspaceFile,
       env: {
         MULTI_FOLDER_WORKSPACE: "true",
-        SERVER_PATH_DEV: path.resolve(
-          import.meta.dirname,
-          `./target/debug/oxc_language_server${ext}`,
-        ),
       },
     },
   ],
@@ -60,6 +42,18 @@ const allTestSuites = new Map([
       ...baseTest,
       env: {
         SINGLE_FOLDER_WORKSPACE: "true",
+        SERVER_PATH_DEV: path.resolve(import.meta.dirname, `../../apps/oxlint/dist/cli.js`),
+        SKIP_FORMATTER_TEST: "true",
+      },
+    },
+  ],
+  [
+    "oxlint-lsp-multi-root",
+    {
+      ...baseTest,
+      workspaceFolder: multiRootWorkspaceFile,
+      env: {
+        MULTI_FOLDER_WORKSPACE: "true",
         SERVER_PATH_DEV: path.resolve(import.meta.dirname, `../../apps/oxlint/dist/cli.js`),
         SKIP_FORMATTER_TEST: "true",
       },

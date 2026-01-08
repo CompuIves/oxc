@@ -11,6 +11,9 @@ use serde::{Deserialize, Serialize, de::Deserializer, ser::Serializer};
 /// - `@scope/eslint-plugin` → `@scope`
 /// - `@scope/eslint-plugin-foo` → `@scope/foo`
 ///
+/// This logic is replicated on JS side in `normalizePluginName` in `apps/oxlint/src-js/plugins/load.ts`.
+/// The 2 implementations must be kept in sync.
+///
 /// # Examples
 ///
 /// ```
@@ -22,10 +25,7 @@ use serde::{Deserialize, Serialize, de::Deserializer, ser::Serializer};
 /// ```
 pub fn normalize_plugin_name(plugin_name: &str) -> Cow<'_, str> {
     // Handle scoped packages (@scope/...)
-    if let Some(scope_end) = plugin_name.find('/') {
-        let scope = &plugin_name[..scope_end]; // e.g., "@foo"
-        let rest = &plugin_name[scope_end + 1..]; // e.g., "eslint-plugin" or "eslint-plugin-bar"
-
+    if let Some((scope, rest)) = plugin_name.split_once('/') {
         // Check if it's @scope/eslint-plugin or @scope/eslint-plugin-something
         if rest == "eslint-plugin" {
             // @foo/eslint-plugin -> @foo
@@ -44,6 +44,20 @@ pub fn normalize_plugin_name(plugin_name: &str) -> Cow<'_, str> {
 
     // No normalization needed
     Cow::Borrowed(plugin_name)
+}
+
+/// Checks if the given plugin name is valid.
+///
+/// Returns `true` if the given plugin name is already in its normalized form.
+///
+/// Returns `false` if it starts with `eslint-plugin-`, or is of the form `@scope/eslint-plugin`
+/// or `@scope/eslint-plugin-something`.
+pub fn is_normal_plugin_name(plugin_name: &str) -> bool {
+    let normalized = normalize_plugin_name(plugin_name);
+    match normalized {
+        Cow::Owned(_) => false,
+        Cow::Borrowed(normalized) => normalized.len() == plugin_name.len(),
+    }
 }
 
 bitflags! {
@@ -66,7 +80,7 @@ bitflags! {
         const JSDOC = 1 << 5;
         /// `eslint-plugin-jest`
         const JEST = 1 << 6;
-        /// `eslint-plugin-vitest`
+        /// `@vitest/eslint-plugin`
         const VITEST = 1 << 7;
         /// `eslint-plugin-jsx-a11y`
         const JSX_A11Y = 1 << 8;
@@ -78,10 +92,8 @@ bitflags! {
         const PROMISE = 1 << 11;
         /// `eslint-plugin-node`
         const NODE = 1 << 12;
-        /// `eslint-plugin-regex`
-        const REGEX = 1 << 13;
         /// `eslint-plugin-vue`
-        const VUE = 1 << 14;
+        const VUE = 1 << 13;
     }
 }
 
@@ -145,7 +157,6 @@ impl TryFrom<&str> for LintPlugins {
             "react-perf" | "react_perf" => Ok(LintPlugins::REACT_PERF),
             "promise" => Ok(LintPlugins::PROMISE),
             "node" => Ok(LintPlugins::NODE),
-            "regex" => Ok(LintPlugins::REGEX),
             "vue" => Ok(LintPlugins::VUE),
             // "eslint" is not really a plugin, so it's 'empty'. This has the added benefit of
             // making it the default value.
@@ -171,7 +182,6 @@ impl From<LintPlugins> for &'static str {
             LintPlugins::REACT_PERF => "react-perf",
             LintPlugins::PROMISE => "promise",
             LintPlugins::NODE => "node",
-            LintPlugins::REGEX => "regex",
             LintPlugins::VUE => "vue",
             _ => "",
         }
@@ -243,7 +253,6 @@ impl JsonSchema for LintPlugins {
             ReactPerf,
             Promise,
             Node,
-            Regex,
             Vue,
         }
 
@@ -350,6 +359,9 @@ mod tests {
         assert_eq!(LintPlugins::try_from("react"), Ok(LintPlugins::REACT));
         assert_eq!(LintPlugins::try_from("unicorn"), Ok(LintPlugins::UNICORN));
         assert_eq!(LintPlugins::try_from("@typescript-eslint"), Ok(LintPlugins::TYPESCRIPT));
+
+        assert_eq!(LintPlugins::try_from("vitest"), Ok(LintPlugins::VITEST));
+        assert_eq!(LintPlugins::try_from("eslint-plugin-vitest"), Ok(LintPlugins::VITEST));
     }
 
     #[test]

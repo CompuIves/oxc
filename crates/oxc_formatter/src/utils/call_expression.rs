@@ -115,75 +115,90 @@ fn is_unit_test_set_up_callee(callee: &Expression) -> bool {
 ///
 /// # Examples
 ///
+/// Some:
+///
 /// ```javascript
-/// it.only() -> [`only`, `it`]
+/// it.only() -> [`only`, `it`];
+/// describe.skip() -> [`skip`, `describe`];
+/// ```
+///
+/// None:
+///
+/// ```javascript
+/// it().only();
+/// describe().skip();
 /// ```
 ///
 /// Same as <https://github.com/biomejs/biome/blob/4a5ef84930344ae54f3877da36888a954711f4a6/crates/biome_js_syntax/src/expr_ext.rs#L1402-L1438>.
-pub fn callee_name_iterator<'b>(expr: &'b Expression<'_>) -> impl Iterator<Item = &'b str> {
+pub fn callee_name_iterator<'b>(expr: &'b Expression<'_>) -> Option<impl Iterator<Item = &'b str>> {
+    let mut names = [Option::None; 5];
     let mut current = Some(expr);
-    let mut names = std::iter::from_fn(move || match current {
-        Some(Expression::Identifier(ident)) => {
-            current = None;
-            Some(ident.name.as_str())
-        }
-        Some(Expression::StaticMemberExpression(static_member)) => {
-            current = Some(&static_member.object);
-            Some(static_member.property.name.as_str())
-        }
-        _ => None,
-    });
 
-    [names.next(), names.next(), names.next(), names.next(), names.next()]
-        .into_iter()
-        .rev()
-        .flatten()
+    for index in 0..5 {
+        match current {
+            Some(Expression::Identifier(ident)) => {
+                names[index] = Some(ident.name.as_str());
+                return Some(names.into_iter().rev().flatten());
+            }
+            Some(Expression::StaticMemberExpression(member)) => {
+                current = Some(&member.object);
+                names[index] = Some(member.property.name.as_str());
+            }
+            _ => break,
+        }
+    }
+
+    None
 }
 
-/// This function checks if a call expressions has one of the following members:
-/// - `it`
-/// - `it.only`
-/// - `it.skip`
-/// - `describe`
-/// - `describe.only`
-/// - `describe.skip`
-/// - `test`
-/// - `test.only`
-/// - `test.skip`
-/// - `test.step`
-/// - `test.describe`
-/// - `test.describe.only`
-/// - `test.describe.parallel`
-/// - `test.describe.parallel.only`
-/// - `test.describe.serial`
-/// - `test.describe.serial.only`
-/// - `skip`
-/// - `xit`
-/// - `xdescribe`
-/// - `xtest`
-/// - `fit`
-/// - `fdescribe`
-/// - `ftest`
-/// - `Deno.test`
+/// This function checks if a call expression matches a test framework pattern:
 ///
-/// Based on this [article]
+/// ```text
+/// ├─ it[.only|skip|skipIf|runIf|concurrent|sequential|todo|fails]
+/// ├─ describe[.only|skip|skipIf|runIf|concurrent|sequential|shuffle|todo]
+/// ├─ test
+/// │  ├─ [.only|skip|skipIf|runIf|concurrent|sequential|todo|fails|extend|step|fixme]
+/// │  └─ .describe
+/// │     ├─ [.only|skip|fixme]
+/// │     ├─ .parallel[.only]
+/// │     └─ .serial[.only]
+/// ├─ bench[.only|skip|todo]
+/// ├─ skip|xit|xdescribe|xtest|fit|fdescribe|ftest
+/// └─ Deno.test
+/// ```
 ///
-/// [article]: https://craftinginterpreters.com/scanning-on-demand.html#tries-and-state-machines
+/// Implementation (trie-tree) is inspired by the article:
+/// <https://craftinginterpreters.com/scanning-on-demand.html#tries-and-state-machines>
 pub fn contains_a_test_pattern(expr: &Expression<'_>) -> bool {
-    let mut names = callee_name_iterator(expr);
+    let Some(mut names) = callee_name_iterator(expr) else { return false };
 
     match names.next() {
-        Some("it" | "describe" | "Deno") => match names.next() {
+        Some("it") => match names.next() {
             None => true,
-            Some("only" | "skip" | "test") => names.next().is_none(),
+            Some(
+                "only" | "skip" | "skipIf" | "runIf" | "concurrent" | "sequential" | "todo"
+                | "fails",
+            ) => names.next().is_none(),
             _ => false,
         },
+        Some("describe") => match names.next() {
+            None => true,
+            Some(
+                "only" | "skip" | "skipIf" | "runIf" | "concurrent" | "sequential" | "shuffle"
+                | "todo",
+            ) => names.next().is_none(),
+            _ => false,
+        },
+        Some("Deno") => matches!(names.next(), Some("test")) && names.next().is_none(),
         Some("test") => match names.next() {
             None => true,
-            Some("only" | "skip" | "step") => names.next().is_none(),
+            Some(
+                "only" | "skip" | "skipIf" | "runIf" | "concurrent" | "sequential" | "todo"
+                | "fails" | "extend" | "step" | "fixme",
+            ) => names.next().is_none(),
             Some("describe") => match names.next() {
                 None => true,
-                Some("only") => names.next().is_none(),
+                Some("only" | "skip" | "fixme") => names.next().is_none(),
                 Some("parallel" | "serial") => match names.next() {
                     None => true,
                     Some("only") => names.next().is_none(),
@@ -193,13 +208,20 @@ pub fn contains_a_test_pattern(expr: &Expression<'_>) -> bool {
             },
             _ => false,
         },
+        Some("bench") => match names.next() {
+            None => true,
+            Some("only" | "skip" | "todo") => names.next().is_none(),
+            _ => false,
+        },
         Some("skip" | "xit" | "xdescribe" | "xtest" | "fit" | "fdescribe" | "ftest") => true,
         _ => false,
     }
 }
 
 pub fn is_test_each_pattern(expr: &Expression<'_>) -> bool {
-    let mut names = callee_name_iterator(expr);
+    let Some(mut names) = callee_name_iterator(expr) else {
+        return false;
+    };
 
     let first = names.next();
     let second = names.next();

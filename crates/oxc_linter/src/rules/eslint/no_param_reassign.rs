@@ -86,18 +86,18 @@ declare_oxc_lint!(
 );
 
 impl Rule for NoParamReassign {
-    fn from_configuration(value: Value) -> Self {
+    fn from_configuration(value: Value) -> Result<Self, serde_json::error::Error> {
         let mut rule = Self::default();
         let config = &mut *rule.0;
-        let Value::Array(array) = value else { return rule };
-        let Some(Value::Object(options)) = array.first() else { return rule };
+        let Value::Array(array) = value else { return Ok(rule) };
+        let Some(Value::Object(options)) = array.first() else { return Ok(rule) };
 
         if let Some(Value::Bool(props)) = options.get("props") {
             config.props = *props;
         }
 
         if !config.props {
-            return rule;
+            return Ok(rule);
         }
 
         if let Some(Value::Array(items)) = options.get("ignorePropertyModificationsFor") {
@@ -118,7 +118,7 @@ impl Rule for NoParamReassign {
             }
         }
 
-        rule
+        Ok(rule)
     }
 
     fn run<'a>(&self, node: &AstNode<'a>, ctx: &LintContext<'a>) {
@@ -310,7 +310,7 @@ fn test() {
         (
             "function foo(a, z) { a.b = 0; x.y = 0; }",
             Some(
-                serde_json::json!([				{ "props": true, "ignorePropertyModificationsFor": ["a", "x"] },			]),
+                serde_json::json!([ { "props": true, "ignorePropertyModificationsFor": ["a", "x"] }, ]),
             ),
         ),
         (
@@ -320,31 +320,31 @@ fn test() {
         (
             "function foo(aFoo) { aFoo.b = 0; }",
             Some(
-                serde_json::json!([				{ "props": true, "ignorePropertyModificationsForRegex": ["^a.*$"] },			]),
+                serde_json::json!([ { "props": true, "ignorePropertyModificationsForRegex": ["^a.*$"] }, ]),
             ),
         ),
         (
             "function foo(aFoo) { ++aFoo.b; }",
             Some(
-                serde_json::json!([				{ "props": true, "ignorePropertyModificationsForRegex": ["^a.*$"] },			]),
+                serde_json::json!([ { "props": true, "ignorePropertyModificationsForRegex": ["^a.*$"] }, ]),
             ),
         ),
         (
             "function foo(aFoo) { delete aFoo.b; }",
             Some(
-                serde_json::json!([				{ "props": true, "ignorePropertyModificationsForRegex": ["^a.*$"] },			]),
+                serde_json::json!([ { "props": true, "ignorePropertyModificationsForRegex": ["^a.*$"] }, ]),
             ),
         ),
         (
             "function foo(a, z) { aFoo.b = 0; x.y = 0; }",
             Some(
-                serde_json::json!([				{					"props": true,					"ignorePropertyModificationsForRegex": ["^a.*$", "^x.*$"],				},			]),
+                serde_json::json!([ { "props": true, "ignorePropertyModificationsForRegex": ["^a.*$", "^x.*$"], }, ]),
             ),
         ),
         (
             "function foo(aFoo) { aFoo.b.c = 0;}",
             Some(
-                serde_json::json!([				{ "props": true, "ignorePropertyModificationsForRegex": ["^a.*$"] },			]),
+                serde_json::json!([ { "props": true, "ignorePropertyModificationsForRegex": ["^a.*$"] }, ]),
             ),
         ),
         (
@@ -368,7 +368,7 @@ fn test() {
         (
             "function foo(bar, baz) { bar.a = true; baz.b = false; }",
             Some(
-                serde_json::json!([				{					"props": true,					"ignorePropertyModificationsForRegex": ["^(foo|bar)$"],					"ignorePropertyModificationsFor": ["baz"],				},			]),
+                serde_json::json!([ { "props": true, "ignorePropertyModificationsForRegex": ["^(foo|bar)$"], "ignorePropertyModificationsFor": ["baz"], }, ]),
             ),
         ),
     ];
@@ -419,13 +419,13 @@ fn test() {
         (
             "function foo(bar) { [bar.a] = []; }",
             Some(
-                serde_json::json!([				{ "props": true, "ignorePropertyModificationsForRegex": ["^a.*$"] },			]),
+                serde_json::json!([ { "props": true, "ignorePropertyModificationsForRegex": ["^a.*$"] }, ]),
             ),
         ), // { "ecmaVersion": 6 },
         (
             "function foo(bar) { [bar.a] = []; }",
             Some(
-                serde_json::json!([				{ "props": true, "ignorePropertyModificationsForRegex": ["^B.*$"] },			]),
+                serde_json::json!([ { "props": true, "ignorePropertyModificationsForRegex": ["^B.*$"] }, ]),
             ),
         ), // { "ecmaVersion": 6 },
         (

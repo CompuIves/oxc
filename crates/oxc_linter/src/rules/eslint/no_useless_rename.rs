@@ -1,6 +1,6 @@
 use oxc_ast::{
     AstKind,
-    ast::{AssignmentTargetProperty, BindingPatternKind},
+    ast::{AssignmentTargetProperty, BindingPattern},
 };
 use oxc_diagnostics::OxcDiagnostic;
 use oxc_macros::declare_oxc_lint;
@@ -75,10 +75,10 @@ declare_oxc_lint!(
 );
 
 impl Rule for NoUselessRename {
-    fn from_configuration(value: serde_json::Value) -> Self {
-        serde_json::from_value::<DefaultRuleConfig<NoUselessRename>>(value)
+    fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
+        Ok(serde_json::from_value::<DefaultRuleConfig<Self>>(value)
             .unwrap_or_default()
-            .into_inner()
+            .into_inner())
     }
 
     fn run<'a>(&self, node: &AstNode<'a>, ctx: &LintContext<'a>) {
@@ -97,16 +97,16 @@ impl Rule for NoUselessRename {
                         continue;
                     };
 
-                    let renamed_key = match &property.value.kind {
-                        BindingPatternKind::AssignmentPattern(assignment_pattern) => {
-                            match &assignment_pattern.left.kind {
-                                BindingPatternKind::BindingIdentifier(binding_ident) => {
+                    let renamed_key = match &property.value {
+                        BindingPattern::AssignmentPattern(assignment_pattern) => {
+                            match &assignment_pattern.left {
+                                BindingPattern::BindingIdentifier(binding_ident) => {
                                     binding_ident.name
                                 }
                                 _ => continue,
                             }
                         }
-                        BindingPatternKind::BindingIdentifier(binding_ident) => binding_ident.name,
+                        BindingPattern::BindingIdentifier(binding_ident) => binding_ident.name,
                         _ => continue,
                     };
 

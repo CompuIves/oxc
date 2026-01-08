@@ -1,13 +1,17 @@
 {
+  // "oxc.path.oxlint": "apps/oxlint/dist/cli.js", // debug with local oxlint build
   "oxc.typeAware": true,
   "oxc.configPath": "oxlintrc.json",
   "oxc.unusedDisableDirectives": "deny",
-  "oxc.fmt.experimental": true,
+
+  // "oxc.path.oxfmt": "apps/oxfmt/dist/cli.js", // debug with local oxfmt build
   "oxc.fmt.configPath": "oxfmtrc.jsonc",
   "[javascript]": {
-    "editor.defaultFormatter": "oxc.oxc-vscode"
+    "editor.defaultFormatter": "oxc.oxc-vscode",
+    "editor.formatOnSave": true
   },
   "[typescript]": {
-    "editor.defaultFormatter": "oxc.oxc-vscode"
+    "editor.defaultFormatter": "oxc.oxc-vscode",
+    "editor.formatOnSave": true
   }
 }

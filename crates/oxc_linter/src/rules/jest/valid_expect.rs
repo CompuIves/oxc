@@ -84,8 +84,8 @@ declare_oxc_lint!(
     /// expect(Promise.resolve('Hi!')).resolves.toBe('Hi!');
     /// ```
     ///
-    /// This rule is compatible with [eslint-plugin-vitest](https://github.com/veritem/eslint-plugin-vitest/blob/v1.1.9/docs/rules/valid-expect.md),
-    /// to use it, add the following configuration to your `.eslintrc.json`:
+    /// This rule is compatible with [eslint-plugin-vitest](https://github.com/vitest-dev/eslint-plugin-vitest/blob/v1.1.9/docs/rules/valid-expect.md),
+    /// to use it, add the following configuration to your `.oxlintrc.json`:
     ///
     /// ```json
     /// {
@@ -101,7 +101,7 @@ declare_oxc_lint!(
 );
 
 impl Rule for ValidExpect {
-    fn from_configuration(value: serde_json::Value) -> Self {
+    fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
         let default_async_matchers = vec![String::from("toResolve"), String::from("toReject")];
         let config = value.get(0);
 
@@ -128,7 +128,7 @@ impl Rule for ValidExpect {
             .and_then(serde_json::Value::as_bool)
             .unwrap_or(false);
 
-        Self(Box::new(ValidExpectConfig { async_matchers, min_args, max_args, always_await }))
+        Ok(Self(Box::new(ValidExpectConfig { async_matchers, min_args, max_args, always_await })))
     }
 
     fn run_on_jest_node<'a, 'b>(

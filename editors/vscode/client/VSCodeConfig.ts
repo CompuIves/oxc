@@ -5,6 +5,8 @@ export class VSCodeConfig implements VSCodeConfigInterface {
   private _enable!: boolean;
   private _trace!: TraceLevel;
   private _binPathOxlint: string | undefined;
+  private _binPathOxfmt: string | undefined;
+  private _binPathTsGoLint: string | undefined;
   private _nodePath: string | undefined;
   private _requireConfig!: boolean;
 
@@ -25,6 +27,8 @@ export class VSCodeConfig implements VSCodeConfigInterface {
     this._enable = this.configuration.get<boolean>("enable") ?? true;
     this._trace = this.configuration.get<TraceLevel>("trace.server") || "off";
     this._binPathOxlint = binPathOxlint;
+    this._binPathOxfmt = this.configuration.get<string>("path.oxfmt");
+    this._binPathTsGoLint = this.configuration.get<string>("path.tsgolint");
     this._nodePath = this.configuration.get<string>("path.node");
     this._requireConfig = this.configuration.get<boolean>("requireConfig") ?? false;
   }
@@ -54,6 +58,24 @@ export class VSCodeConfig implements VSCodeConfigInterface {
   updateBinPathOxlint(value: string | undefined): PromiseLike<void> {
     this._binPathOxlint = value;
     return this.configuration.update("path.oxlint", value);
+  }
+
+  get binPathOxfmt(): string | undefined {
+    return this._binPathOxfmt;
+  }
+
+  updateBinPathOxfmt(value: string | undefined): PromiseLike<void> {
+    this._binPathOxfmt = value;
+    return this.configuration.update("path.oxfmt", value);
+  }
+
+  get binPathTsGoLint(): string | undefined {
+    return this._binPathTsGoLint;
+  }
+
+  updateBinPathTsGoLint(value: string | undefined): PromiseLike<void> {
+    this._binPathTsGoLint = value;
+    return this.configuration.update("path.tsgolint", value);
   }
 
   get nodePath(): string | undefined {
@@ -100,6 +122,13 @@ interface VSCodeConfigInterface {
    * @default undefined
    */
   binPathOxlint: string | undefined;
+
+  /**
+   * Path to the `tsgolint` binary
+   * `oxc.path.tsgolint`
+   * @default undefined
+   */
+  binPathTsGoLint: string | undefined;
 
   /**
    * Path to Node.js

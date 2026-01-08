@@ -86,7 +86,6 @@ jobs:
     name: Build Oxlint ${{ matrix.code-target }}
     runs-on: ${{ matrix.os }}
     env:
-      OXC_VERSION: ${{ needs.check.outputs.oxlint_version }} # Required for `--version` to work.
       TARGET_CC: clang # for mimalloc
     defaults:
       run:
@@ -95,7 +94,7 @@ jobs:
       - uses: taiki-e/checkout-action@b13d20b7cda4e2f325ef19895128f7ff735c0b3d # v1.3.1
 
       - name: Install cross
-        uses: taiki-e/install-action@3575e532701a5fc614b0c842e4119af4cc5fd16d # v2.62.60
+        uses: taiki-e/install-action@cc33365ec7e3350bc47bf935f247582cc6f68344 # v2.65.12
         with:
           tool: cross # cross installs the latest rust toolchain
 
@@ -104,7 +103,7 @@ jobs:
       - name: Add Rust Target
         run: rustup target add ${{ matrix.target }}
 
-      - uses: oxc-project/setup-node@141eb77546de6702f92d320926403fe3f9f6a6f2 # v1.0.5
+      - uses: oxc-project/setup-node@8958a8e040102244b619c4a94fccb657a44b1c21 # v1.0.6
 
       # For cargo-zigbuild in musl builds.
       - uses: goto-bus-stop/setup-zig@abea47f85e598557f500fa1fd2ab7464fcb39406 # v2.2.1
@@ -118,9 +117,6 @@ jobs:
 
       - name: Build Rust binary
         run: cross build --release -p oxlint --features allocator --target=${{ matrix.target }}
-
-      - name: Build language server
-        run: cross build --release -p oxc_language_server --bin oxc_language_server --target=${{ matrix.target }}
 
       # The binaries are zipped to fix permission loss https://github.com/actions/upload-artifact#permission-loss
       - name: Archive oxlint .node binary
@@ -137,27 +133,18 @@ jobs:
           binary_name: oxlint-${{ matrix.code-target }}${{ runner.os == 'Windows' && '.exe' || '' }}
           archive_name: rust-oxlint-${{ matrix.code-target }}
 
-      - name: Archive language server binary
-        uses: ./.github/actions/archive-binary
-        with:
-          source_path: target/${{ matrix.target }}/release/oxc_language_server${{ runner.os == 'Windows' && '.exe' || '' }}
-          binary_name: oxc_language_server-${{ matrix.code-target }}${{ runner.os == 'Windows' && '.exe' || '' }}
-          archive_name: oxc_language_server-${{ matrix.code-target }}
-
       - name: Upload Binary
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           if-no-files-found: error
           name: oxlint-${{ matrix.code-target }}
           path: |
             oxlint**.zip
             oxlint**.tar.gz
-            oxc_language_server**.zip
-            oxc_language_server**.tar.gz
 
       # For github release
       - name: Upload Binary
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           if-no-files-found: error
           name: rust-oxlint-${{ matrix.code-target }}
@@ -174,7 +161,7 @@ jobs:
     steps:
       - uses: taiki-e/checkout-action@b13d20b7cda4e2f325ef19895128f7ff735c0b3d # v1.3.1
 
-      - uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
           path: .
           pattern: oxlint-*
@@ -190,7 +177,7 @@ jobs:
       - name: Untar from non-windows builds
         run: ls *.gz | xargs -i tar xf {}
 
-      - uses: oxc-project/setup-node@141eb77546de6702f92d320926403fe3f9f6a6f2 # v1.0.5
+      - uses: oxc-project/setup-node@8958a8e040102244b619c4a94fccb657a44b1c21 # v1.0.6
 
       - name: Generate oxlint JS build
         working-directory: apps/oxlint
@@ -265,7 +252,6 @@ jobs:
     name: Build Oxfmt ${{ matrix.code-target }}
     runs-on: ${{ matrix.os }}
     env:
-      OXC_VERSION: ${{ needs.check.outputs.oxfmt_version }} # Required for `--version` to work.
       TARGET_CC: clang # for mimalloc
     defaults:
       run:
@@ -274,7 +260,7 @@ jobs:
       - uses: taiki-e/checkout-action@b13d20b7cda4e2f325ef19895128f7ff735c0b3d # v1.3.1
 
       - name: Install cross
-        uses: taiki-e/install-action@3575e532701a5fc614b0c842e4119af4cc5fd16d # v2.62.60
+        uses: taiki-e/install-action@cc33365ec7e3350bc47bf935f247582cc6f68344 # v2.65.12
         with:
           tool: cross # cross installs the latest rust toolchain
 
@@ -283,7 +269,7 @@ jobs:
       - name: Add Rust Target
         run: rustup target add ${{ matrix.target }}
 
-      - uses: oxc-project/setup-node@141eb77546de6702f92d320926403fe3f9f6a6f2 # v1.0.5
+      - uses: oxc-project/setup-node@8958a8e040102244b619c4a94fccb657a44b1c21 # v1.0.6
 
       # For cargo-zigbuild in musl builds.
       - uses: goto-bus-stop/setup-zig@abea47f85e598557f500fa1fd2ab7464fcb39406 # v2.2.1
@@ -296,7 +282,7 @@ jobs:
         run: pnpm run build-napi-release --target ${{ matrix.target }} ${{ matrix.build-oxfmt-args }}
 
       - name: Build Rust binary
-        run: cross build --release -p oxfmt --features allocator --target=${{ matrix.target }}
+        run: cross build --release -p oxfmt --no-default-features --features allocator --target=${{ matrix.target }}
 
       # The binaries are zipped to fix permission loss https://github.com/actions/upload-artifact#permission-loss
       - name: Archive oxfmt .node binary
@@ -314,7 +300,7 @@ jobs:
           archive_name: rust-oxfmt-${{ matrix.code-target }}
 
       - name: Upload Binary
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           if-no-files-found: error
           name: oxfmt-${{ matrix.code-target }}
@@ -324,7 +310,7 @@ jobs:
 
       # For github release
       - name: Upload Binary
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           if-no-files-found: error
           name: rust-oxfmt-${{ matrix.code-target }}
@@ -341,7 +327,7 @@ jobs:
     steps:
       - uses: taiki-e/checkout-action@b13d20b7cda4e2f325ef19895128f7ff735c0b3d # v1.3.1
 
-      - uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
           path: .
           pattern: oxfmt-*
@@ -357,7 +343,7 @@ jobs:
       - name: Untar from non-windows builds
         run: ls *.gz | xargs -i tar xf {}
 
-      - uses: oxc-project/setup-node@141eb77546de6702f92d320926403fe3f9f6a6f2 # v1.0.5
+      - uses: oxc-project/setup-node@8958a8e040102244b619c4a94fccb657a44b1c21 # v1.0.6
 
       - name: Generate oxfmt JS build
         working-directory: apps/oxfmt
@@ -390,13 +376,13 @@ jobs:
       contents: write # for softprops/action-gh-release@v1.3.1
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
         with:
           token: ${{ secrets.OXC_BOT_PAT }}
           fetch-depth: 0 # for changelog
           persist-credentials: true
 
-      - uses: oxc-project/setup-rust@ecabb7322a2ba5aeedb3612d2a40b86a85cee235 # v1.0.11
+      - uses: oxc-project/setup-rust@c8224157c0bf235aabc633e8cd50d344f087a7de # v1.0.12
         with:
           restore-cache: false
           tools: cargo-release-oxc
@@ -432,21 +418,22 @@ jobs:
           git tag oxlint_v${NEEDS_CHECK_OUTPUTS_OXLINT_VERSION} ${{ github.sha }}
           git push origin oxlint_v${NEEDS_CHECK_OUTPUTS_OXLINT_VERSION} oxfmt_v${NEEDS_CHECK_OUTPUTS_OXFMT_VERSION}
 
-      - uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
-          path: .
+          path: ./release-artifacts
           pattern: rust-*
           merge-multiple: true
 
       - name: Remove rust- prefix from filenames
         run: |
+          cd release-artifacts
           for file in rust-*; do
             mv "$file" "${file#rust-}"
           done
           ls
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@5be0e66d93ac7ed76da52eca8bb058f665c3a5fe # v2.4.2
+        uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2.5.0
         id: release
         with:
           body_path: ./target/RELEASE_BODY.md
@@ -455,9 +442,7 @@ jobs:
           tag_name: apps_v${{ needs.check.outputs.oxlint_version }}
           target_commitish: ${{ github.sha }}
           fail_on_unmatched_files: true
-          files: |
-            oxfmt-*
-            oxlint-*
+          files: ./release-artifacts/*
 
       - name: Turn off draft on github release
         env:

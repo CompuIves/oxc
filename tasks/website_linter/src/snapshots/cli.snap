@@ -1,5 +1,5 @@
 ---
-source: tasks/website/src/linter/cli.rs
+source: tasks/website_linter/src/cli.rs
 expression: snapshot
 ---
 ---
@@ -59,7 +59,7 @@ Arguments:
 - **`    --disable-typescript-plugin`** &mdash; 
   Disable TypeScript plugin, which is turned on by default
 - **`    --import-plugin`** &mdash; 
-  Enable import plugin and detect ESM problems. It is recommended to use alongside the `--tsconfig` option.
+  Enable import plugin and detect ESM problems. It should be used with the `--tsconfig` flag if your project has a tsconfig with a name other than `tsconfig.json`.
 - **`    --react-plugin`** &mdash; 
   Enable react plugin, which is turned off by default
 - **`    --jsdoc-plugin`** &mdash; 
@@ -78,8 +78,6 @@ Arguments:
   Enable the promise plugin and detect promise usage problems
 - **`    --node-plugin`** &mdash; 
   Enable the node plugin and detect node usage problems
-- **`    --regex-plugin`** &mdash; 
-  Enable the regex plugin and detect regex usage problems
 - **`    --vue-plugin`** &mdash; 
   Enable the vue plugin and detect vue usage problems
 
@@ -106,9 +104,6 @@ Arguments:
   Disable excluding files from `.eslintignore` files, **`--ignore-path`** flags and **`--ignore-pattern`** flags
 
 
-
-> [!NOTE]
-> `.gitignore` is only respected inside a Git repository.
 
 ## Handle Warnings
 - **`    --quiet`** &mdash; 

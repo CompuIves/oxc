@@ -132,6 +132,14 @@ working directory: fixtures/tsgolint
  3 | }
    `----
 
+  x typescript-eslint(no-unnecessary-template-expression): Template literal expression is unnecessary and can be simplified.
+   ,-[no-unnecessary-template-expression.ts:2:18]
+ 1 | const text = 'hello';
+ 2 | const wrapped = `${text}`;
+   :                  ^^^^^^^
+ 3 | 
+   `----
+
   x typescript-eslint(no-unnecessary-type-arguments): This is the default value for this type parameter, so it can be omitted.
    ,-[no-unnecessary-type-arguments.ts:4:25]
  3 | }
@@ -266,6 +274,13 @@ working directory: fixtures/tsgolint
  10 | }
     `----
 
+  x typescript-eslint(prefer-nullish-coalescing): Prefer using nullish coalescing operator (`??`) instead of a ternary expression, as it is simpler to read.
+   ,-[prefer-nullish-coalescing.ts:2:23]
+ 1 | declare const nullableString: string | null;
+ 2 | const nullishResult = nullableString !== null && nullableString !== undefined ? nullableString : 'default';
+   :                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   `----
+
   x typescript-eslint(prefer-promise-reject-errors): Expected the Promise rejection reason to be an Error.
    ,-[prefer-promise-reject-errors.ts:1:1]
  1 | Promise.reject('error');
@@ -381,8 +396,8 @@ working directory: fixtures/tsgolint
    :                   ^^^^^^^^
    `----
 
-Found 0 warnings and 49 errors.
-Finished in <variable>ms on 44 files using 1 threads.
+Found 0 warnings and 51 errors.
+Finished in <variable>ms on 45 files with 44 rules using 1 threads.
 ----------
 CLI result: LintFoundErrors
 ----------

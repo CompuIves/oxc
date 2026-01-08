@@ -3,10 +3,11 @@
 mod ast_nodes;
 #[cfg(feature = "detect_code_removal")]
 mod detect_code_removal;
-mod embedded_formatter;
+mod external_formatter;
 mod formatter;
 mod ir_transform;
 mod options;
+pub mod oxfmtrc;
 mod parentheses;
 mod service;
 mod utils;
@@ -15,10 +16,12 @@ mod write;
 use oxc_allocator::Allocator;
 use oxc_ast::ast::*;
 
-pub use crate::embedded_formatter::{EmbeddedFormatter, EmbeddedFormatterCallback};
+pub use crate::external_formatter::{
+    EmbeddedFormatterCallback, ExternalCallbacks, TailwindCallback,
+};
 pub use crate::ir_transform::options::*;
 pub use crate::options::*;
-pub use crate::service::{oxfmtrc::Oxfmtrc, parse_utils::*};
+pub use crate::service::*;
 use crate::{
     ast_nodes::{AstNode, AstNodes},
     formatter::{FormatContext, Formatted},
@@ -31,13 +34,12 @@ use self::formatter::prelude::tag::Label;
 
 pub struct Formatter<'a> {
     allocator: &'a Allocator,
-    source_text: &'a str,
     options: FormatOptions,
 }
 
 impl<'a> Formatter<'a> {
     pub fn new(allocator: &'a Allocator, options: FormatOptions) -> Self {
-        Self { allocator, source_text: "", options }
+        Self { allocator, options }
     }
 
     /// Formats the given AST `Program` and returns the formatted string.
@@ -48,30 +50,17 @@ impl<'a> Formatter<'a> {
 
     #[inline]
     pub fn format(self, program: &'a Program<'a>) -> Formatted<'a> {
-        self.format_impl(program, None)
+        self.format_with_external_callbacks(program, None)
     }
 
     #[inline]
-    pub fn format_with_embedded(
+    pub fn format_with_external_callbacks(
         self,
         program: &'a Program<'a>,
-        embedded_formatter: EmbeddedFormatter,
-    ) -> Formatted<'a> {
-        self.format_impl(program, Some(embedded_formatter))
-    }
-
-    pub fn format_impl(
-        mut self,
-        program: &'a Program<'a>,
-        embedded_formatter: Option<EmbeddedFormatter>,
+        external_callbacks: Option<ExternalCallbacks>,
     ) -> Formatted<'a> {
         let parent = self.allocator.alloc(AstNodes::Dummy());
         let program_node = AstNode::new(program, parent, self.allocator);
-
-        let source_text = program.source_text;
-        self.source_text = source_text;
-
-        let experimental_sort_imports = self.options.experimental_sort_imports.clone();
 
         let context = FormatContext::new(
             program.source_text,
@@ -79,7 +68,7 @@ impl<'a> Formatter<'a> {
             &program.comments,
             self.allocator,
             self.options,
-            embedded_formatter,
+            external_callbacks,
         );
 
         let mut formatted = formatter::format(
@@ -89,9 +78,14 @@ impl<'a> Formatter<'a> {
 
         // Basic formatting and `document.propagate_expand()` are already done here.
         // Now apply additional transforms if enabled.
-        if let Some(sort_imports_options) = experimental_sort_imports {
-            let sort_imports = SortImportsTransform::new(sort_imports_options);
-            formatted.apply_transform(|doc| sort_imports.transform(doc, self.allocator));
+        if let Some(sort_imports_options) = &formatted.context().options().experimental_sort_imports
+            && let Some(transformed_elements) = SortImportsTransform::transform(
+                formatted.document(),
+                sort_imports_options,
+                self.allocator,
+            )
+        {
+            formatted.document_mut().replace_elements(transformed_elements);
         }
 
         formatted
@@ -103,6 +97,10 @@ pub(crate) enum JsLabels {
     MemberChain,
     /// For `ir_transform/sort_imports`
     ImportDeclaration,
+    /// For `ir_transform/sort_imports`
+    /// Marks `alignable_comment` (Block comment where each line starts with `*`)
+    /// to distinguish from other text content like template literals that may contain `/*`.
+    AlignableBlockComment,
 }
 
 impl Label for JsLabels {
@@ -114,6 +112,7 @@ impl Label for JsLabels {
         match self {
             Self::MemberChain => "MemberChain",
             Self::ImportDeclaration => "ImportDeclaration",
+            Self::AlignableBlockComment => "AlignableBlockComment",
         }
     }
 }

@@ -1,13 +1,16 @@
 use oxc_ast::{
     AstKind,
     ast::{
-        BindingPatternKind, CallExpression, Expression, FormalParameters, FunctionBody,
-        LogicalExpression, MemberExpression, Statement,
+        BindingPattern, CallExpression, Expression, FormalParameters, FunctionBody,
+        LogicalExpression, MemberExpression, Statement, match_member_expression,
     },
 };
 use oxc_semantic::AstNode;
 use oxc_span::{ContentEq, Span};
-use oxc_syntax::operator::LogicalOperator;
+use oxc_syntax::{
+    operator::LogicalOperator,
+    precedence::{GetPrecedence, Precedence},
+};
 
 use crate::LintContext;
 
@@ -123,8 +126,7 @@ pub fn is_logical_expression(node: &AstNode) -> bool {
 // gets the name of the first parameter of a function
 pub fn get_first_parameter_name<'a>(arg: &'a FormalParameters) -> Option<&'a str> {
     let first_func_param = arg.items.first()?;
-    let BindingPatternKind::BindingIdentifier(first_func_param) = &first_func_param.pattern.kind
-    else {
+    let BindingPattern::BindingIdentifier(first_func_param) = &first_func_param.pattern else {
         return None;
     };
     Some(first_func_param.name.as_str())
@@ -374,4 +376,35 @@ where
     }
 
     false
+}
+
+/// Returns the precedence of an expression if it has one.
+///
+/// Returns `None` for "atomic" expressions (literals, identifiers, etc.) that have
+/// the highest precedence and never need parentheses when used as operands.
+///
+/// This is useful for determining if parentheses are needed when transforming code.
+/// If `get_precedence(expr)` returns `None`, the expression never needs parentheses.
+/// If it returns `Some(p)`, compare `p` against the context's precedence to decide.
+pub fn get_precedence(expr: &Expression) -> Option<Precedence> {
+    match expr {
+        Expression::SequenceExpression(e) => Some(e.precedence()),
+        Expression::AssignmentExpression(e) => Some(e.precedence()),
+        Expression::YieldExpression(e) => Some(e.precedence()),
+        Expression::ConditionalExpression(e) => Some(e.precedence()),
+        Expression::LogicalExpression(e) => Some(e.precedence()),
+        Expression::BinaryExpression(e) => Some(e.precedence()),
+        Expression::UnaryExpression(e) => Some(e.precedence()),
+        Expression::UpdateExpression(e) => Some(e.precedence()),
+        Expression::AwaitExpression(e) => Some(e.precedence()),
+        Expression::NewExpression(e) => Some(e.precedence()),
+        Expression::CallExpression(e) => Some(e.precedence()),
+        match_member_expression!(Expression) => Some(expr.to_member_expression().precedence()),
+        Expression::TSAsExpression(_)
+        | Expression::TSSatisfiesExpression(_)
+        | Expression::TSTypeAssertion(_)
+        | Expression::ArrowFunctionExpression(_) => Some(Precedence::Lowest),
+        // Literals, identifiers, and other atomic expressions have highest precedence
+        _ => None,
+    }
 }

@@ -12,11 +12,11 @@ use crate::{
     utils::{JestFnKind, JestGeneralFnKind, PossibleJestNode, is_type_of_jest_fn_call},
 };
 
-fn unexpected_hook_diagonsitc(span: Span) -> OxcDiagnostic {
-    OxcDiagnostic::warn("Do not use setup or teardown hooks").with_label(span)
+fn unexpected_hook_diagnostic(span: Span) -> OxcDiagnostic {
+    OxcDiagnostic::warn("Do not use setup or teardown hooks.").with_label(span)
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, Deserialize)]
 pub struct NoHooks(Box<NoHooksConfig>);
 
 #[derive(Debug, Default, Clone, JsonSchema, Deserialize)]
@@ -83,6 +83,17 @@ declare_oxc_lint!(
     ///     });
     /// });
     /// ```
+    ///
+    /// This rule is compatible with [eslint-plugin-vitest](https://github.com/vitest-dev/eslint-plugin-vitest/blob/main/docs/rules/no-hooks.md),
+    /// to use it, add the following configuration to your `.oxlintrc.json`:
+    ///
+    /// ```json
+    /// {
+    ///   "rules": {
+    ///      "vitest/no-hooks": "error"
+    ///   }
+    /// }
+    /// ```
     NoHooks,
     jest,
     style,
@@ -90,11 +101,10 @@ declare_oxc_lint!(
 );
 
 impl Rule for NoHooks {
-    fn from_configuration(value: serde_json::Value) -> Self {
-        let config = serde_json::from_value::<DefaultRuleConfig<NoHooksConfig>>(value)
+    fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
+        Ok(serde_json::from_value::<DefaultRuleConfig<Self>>(value)
             .unwrap_or_default()
-            .into_inner();
-        Self(Box::new(config))
+            .into_inner())
     }
 
     fn run_on_jest_node<'a, 'c>(
@@ -124,7 +134,7 @@ impl NoHooks {
         if let Expression::Identifier(ident) = &call_expr.callee {
             let name = CompactStr::from(ident.name.as_str());
             if !self.allow.contains(&name) {
-                ctx.diagnostic(unexpected_hook_diagonsitc(call_expr.callee.span()));
+                ctx.diagnostic(unexpected_hook_diagnostic(call_expr.callee.span()));
             }
         }
     }

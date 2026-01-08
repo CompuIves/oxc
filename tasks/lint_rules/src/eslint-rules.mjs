@@ -38,10 +38,8 @@ import pluginReactPerf from "eslint-plugin-react-perf";
 import pluginNext from "@next/eslint-plugin-next";
 // https://github.com/eslint-community/eslint-plugin-promise/blob/v7.1.0/index.js
 import pluginPromise from "eslint-plugin-promise";
-// https://github.com/veritem/eslint-plugin-vitest/blob/v1.1.9/src/index.ts
-import pluginVitest from "eslint-plugin-vitest";
-// https://github.com/ota-meshi/eslint-plugin-regexp
-import pluginRegexp from "eslint-plugin-regexp";
+// https://github.com/vitest-dev/eslint-plugin-vitest/blob/v1.1.9/src/index.ts
+import pluginVitest from "@vitest/eslint-plugin";
 // https://github.com/vuejs/eslint-plugin-vue
 import pluginVue from "eslint-plugin-vue";
 
@@ -63,17 +61,20 @@ const { rules: pluginReactHooksAllRules } = pluginReactHooks;
 const { rules: pluginReactPerfAllRules, configs: pluginReactPerfConfigs } = pluginReactPerf;
 const { rules: pluginNextAllRules } = pluginNext;
 const { configs: pluginVitestConfigs, rules: pluginVitestRules } = pluginVitest;
-const { configs: pluginRegexpConfigs, rules: pluginRegexpRules } = pluginRegexp;
 const { configs: pluginVueConfigs, rules: pluginVueRules } = pluginVue;
 
-/** @param {import("eslint").Linter} linter */
-const loadPluginTypeScriptRules = (linter) => {
-  // We want to list all rules but not support type-checked rules
-  const pluginTypeScriptDisableTypeCheckedRules = new Map(
-    Object.entries(pluginTypeScriptConfigs["disable-type-checked"].rules),
-  );
+export const typescriptTypeCheckRules = new Map(
+  Object.entries(pluginTypeScriptConfigs["disable-type-checked"].rules),
+);
+
+/**
+ * @param {import("eslint").Linter} linter
+ * @param {boolean} includeTypeCheckRules
+ * @returns {void}
+ */
+const loadPluginTypeScriptRules = (linter, includeTypeCheckRules = false) => {
   for (const [name, rule] of Object.entries(pluginTypeScriptAllRules)) {
-    if (pluginTypeScriptDisableTypeCheckedRules.has(`@typescript-eslint/${name}`)) {
+    if (!includeTypeCheckRules && typescriptTypeCheckRules.has(`@typescript-eslint/${name}`)) {
       continue;
     }
 
@@ -263,20 +264,6 @@ const loadPluginVitestRules = (linter) => {
 };
 
 /** @param {import("eslint").Linter} linter */
-const loadPluginRegexpRules = (linter) => {
-  const pluginRegexpRecommendedRules = new Map(
-    Object.entries(pluginRegexpConfigs.recommended.rules),
-  );
-  for (const [name, rule] of Object.entries(pluginRegexpRules)) {
-    const prefixedName = `regexp/${name}`;
-
-    rule.meta.docs.recommended = pluginRegexpRecommendedRules.has(prefixedName);
-
-    linter.defineRule(prefixedName, rule);
-  }
-};
-
-/** @param {import("eslint").Linter} linter */
 const loadPluginVueRules = (linter) => {
   const pluginVueRecommendedRules = new Map(
     Object.entries(pluginVueConfigs.recommended.rules || {}),
@@ -316,8 +303,7 @@ export const ALL_TARGET_PLUGINS = new Map([
   ["react-perf", { npm: ["eslint-plugin-react-perf"], issueNo: 2041 }],
   ["nextjs", { npm: ["@next/eslint-plugin-next"], issueNo: 1929 }],
   ["promise", { npm: ["eslint-plugin-promise"], issueNo: 4655 }],
-  ["vitest", { npm: ["eslint-plugin-vitest"], issueNo: 4656 }],
-  ["regexp", { npm: ["eslint-plugin-regexp"], issueNo: 11439 }],
+  ["vitest", { npm: ["@vitest/eslint-plugin"], issueNo: 4656 }],
   ["vue", { npm: ["eslint-plugin-vue"], issueNo: 11440 }],
 ]);
 
@@ -327,9 +313,13 @@ export const createESLintLinter = () =>
     configType: "eslintrc",
   });
 
-/** @param {import("eslint").Linter} linter */
-export const loadTargetPluginRules = (linter) => {
-  loadPluginTypeScriptRules(linter);
+/**
+ * @param {import("eslint").Linter} linter
+ * @param {boolean} includeTypeCheckRules
+ * @returns {void}
+ */
+export const loadTargetPluginRules = (linter, includeTypeCheckRules = false) => {
+  loadPluginTypeScriptRules(linter, includeTypeCheckRules);
   loadPluginNRules(linter);
   loadPluginUnicornRules(linter);
   loadPluginJSDocRules(linter);
@@ -341,6 +331,5 @@ export const loadTargetPluginRules = (linter) => {
   loadPluginNextRules(linter);
   loadPluginPromiseRules(linter);
   loadPluginVitestRules(linter);
-  loadPluginRegexpRules(linter);
   loadPluginVueRules(linter);
 };

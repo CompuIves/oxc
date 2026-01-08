@@ -1,5 +1,5 @@
 ---
-source: tasks/website/src/linter/cli.rs
+source: tasks/website_linter/src/cli.rs
 expression: snapshot
 ---
 Usage: [-c=<./.oxlintrc.json>] [PATH]...
@@ -35,8 +35,9 @@ Enable/Disable Plugins
         --disable-unicorn-plugin  Disable unicorn plugin, which is turned on by default
         --disable-oxc-plugin  Disable oxc unique rules, which is turned on by default
         --disable-typescript-plugin  Disable TypeScript plugin, which is turned on by default
-        --import-plugin       Enable import plugin and detect ESM problems. It is recommended to use
-                              alongside the `--tsconfig` option.
+        --import-plugin       Enable import plugin and detect ESM problems. It should be used with
+                              the `--tsconfig` flag if your project has a tsconfig with a name other
+                              than `tsconfig.json`.
         --react-plugin        Enable react plugin, which is turned off by default
         --jsdoc-plugin        Enable jsdoc plugin and detect JSDoc problems
         --jest-plugin         Enable the Jest plugin and detect test problems
@@ -47,7 +48,6 @@ Enable/Disable Plugins
                               problems
         --promise-plugin      Enable the promise plugin and detect promise usage problems
         --node-plugin         Enable the node plugin and detect node usage problems
-        --regex-plugin        Enable the regex plugin and detect regex usage problems
         --vue-plugin          Enable the vue plugin and detect vue usage problems
 
 Fix Problems

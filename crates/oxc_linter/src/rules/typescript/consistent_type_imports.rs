@@ -13,7 +13,7 @@ use oxc_macros::declare_oxc_lint;
 use oxc_semantic::{Reference, SymbolId};
 use oxc_span::{GetSpan, Span};
 use schemars::JsonSchema;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     AstNode,
@@ -49,7 +49,7 @@ impl Deref for ConsistentTypeImports {
     }
 }
 
-/// <https://github.com/typescript-eslint/typescript-eslint/blob/v8.9.0/packages/eslint-plugin/docs/rules/consistent-type-imports.mdx>
+// <https://github.com/typescript-eslint/typescript-eslint/blob/v8.9.0/packages/eslint-plugin/docs/rules/consistent-type-imports.mdx>
 #[derive(Debug, Clone, JsonSchema, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct ConsistentTypeImportsConfig {
@@ -71,7 +71,7 @@ impl Default for ConsistentTypeImportsConfig {
     }
 }
 
-#[derive(Default, Debug, Clone, Copy, JsonSchema, Deserialize)]
+#[derive(Default, Debug, Clone, Copy, JsonSchema, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
 enum FixStyle {
     /// Will add the type keyword after the import keyword `import type { A } from '...'`
@@ -81,7 +81,7 @@ enum FixStyle {
     InlineTypeImports,
 }
 
-#[derive(Default, Debug, Clone, JsonSchema, Deserialize)]
+#[derive(Default, Debug, Clone, JsonSchema, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
 enum Prefer {
     /// Will enforce that you always use `import type Foo from '...'` except referenced by metadata of decorators.
@@ -172,10 +172,10 @@ declare_oxc_lint!(
 );
 
 impl Rule for ConsistentTypeImports {
-    fn from_configuration(value: serde_json::Value) -> Self {
-        serde_json::from_value::<DefaultRuleConfig<ConsistentTypeImports>>(value)
+    fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
+        Ok(serde_json::from_value::<DefaultRuleConfig<Self>>(value)
             .unwrap_or_default()
-            .into_inner()
+            .into_inner())
     }
 
     fn run<'a>(&self, node: &AstNode<'a>, ctx: &LintContext<'a>) {

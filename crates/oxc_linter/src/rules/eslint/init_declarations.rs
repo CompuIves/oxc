@@ -1,7 +1,7 @@
 use oxc_ast::{
     AstKind,
     ast::{
-        BindingPatternKind, ForInStatement, ForOfStatement, ForStatement, ForStatementInit,
+        BindingPattern, ForInStatement, ForOfStatement, ForStatement, ForStatementInit,
         ForStatementLeft, VariableDeclarationKind,
     },
 };
@@ -121,17 +121,17 @@ declare_oxc_lint!(
 );
 
 impl Rule for InitDeclarations {
-    fn from_configuration(value: Value) -> Self {
+    fn from_configuration(value: Value) -> Result<Self, serde_json::error::Error> {
         let obj1 = value.get(0);
         let obj2 = value.get(1);
 
-        Self {
+        Ok(Self {
             mode: obj1.and_then(Value::as_str).map(Mode::from).unwrap_or_default(),
             ignore_for_loop_init: obj2
                 .and_then(|v| v.get("ignoreForLoopInit"))
                 .and_then(Value::as_bool)
                 .unwrap_or(false),
-        }
+        })
     }
 
     fn run<'a>(&self, node: &AstNode<'a>, ctx: &LintContext<'a>) {
@@ -152,7 +152,7 @@ impl Rule for InitDeclarations {
                 }
             }
             for v in &decl.declarations {
-                let BindingPatternKind::BindingIdentifier(identifier) = &v.id.kind else {
+                let BindingPattern::BindingIdentifier(identifier) = &v.id else {
                     continue;
                 };
                 let is_initialized = match parent.kind() {

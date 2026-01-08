@@ -1,4 +1,4 @@
-use oxc_ast::{AstKind, ast::*};
+use oxc_ast::{AstKind, ast::*, match_module_declaration};
 
 use crate::builder::SemanticBuilder;
 
@@ -9,11 +9,18 @@ use typescript as ts;
 
 pub use javascript::is_function_part_of_if_statement;
 
+/// Perform syntax error checking for the given AST node.
+///
+/// Must be inlined along with `SemanticBuilder::leave_node` so the compiler can see the
+/// concrete `AstKind` variant at each call site and eliminate non-matching arms.
+#[expect(clippy::inline_always, reason = "enables compile-time match elimination, see doc comment")]
+#[inline(always)]
 pub fn check<'a>(kind: AstKind<'a>, ctx: &SemanticBuilder<'a>) {
     match kind {
         AstKind::Program(program) => {
             js::check_duplicate_class_elements(ctx);
             js::check_unresolved_exports(program, ctx);
+            ts::check_ts_export_assignment_in_program(program, ctx);
         }
         AstKind::BindingIdentifier(ident) => {
             js::check_identifier(&ident.name, ident.span, ident.symbol_id.get(), ctx);
@@ -29,10 +36,9 @@ pub fn check<'a>(kind: AstKind<'a>, ctx: &SemanticBuilder<'a>) {
         AstKind::StringLiteral(lit) => js::check_string_literal(lit, ctx),
 
         AstKind::Directive(dir) => js::check_directive(dir, ctx),
-        m if m.is_module_declaration() => {
-            if let Some(mod_decl_kind) = m.as_module_declaration_kind() {
-                js::check_module_declaration(&mod_decl_kind, ctx);
-            }
+        match_module_declaration!(AstKind) => {
+            let mod_decl_kind = kind.as_module_declaration_kind().unwrap();
+            js::check_module_declaration(&mod_decl_kind, ctx);
         }
         AstKind::MetaProperty(prop) => js::check_meta_property(prop, ctx),
 
@@ -88,9 +94,6 @@ pub fn check<'a>(kind: AstKind<'a>, ctx: &SemanticBuilder<'a>) {
 
         AstKind::FormalParameters(params) => {
             ts::check_formal_parameters(params, ctx);
-        }
-        AstKind::ArrayPattern(pat) => {
-            ts::check_array_pattern(pat, ctx);
         }
 
         AstKind::AssignmentExpression(expr) => js::check_assignment_expression(expr, ctx),

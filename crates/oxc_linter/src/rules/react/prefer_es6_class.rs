@@ -32,7 +32,7 @@ enum PreferES6ClassOptionType {
     Never,
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, Deserialize)]
 pub struct PreferEs6Class(PreferES6ClassOptionType);
 
 declare_oxc_lint!(
@@ -62,12 +62,10 @@ declare_oxc_lint!(
 );
 
 impl Rule for PreferEs6Class {
-    fn from_configuration(value: serde_json::Value) -> Self {
-        Self(
-            serde_json::from_value::<DefaultRuleConfig<PreferES6ClassOptionType>>(value)
-                .unwrap_or_default()
-                .into_inner(),
-        )
+    fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
+        Ok(serde_json::from_value::<DefaultRuleConfig<Self>>(value)
+            .unwrap_or_default()
+            .into_inner())
     }
 
     fn run<'a>(&self, node: &AstNode<'a>, ctx: &LintContext<'a>) {

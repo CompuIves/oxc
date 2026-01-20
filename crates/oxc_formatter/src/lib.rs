@@ -7,11 +7,10 @@ mod external_formatter;
 mod formatter;
 mod ir_transform;
 mod options;
-pub mod oxfmtrc;
 mod parentheses;
+mod print;
 mod service;
 mod utils;
-mod write;
 
 use oxc_allocator::Allocator;
 use oxc_ast::ast::*;

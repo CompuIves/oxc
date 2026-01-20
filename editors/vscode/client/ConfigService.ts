@@ -1,11 +1,5 @@
 import * as path from "node:path";
-import {
-  CancellationTokenSource,
-  ConfigurationChangeEvent,
-  Uri,
-  workspace,
-  WorkspaceFolder,
-} from "vscode";
+import { ConfigurationChangeEvent, Uri, workspace, WorkspaceFolder } from "vscode";
 import { DiagnosticPullMode } from "vscode-languageclient";
 import { validateSafeBinaryPath } from "./PathValidator";
 import { IDisposable } from "./types";
@@ -183,26 +177,20 @@ export class ConfigService implements IDisposable {
    * If multiple workspaces contain the binary, the first one found is returned.
    */
   private async searchNodeModulesBin(binaryName: string): Promise<string | undefined> {
-    const cts = new CancellationTokenSource();
-    setTimeout(() => cts.cancel(), 10000); // cancel after 10 seconds
-
+    // try to resolve via require.resolve
     try {
-      // bun package manager uses `.exe` extension on Windows
-      // search for both with and without `.exe` extension
-      const extension = process.platform === "win32" ? "{,.exe}" : "";
-      // maybe use `tinyglobby` later for better performance, VSCode can be slow on globbing large projects.
-      const files = await workspace.findFiles(
-        // search workspace root plus up to 3 subdirectory levels for the binary path
-        `{,*/,*/*,*/*/*}/node_modules/.bin/${binaryName}${extension}`,
-        undefined,
-        1,
-        cts.token,
-      );
-
-      return files.length > 0 ? files[0].fsPath : undefined;
-    } catch {
-      return undefined;
-    }
+      const resolvedPath = require
+        .resolve(binaryName, {
+          paths: workspace.workspaceFolders?.map((folder) => folder.uri.fsPath) ?? [],
+        })
+        // we want to target the binary instead of the main index file
+        // Improvement: search inside package.json "bin" and `main` field for more reliability
+        .replace(
+          `${binaryName}${path.sep}dist${path.sep}index.js`,
+          `${binaryName}${path.sep}bin${path.sep}${binaryName}`,
+        );
+      return resolvedPath;
+    } catch {}
   }
 
   private async onVscodeConfigChange(event: ConfigurationChangeEvent): Promise<void> {

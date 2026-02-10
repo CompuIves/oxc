@@ -7,7 +7,7 @@ use oxc_ast::{
 use oxc_diagnostics::OxcDiagnostic;
 use oxc_macros::declare_oxc_lint;
 use oxc_semantic::IsGlobalReference;
-use oxc_span::{CompactStr, Span};
+use oxc_span::{CompactStr, Ident, Span};
 use schemars::JsonSchema;
 use serde::Deserialize;
 
@@ -27,7 +27,7 @@ fn no_require_imports_diagnostic(span: Span) -> OxcDiagnostic {
 pub struct NoRequireImports(Box<NoRequireImportsConfig>);
 
 #[derive(Debug, Default, Clone, JsonSchema, Deserialize)]
-#[serde(rename_all = "camelCase", default)]
+#[serde(rename_all = "camelCase", default, deny_unknown_fields)]
 pub struct NoRequireImportsConfig {
     /// These strings will be compiled into regular expressions with the u flag and be used to test against the imported path.
     /// A common use case is to allow importing `package.json`. This is because `package.json` commonly lives outside of the TS root directory,
@@ -125,9 +125,7 @@ fn match_argument_value_with_regex(allow: &[CompactStr], argument_value: &str) -
 
 impl Rule for NoRequireImports {
     fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
-        Ok(serde_json::from_value::<DefaultRuleConfig<Self>>(value)
-            .unwrap_or_default()
-            .into_inner())
+        serde_json::from_value::<DefaultRuleConfig<Self>>(value).map(DefaultRuleConfig::into_inner)
     }
 
     fn run<'a>(&self, node: &AstNode<'a>, ctx: &LintContext<'a>) {
@@ -135,7 +133,7 @@ impl Rule for NoRequireImports {
             AstKind::CallExpression(call_expr) => {
                 if node.scope_id() != ctx.scoping().root_scope_id()
                     && let Some(id) = call_expr.callee.get_identifier_reference()
-                    && !id.is_global_reference_name("require", ctx.scoping())
+                    && !id.is_global_reference_name(Ident::new_const("require"), ctx.scoping())
                 {
                     return;
                 }
@@ -172,7 +170,11 @@ impl Rule for NoRequireImports {
                     }
                 }
 
-                if ctx.scoping().find_binding(ctx.scoping().root_scope_id(), "require").is_some() {
+                if ctx
+                    .scoping()
+                    .find_binding(ctx.scoping().root_scope_id(), Ident::new_const("require"))
+                    .is_some()
+                {
                     return;
                 }
 
@@ -194,9 +196,8 @@ impl Rule for NoRequireImports {
 
                     ctx.diagnostic(no_require_imports_diagnostic(decl.span));
                 }
-                TSModuleReference::IdentifierReference(_)
-                | TSModuleReference::QualifiedName(_)
-                | TSModuleReference::ThisExpression(_) => {}
+                TSModuleReference::IdentifierReference(_) | TSModuleReference::QualifiedName(_) => {
+                }
             },
             _ => {}
         }

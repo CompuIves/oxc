@@ -7,7 +7,7 @@ use oxc_ast_visit::Visit;
 use oxc_diagnostics::OxcDiagnostic;
 use oxc_macros::declare_oxc_lint;
 use oxc_semantic::{IsGlobalReference, ScopeFlags};
-use oxc_span::{GetSpan, Span};
+use oxc_span::{GetSpan, Ident, Span};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -38,7 +38,7 @@ fn missing_catch_parameter_diagnostic(span: Span) -> OxcDiagnostic {
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema)]
 #[schemars(rename_all = "camelCase")]
-#[serde(rename_all = "camelCase", default)]
+#[serde(rename_all = "camelCase", default, deny_unknown_fields)]
 struct PreserveCaughtErrorOptions {
     /// When set to `true`, requires that catch clauses always have a parameter.
     require_catch_parameter: bool,
@@ -187,6 +187,10 @@ impl<'a> Visit<'a> for ThrowFinder<'a, '_> {
 
     // Do not traverse into nested functions/closures within the catch block
     fn visit_function(&mut self, _func: &Function<'a>, _flags: ScopeFlags) {}
+
+    // Do not traverse into nested catch clauses. They have their own caught error and will be
+    // analyzed separately when visiting their associated `TryStatement`.
+    fn visit_catch_clause(&mut self, _catch_clause: &CatchClause<'a>) {}
 }
 
 fn is_builtin_error_constructor(expr: &Expression, ctx: &LintContext) -> bool {
@@ -194,13 +198,13 @@ fn is_builtin_error_constructor(expr: &Expression, ctx: &LintContext) -> bool {
         return false;
     };
 
-    ident.is_global_reference_name("Error", ctx.scoping())
-        || ident.is_global_reference_name("TypeError", ctx.scoping())
+    ident.is_global_reference_name(Ident::new_const("Error"), ctx.scoping())
+        || ident.is_global_reference_name(Ident::new_const("TypeError"), ctx.scoping())
         || is_aggregate_error(ident, ctx)
 }
 
 fn is_aggregate_error(ident: &IdentifierReference, ctx: &LintContext) -> bool {
-    ident.is_global_reference_name("AggregateError", ctx.scoping())
+    ident.is_global_reference_name(Ident::new_const("AggregateError"), ctx.scoping())
 }
 
 fn has_cause_property(
@@ -305,9 +309,7 @@ impl PreserveCaughtError {
 
 impl Rule for PreserveCaughtError {
     fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
-        Ok(serde_json::from_value::<DefaultRuleConfig<Self>>(value)
-            .unwrap_or_default()
-            .into_inner())
+        serde_json::from_value::<DefaultRuleConfig<Self>>(value).map(DefaultRuleConfig::into_inner)
     }
 
     fn run<'a>(&self, node: &AstNode<'a>, ctx: &LintContext<'a>) {
@@ -408,6 +410,10 @@ fn test() {
 					throw new Error("Something went wrong");
 				}"#,
             Some(serde_json::json!([{ "requireCatchParameter": false }])),
+        ),
+        (
+            r#"try { doSomething(); } catch (errorA) { try { doSomethingElse(); } catch (errorB) { throw new Error( `The certificate key "${chalk.yellow(keyFile)}" is invalid.\n${errorA.message}`, { cause: errorB }); } }"#,
+            None,
         ),
     ];
 

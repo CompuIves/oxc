@@ -4,6 +4,38 @@ All notable changes to this package will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0).
 
+## [0.113.0] - 2026-02-10
+
+### 🐛 Bug Fixes
+
+- 35e32c6 coverage: Match Babel's options.json inheritance for test fixtures (#19002) (Boshen)
+- 57917ee parser: Parse decorators on rest parameters (#18938) (Boshen)
+
+### ⚡ Performance
+
+- ed8c054 oxc_str: Add precomputed hash to Ident for fast HashMap lookups (#19143) (Boshen)
+
+## [0.112.0] - 2026-02-02
+
+### 📚 Documentation
+
+- 3d01fa1 transformer: Update links to use Oxc docs (#18722) (sapphi-red)
+
+## [0.111.0] - 2026-01-26
+
+### 💥 BREAKING CHANGES
+
+- 22dec6a semantic: [**BREAKING**] Remove `Scoping::scope_build_child_ids` and all related APIs (#18362) (Dunqing)
+- 777fc40 ast: [**BREAKING**] Add `Ident` type (#18354) (Boshen)
+
+### 🚀 Features
+
+- 2ef5647 ast: Add escape_raw parameter to template_element builders (#18121) (Boshen)
+
+### 🐛 Bug Fixes
+
+- c205b0d ast: Remove `ThisExpression` from `TSModuleReference` (#18489) (Boshen)
+
 ## [0.110.0] - 2026-01-19
 
 ### 🐛 Bug Fixes

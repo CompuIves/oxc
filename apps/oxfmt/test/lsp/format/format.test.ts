@@ -1,6 +1,4 @@
 import { join } from "node:path";
-import { pathToFileURL } from "node:url";
-import fs from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 import { formatFixture } from "../utils";
 
@@ -42,37 +40,6 @@ describe("LSP formatting", () => {
     ])("should handle %s", async (path, languageId) => {
       expect(await formatFixture(FIXTURES_DIR, path, languageId)).toMatchSnapshot();
     });
-
-    // .gitignore is created dynamically to avoid git ignoring the test fixture
-    it("should respect .gitignore", async () => {
-      const testDir = join(FIXTURES_DIR, "ignore-gitignore");
-      const gitignorePath = join(testDir, ".gitignore");
-      const ignoredPath = join(testDir, "ignored.ts");
-      const notIgnoredPath = join(testDir, "not-ignored.ts");
-
-      try {
-        await fs.mkdir(testDir, { recursive: true });
-        await fs.writeFile(gitignorePath, "ignored.ts\n");
-        await fs.writeFile(ignoredPath, "const   x   =   1\n");
-        await fs.writeFile(notIgnoredPath, "const   x   =   1\n");
-
-        const ignoredResult = await formatFixture(
-          FIXTURES_DIR,
-          "ignore-gitignore/ignored.ts",
-          "typescript",
-        );
-        const notIgnoredResult = await formatFixture(
-          FIXTURES_DIR,
-          "ignore-gitignore/not-ignored.ts",
-          "typescript",
-        );
-
-        expect(ignoredResult).toMatchSnapshot();
-        expect(notIgnoredResult).toMatchSnapshot();
-      } finally {
-        await fs.rm(testDir, { recursive: true, force: true });
-      }
-    });
   });
 
   describe("initializationOptions", () => {
@@ -82,14 +49,9 @@ describe("LSP formatting", () => {
           FIXTURES_DIR,
           "custom_config_path/semicolons-as-needed.ts",
           "typescript",
-          [
-            {
-              workspaceUri: pathToFileURL(join(FIXTURES_DIR, "custom_config_path")).href,
-              options: {
-                "fmt.configPath": "./format.json",
-              },
-            },
-          ],
+          {
+            "fmt.configPath": "./format.json",
+          },
         ),
       ).toMatchSnapshot();
     });

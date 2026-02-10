@@ -6,7 +6,9 @@ use oxc_span::SPAN;
 use oxc_syntax::reference::ReferenceFlags;
 
 use crate::{
-    common::helper_loader::Helper, context::TraverseCtx, utils::ast_builder::create_assignment,
+    common::helper_loader::{Helper, helper_call_expr},
+    context::TraverseCtx,
+    utils::ast_builder::create_assignment,
 };
 
 use super::{
@@ -15,7 +17,7 @@ use super::{
 };
 
 // Instance properties
-impl<'a> ClassProperties<'a, '_> {
+impl<'a> ClassProperties<'a> {
     /// Convert instance property to initialization expression.
     /// Property `prop = 123;` -> Expression `this.prop = 123` or `_defineProperty(this, "prop", 123)`.
     pub(super) fn convert_instance_property(
@@ -78,19 +80,19 @@ impl<'a> ClassProperties<'a, '_> {
         ctx: &mut TraverseCtx<'a>,
     ) -> Expression<'a> {
         let private_props = self.current_class().private_props.as_ref().unwrap();
-        let prop = &private_props[&ident.name];
+        let prop = &private_props[&Atom::from(ident.name)];
         let arguments = ctx.ast.vec_from_array([
             Argument::from(ctx.ast.expression_this(SPAN)),
             Argument::from(prop.binding.create_read_expression(ctx)),
             Argument::from(value),
         ]);
         // TODO: Should this have span of original `PropertyDefinition`?
-        self.ctx.helper_call_expr(Helper::ClassPrivateFieldInitSpec, SPAN, arguments, ctx)
+        helper_call_expr(Helper::ClassPrivateFieldInitSpec, SPAN, arguments, ctx)
     }
 }
 
 // Static properties
-impl<'a> ClassProperties<'a, '_> {
+impl<'a> ClassProperties<'a> {
     /// Convert static property to initialization expression.
     /// Property `static prop = 123;` -> Expression `C.prop = 123` or `_defineProperty(C, "prop", 123)`.
     pub(super) fn convert_static_property(
@@ -211,7 +213,7 @@ impl<'a> ClassProperties<'a, '_> {
         // Insert after class
         let class_details = self.current_class();
         let private_props = class_details.private_props.as_ref().unwrap();
-        let prop_binding = &private_props[&ident.name].binding;
+        let prop_binding = &private_props[&Atom::from(ident.name)].binding;
 
         if class_details.is_declaration {
             // `var _prop = {_: value};`
@@ -226,7 +228,7 @@ impl<'a> ClassProperties<'a, '_> {
 }
 
 // Used for both instance and static properties
-impl<'a> ClassProperties<'a, '_> {
+impl<'a> ClassProperties<'a> {
     /// `assignee.prop = value` or `_defineProperty(assignee, "prop", value)`
     /// `#[inline]` because the caller has been checked `self.set_public_class_fields`.
     /// After inlining, the two `self.set_public_class_fields` checks may be folded into one.
@@ -258,7 +260,7 @@ impl<'a> ClassProperties<'a, '_> {
         ctx: &mut TraverseCtx<'a>,
     ) -> Expression<'a> {
         // In-built static props `name` and `length` need to be set with `_defineProperty`
-        let needs_define = |name| is_static && (name == "name" || name == "length");
+        let needs_define = |name: &str| is_static && (name == "name" || name == "length");
 
         let left = match &mut prop.key {
             PropertyKey::StaticIdentifier(ident) => {
@@ -329,7 +331,7 @@ impl<'a> ClassProperties<'a, '_> {
             Argument::from(value),
         ]);
         // TODO: Should this have span of the original `PropertyDefinition`?
-        self.ctx.helper_call_expr(Helper::DefineProperty, SPAN, arguments, ctx)
+        helper_call_expr(Helper::DefineProperty, SPAN, arguments, ctx)
     }
 
     /// `Object.defineProperty(<assignee>, _prop, {writable: true, value: value})`
@@ -341,13 +343,10 @@ impl<'a> ClassProperties<'a, '_> {
         ctx: &mut TraverseCtx<'a>,
     ) -> Expression<'a> {
         // `Object.defineProperty`
-        let object_symbol_id = ctx.scoping().find_binding(ctx.current_scope_id(), "Object");
-        let object = ctx.create_ident_expr(
-            SPAN,
-            Atom::from("Object"),
-            object_symbol_id,
-            ReferenceFlags::Read,
-        );
+        let object_name = ctx.ast.ident("Object");
+        let object_symbol_id = ctx.scoping().find_binding(ctx.current_scope_id(), object_name);
+        let object =
+            ctx.create_ident_expr(SPAN, object_name, object_symbol_id, ReferenceFlags::Read);
         let property = ctx.ast.identifier_name(SPAN, "defineProperty");
         let callee =
             Expression::from(ctx.ast.member_expression_static(SPAN, object, property, false));
@@ -378,7 +377,7 @@ impl<'a> ClassProperties<'a, '_> {
         );
 
         let private_props = self.current_class().private_props.as_ref().unwrap();
-        let prop_binding = &private_props[&ident.name].binding;
+        let prop_binding = &private_props[&Atom::from(ident.name)].binding;
         let arguments = ctx.ast.vec_from_array([
             Argument::from(assignee),
             Argument::from(prop_binding.create_read_expression(ctx)),

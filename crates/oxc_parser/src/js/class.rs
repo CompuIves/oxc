@@ -292,31 +292,13 @@ impl<'a> ParserImpl<'a> {
                 self.error(diagnostics::decorators_are_not_valid_here(decorator.span));
             }
 
-            // No modifiers except `static` and `readonly` are valid here, and they must appear in that order
+            // No modifiers except `static` and `readonly` are valid here
             self.verify_modifiers(
                 &modifiers,
                 ModifierFlags::READONLY | ModifierFlags::STATIC,
                 true,
                 diagnostics::cannot_appear_on_an_index_signature,
             );
-            if modifiers.contains_all_flags(ModifierFlags::READONLY | ModifierFlags::STATIC) {
-                // Has both `readonly` and `static` modifiers. Make sure `static` comes before `readonly`.
-                let mut has_seen_readonly_modifier = false;
-                for modifier in modifiers.iter() {
-                    match modifier.kind {
-                        ModifierKind::Readonly => has_seen_readonly_modifier = true,
-                        ModifierKind::Static => {
-                            if has_seen_readonly_modifier {
-                                self.error(diagnostics::modifier_must_precede_other_modifier(
-                                    modifier,
-                                    ModifierKind::Readonly,
-                                ));
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-            }
 
             return ClassElement::TSIndexSignature(
                 self.parse_index_signature_declaration(span, &modifiers),
@@ -714,7 +696,7 @@ impl<'a> ParserImpl<'a> {
                 function.params.parameters_count(),
             ));
         } else if self.is_ts && function.params.items.first().unwrap().initializer.is_some() {
-            self.error(diagnostics::setter_with_assignment_pattern(function.params.span));
+            self.error(diagnostics::setter_with_initializer(function.params.span));
         }
     }
 
@@ -737,6 +719,12 @@ impl<'a> ParserImpl<'a> {
                     self.error(diagnostics::constructor_generator(span));
                 }
             }
+        }
+
+        if self.ctx.has_ambient()
+            && let Some(body) = &method.value.body
+        {
+            self.error(diagnostics::implementation_in_ambient(Span::empty(body.span.start)));
         }
     }
 

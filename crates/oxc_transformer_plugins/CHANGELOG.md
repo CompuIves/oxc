@@ -4,6 +4,22 @@ All notable changes to this package will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0).
 
+## [0.113.0] - 2026-02-10
+
+### 💥 BREAKING CHANGES
+
+- 48b0542 span: [**BREAKING**] SourceType::ts should set module to unambigious (#18873) (Boshen)
+
+### ⚡ Performance
+
+- d4a0867 transformer_plugins: Switch ReplaceGlobalDefines from Traverse to VisitMut (#19146) (Boshen)
+
+## [0.111.0] - 2026-01-26
+
+### 💥 BREAKING CHANGES
+
+- 777fc40 ast: [**BREAKING**] Add `Ident` type (#18354) (Boshen)
+
 ## [0.106.0] - 2025-12-29
 
 ### 🚀 Features

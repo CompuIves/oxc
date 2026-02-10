@@ -14,13 +14,14 @@ working directory: fixtures/tsgolint_rule_options
  37 | 
     `----
 
-  x typescript-eslint(no-misused-spread): Using the spread operator on a function without additional properties can cause unexpected behavior. Did you forget to call the function?
+  x typescript-eslint(no-misused-spread): Using the spread operator on a function without additional properties can cause unexpected behavior.
     ,-[test.ts:47:28]
  46 | // This SHOULD error because notAllowedFunc is NOT in the allow list
  47 | const notAllowedSpread = { ...notAllowedFunc };
     :                            ^^^^^^^^^^^^^^^^^
  48 | 
     `----
+  help: Did you forget to call the function?
 
   x typescript-eslint(no-unsafe-member-access): Unsafe member access .bar on an `any` value.
     ,-[test.ts:58:31]
@@ -37,6 +38,7 @@ working directory: fixtures/tsgolint_rule_options
     :                    ^^^^^^^^^^^^
  64 | 
     `----
+  help: Consider picking a property (e.g. `user.name`), using a formatter (or `JSON.stringify`), or implementing a custom `toString()`/`toLocaleString()` on the type.
 
 Found 0 warnings and 4 errors.
 Finished in <variable>ms on 1 file with 7 rules using 1 threads.

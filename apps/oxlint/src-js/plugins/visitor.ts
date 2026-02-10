@@ -97,6 +97,9 @@ import type { Node, Visitor } from "./types.ts";
 // Visit function for a specific AST node type.
 export type VisitFn = (node: Node) => void;
 
+// Visit function for a specific CFG event.
+type CfgVisitFn = (...args: unknown[]) => void;
+
 // Enter+exit pair, for non-leaf nodes in compiled visitor.
 export interface EnterExit {
   enter: VisitFn | null;
@@ -130,7 +133,7 @@ interface CompilingNonLeafVisitorEntry {
 // Visitor state.
 // Returned by `finalizeCompiledVisitor`.
 // This a "poor man's enum", which compiles down better than TS enums.
-export type VisitorState = 0 | 1 | 2;
+export type VisitorState = typeof VISITOR_EMPTY | typeof VISITOR_NOT_EMPTY | typeof VISITOR_CFG;
 
 export const VISITOR_EMPTY = 0; // Empty visitor (no need to walk AST)
 export const VISITOR_NOT_EMPTY = 1; // Not empty visitor (need to walk AST)
@@ -349,6 +352,10 @@ export function addVisitorToCompiled(visitor: Visitor): void {
     }
 
     // `*` selector or some other selector that matches all node types
+    // TODO: Add 2 arrays for "enter all" and "exit all" selectors.
+    // Where visitor contains multiple selectors which match all node types, this would avoid merging them
+    // into a single visit function 100+ times for each node type. Could just merge them once and assign the same
+    // merged function to all node types (except those which have other visit functions).
     for (typeId = 0; typeId < LEAF_NODE_TYPES_COUNT; typeId++) {
       addLeafVisitFn(typeId, visitProp);
     }
@@ -462,7 +469,7 @@ export function finalizeCompiledVisitor(): VisitorState {
 
     for (let i = activeCfgVisitorTypeIds.length - 1; i >= 0; i--) {
       const typeId = activeCfgVisitorTypeIds[i]!;
-      compiledVisitor[typeId] = mergeVisitFns(compilingCfgVisitor[typeId - NODE_TYPES_COUNT]!);
+      compiledVisitor[typeId] = mergeCfgVisitFns(compilingCfgVisitor[typeId - NODE_TYPES_COUNT]!);
     }
 
     // Reset state, ready for next time
@@ -486,7 +493,7 @@ export function finalizeCompiledVisitor(): VisitorState {
   return visitState;
 }
 
-// Array used by `mergeVisitFns` to store visit functions extracted from an array of `VisitProp`s.
+// Array used by `mergeVisitFns` and `mergeCfgVisitFns` to store visit functions extracted from an array of `VisitProp`s.
 // This array is used ephemerally, so we re-use same array for each merge.
 const visitFns: VisitFn[] = [];
 
@@ -610,5 +617,130 @@ const mergers: (Merger | null)[] = [
       visit3(node);
       visit4(node);
       visit5(node);
+    },
+];
+
+/**
+ * Merge array of CFG visit functions into a single function, which calls each of input functions in turn.
+ *
+ * The difference between this function and `mergeVisitFns` is that this function is for CFG event handlers.
+ * Unlike all other visit functions, CFG event handlers are called with more than 1 argument.
+ * We keep this separate from `mergeVisitFns` because the merger functions use `...args` to pass all arguments,
+ * which is likely less performant than the simpler version which passes a single argument.
+ * AST node visitation is a lot more common than CFG event visitation, and we want to keep the common case fast.
+ *
+ * The array passed is cleared (length set to 0), so the array can be reused.
+ *
+ * The merged function is statically defined and does not contain a loop, to hopefully allow
+ * JS engine to heavily optimize it.
+ *
+ * `cfgMergers` contains pre-defined functions to merge up to 5 CFG visit functions.
+ * Merger functions for merging more than 5 visit functions are created dynamically on demand.
+ *
+ * @param visitProps - Array of `VisitProp` objects
+ * @returns Function which calls all CFG visit functions in turn
+ */
+function mergeCfgVisitFns(visitProps: VisitProp[]): CfgVisitFn {
+  const numVisitFns = visitProps.length;
+
+  debugAssert(numVisitFns > 0, "`visitProps` should have at least 1 element");
+
+  let mergedFn: CfgVisitFn;
+  if (numVisitFns === 1) {
+    // Only 1 visit function, so no need to merge
+    debugAssertIsNonNull(visitProps[0].fn);
+    mergedFn = visitProps[0].fn;
+  } else {
+    // No need to sort in order of specificity, because each rule can only have 1 handler for each CFG event
+
+    // Get or create merger for merging `numVisitFns` functions
+    let merger: CfgMerger | null;
+    if (cfgMergers.length <= numVisitFns) {
+      while (cfgMergers.length < numVisitFns) {
+        cfgMergers.push(null);
+      }
+      merger = createCfgMerger(numVisitFns);
+      cfgMergers.push(merger);
+    } else {
+      merger = cfgMergers[numVisitFns];
+      if (merger === null) merger = cfgMergers[numVisitFns] = createCfgMerger(numVisitFns);
+    }
+
+    // Merge functions.
+    // Reuse a temporary array to avoid creating a new array for each merge.
+    // TODO: Make merger functions take an array of `VisitProp`s to avoid this operation?
+    debugAssert(visitFns.length === 0, "`visitFns` should be empty");
+
+    for (let i = 0; i < numVisitFns; i++) {
+      debugAssertIsNonNull(visitProps[i].fn);
+      visitFns.push(visitProps[i].fn!);
+    }
+    mergedFn = merger(...visitFns);
+
+    visitFns.length = 0;
+  }
+
+  // Empty `visitProps` array, so it can be reused
+  visitProps.length = 0;
+
+  return mergedFn;
+}
+
+type CfgMerger = (...visitFns: CfgVisitFn[]) => CfgVisitFn;
+
+/**
+ * Create a CFG merger function that merges `fnCount` functions.
+ *
+ * @param fnCount - Number of functions to be merged
+ * @returns Function to merge `fnCount` functions
+ */
+function createCfgMerger(fnCount: number): CfgMerger {
+  const args = [];
+  let body = "return (...args)=>{";
+  for (let i = 1; i <= fnCount; i++) {
+    args.push(`visit${i}`);
+    body += `visit${i}(...args);`;
+  }
+  body += "}";
+  args.push(body);
+  // oxlint-disable-next-line typescript-eslint/no-implied-eval
+  return new Function(...args) as CfgMerger;
+}
+
+// Pre-defined CFG mergers for merging up to 5 functions
+const cfgMergers: (CfgMerger | null)[] = [
+  null, // No merger for 0 functions
+  null, // No merger for 1 function
+  (visit1: CfgVisitFn, visit2: CfgVisitFn) =>
+    (...args: unknown[]) => {
+      visit1(...args);
+      visit2(...args);
+    },
+  (visit1: CfgVisitFn, visit2: CfgVisitFn, visit3: CfgVisitFn) =>
+    (...args: unknown[]) => {
+      visit1(...args);
+      visit2(...args);
+      visit3(...args);
+    },
+  (visit1: CfgVisitFn, visit2: CfgVisitFn, visit3: CfgVisitFn, visit4: CfgVisitFn) =>
+    (...args: unknown[]) => {
+      visit1(...args);
+      visit2(...args);
+      visit3(...args);
+      visit4(...args);
+    },
+  (
+    visit1: CfgVisitFn,
+    visit2: CfgVisitFn,
+    visit3: CfgVisitFn,
+    visit4: CfgVisitFn,
+    visit5: CfgVisitFn,
+  ) =>
+    (...args: unknown[]) => {
+      visit1(...args);
+      visit2(...args);
+      visit3(...args);
+      visit4(...args);
+      visit5(...args);
     },
 ];

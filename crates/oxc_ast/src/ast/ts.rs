@@ -16,7 +16,7 @@
 )]
 
 // NB: `#[span]`, `#[scope(...)]`,`#[visit(...)]` and `#[generate_derive(...)]` do NOT do anything to the code.
-// They are purely markers for codegen used in `tasks/ast_tools` and `crates/oxc_traverse/scripts`. See docs in those crates.
+// They are purely markers for codegen used in `tasks/ast_tools`. See docs in that crate.
 // Read [`macro@oxc_ast_macros::ast`] for more information.
 
 use std::cell::Cell;
@@ -1628,20 +1628,24 @@ pub struct TSImportEqualsDeclaration<'a> {
     pub import_kind: ImportOrExportKind,
 }
 
-inherit_variants! {
 /// TS Module Reference
 ///
-/// Inherits variants from [`TSTypeName`]. See [`ast` module docs] for explanation of inheritance.
+/// The right-hand side of an `import x = ...` declaration.
 ///
-/// [`ast` module docs]: `super`
+/// ## Examples
+///
+/// ```ts
+/// import x = foo;           // IdentifierReference
+/// import x = foo.bar;       // QualifiedName
+/// import x = require("x");  // ExternalModuleReference
+/// ```
 #[ast(visit)]
 #[derive(Debug)]
 #[generate_derive(CloneIn, Dummy, TakeIn, GetSpan, GetSpanMut, GetAddress, ContentEq, ESTree)]
 pub enum TSModuleReference<'a> {
-    ExternalModuleReference(Box<'a, TSExternalModuleReference<'a>>) = 3,
-    // `TSTypeName` variants added here by `inherit_variants!` macro
-    @inherit TSTypeName
-}
+    ExternalModuleReference(Box<'a, TSExternalModuleReference<'a>>) = 0,
+    IdentifierReference(Box<'a, IdentifierReference<'a>>) = 1,
+    QualifiedName(Box<'a, TSQualifiedName<'a>>) = 2,
 }
 
 #[ast(visit)]

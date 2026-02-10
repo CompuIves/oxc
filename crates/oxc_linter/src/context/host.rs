@@ -139,7 +139,7 @@ pub struct ContextHost<'a> {
     ///
     /// Set via the `--fix`, `--fix-suggestions`, and `--fix-dangerously` CLI
     /// flags.
-    pub(super) fix: FixKind,
+    pub(crate) fix: FixKind,
     /// Path to the file being linted.
     pub(super) file_path: Box<Path>,
     /// Extension of the file being linted.
@@ -319,7 +319,11 @@ impl<'a> ContextHost<'a> {
                         OxcDiagnostic::error(message_for_disable)
                             .with_label(span)
                             .with_severity(rule_severity),
-                        PossibleFixes::Single(Fix::delete(span).with_message(fix_message)),
+                        PossibleFixes::Single(
+                            Fix::delete(span)
+                                .with_kind(FixKind::Suggestion)
+                                .with_message(fix_message),
+                        ),
                     ));
                 }
                 RuleCommentType::Single(rules_vec) => {

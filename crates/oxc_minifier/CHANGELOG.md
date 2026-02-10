@@ -4,6 +4,42 @@ All notable changes to this package will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0).
 
+## [0.113.0] - 2026-02-10
+
+### 💥 BREAKING CHANGES
+
+- 2bf7293 mangler: [**BREAKING**] Enable `top_level` by default for modules and commonjs (#18278) (sapphi-red)
+
+### 🚀 Features
+
+- 500d071 minifier: Local traverse ctx and generated minifier traverse (#19106) (Boshen)
+- 742ad3f minifier: Default `invalid_import_side_effects` to `false` (#18916) (sapphi-red)
+
+### 🐛 Bug Fixes
+
+- 110c300 oxc_ecmascript: `+[false]` and `+[true]` should evaluate to `NaN` (#19174) (copilot-swe-agent)
+
+## [0.112.0] - 2026-02-02
+
+### 🐛 Bug Fixes
+
+- 2e34461 minifier: Prevent expression inlining into block-scoped for-in declarations (#18651) (copilot-swe-agent)
+
+## [0.111.0] - 2026-01-26
+
+### 💥 BREAKING CHANGES
+
+- 777fc40 ast: [**BREAKING**] Add `Ident` type (#18354) (Boshen)
+- af0ca46 span: [**BREAKING**] Use `ModuleKind::CommonJS` for `SourceType::cjs()` (#18276) (sapphi-red)
+
+### 🚀 Features
+
+- 2ef5647 ast: Add escape_raw parameter to template_element builders (#18121) (Boshen)
+
+### 📚 Documentation
+
+- 00ff75f mangler: Fix `top_level` option in example (#18233) (overlookmotel)
+
 ## [0.110.0] - 2026-01-19
 
 ### 🐛 Bug Fixes

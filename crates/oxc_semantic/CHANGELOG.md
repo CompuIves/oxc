@@ -4,6 +4,51 @@ All notable changes to this package will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0).
 
+## [0.113.0] - 2026-02-10
+
+### 🐛 Bug Fixes
+
+- f32ea19 semantic: Report redeclaration error for import bindings conflicting with value declarations (#19068) (Boshen)
+- 3aeba7a semantic: Report redeclaration error for `function a() {} var a` in module mode (#19041) (Boshen)
+- 463d60d semantic: Skip TS2391 for standalone computed-name class methods (#19025) (Boshen)
+- 6067a49 linter/jsdoc: False positive in `check-tag-names` for `@` in email addresses and npm scopes (#19021) (Boshen)
+- b13bb70 semantic/jsdoc: Inline tags like `{@link}` break jsdoc parsing (#19019) (Boshen)
+- 57917ee parser: Parse decorators on rest parameters (#18938) (Boshen)
+
+### ⚡ Performance
+
+- ed8c054 oxc_str: Add precomputed hash to Ident for fast HashMap lookups (#19143) (Boshen)
+- 2537924 semantic: Optimize scope resolution with fast paths and inlining (#19029) (Boshen)
+
+## [0.111.0] - 2026-01-26
+
+### 💥 BREAKING CHANGES
+
+- 22dec6a semantic: [**BREAKING**] Remove `Scoping::scope_build_child_ids` and all related APIs (#18362) (Dunqing)
+- 777fc40 ast: [**BREAKING**] Add `Ident` type (#18354) (Boshen)
+
+### 🚀 Features
+
+- 00854e8 semantic: Add TS2337 error code to super call diagnostic (#18531) (camc314)
+
+### 🐛 Bug Fixes
+
+- 74d0998 semantic: Update error msg for multiple `default` cases in switch stmt (#18526) (camc314)
+- b0cd74d semantic: Allow `var` and `function` with same name in static blocks (#18358) (Boshen)
+- 6037995 semantic: Allow `new.target` in class field initializers (#18349) (Boshen)
+- 9a15c6a semantic: Do not rely on spans for node comparison in `Function::bind` (#18296) (overlookmotel)
+
+### ⚡ Performance
+
+- 6b600c4 semantic: Skip parent lookup for function declarations in `Function::bind` (#18293) (overlookmotel)
+- c27ad2d semantic: Move check for function declaration out of `is_function_part_of_if_statement` (#18292) (overlookmotel)
+- 63eb89e semantic: Skip checking redeclarations for function expressions (#18291) (overlookmotel)
+- 7c12743 semantic: Skip checking unresolved exports in CommonJS files (#18250) (overlookmotel)
+
+### 📚 Documentation
+
+- 2ddc073 semantic: Fix typo in comment (#18238) (overlookmotel)
+
 ## [0.110.0] - 2026-01-19
 
 ### 🐛 Bug Fixes

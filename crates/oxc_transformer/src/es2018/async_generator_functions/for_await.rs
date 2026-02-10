@@ -6,11 +6,14 @@ use oxc_semantic::{ScopeFlags, ScopeId, SymbolFlags};
 use oxc_span::SPAN;
 use oxc_traverse::{Ancestor, BoundIdentifier};
 
-use crate::{common::helper_loader::Helper, context::TraverseCtx};
+use crate::{
+    common::helper_loader::{Helper, helper_call_expr},
+    context::TraverseCtx,
+};
 
 use super::AsyncGeneratorFunctions;
 
-impl<'a> AsyncGeneratorFunctions<'a, '_> {
+impl<'a> AsyncGeneratorFunctions<'a> {
     /// Check the parent node to see if multiple statements are allowed.
     fn is_multiple_statements_allowed(ctx: &TraverseCtx<'a>) -> bool {
         matches!(
@@ -74,7 +77,7 @@ impl<'a> AsyncGeneratorFunctions<'a, '_> {
                 for_statement,
             ));
         }
-        self.ctx.statement_injector.insert_many_before(&new_stmt, statements);
+        ctx.state.statement_injector.insert_many_before(&new_stmt, statements);
 
         // If the parent node doesn't allow multiple statements, we need to wrap the new statement
         // with a block statement, this way we can ensure can insert statement correctly.
@@ -89,6 +92,7 @@ impl<'a> AsyncGeneratorFunctions<'a, '_> {
         *stmt = new_stmt;
     }
 
+    #[expect(clippy::unused_self)]
     pub(self) fn transform_for_of_statement(
         &self,
         stmt: &mut ForOfStatement<'a>,
@@ -134,20 +138,16 @@ impl<'a> AsyncGeneratorFunctions<'a, '_> {
             let mut statements = ctx.ast.vec_with_capacity(2);
             statements.push(assignment_statement);
             let stmt_body = &mut stmt.body;
-            if let Statement::BlockStatement(block) = stmt_body {
-                if block.body.is_empty() {
-                    // If the block is empty, we don’t need to add it to the body;
-                    // instead, we need to remove the useless scope.
-                    ctx.scoping_mut().delete_scope(block.scope_id());
-                } else {
-                    statements.push(stmt_body.take_in(ctx.ast));
-                }
+            if let Statement::BlockStatement(block) = stmt_body
+                && !block.body.is_empty()
+            {
+                statements.push(stmt_body.take_in(ctx.ast));
             }
             statements
         };
 
         let iterator = stmt.right.take_in(ctx.ast);
-        let iterator = self.ctx.helper_call_expr(
+        let iterator = helper_call_expr(
             Helper::AsyncIterator,
             SPAN,
             ctx.ast.vec1(Argument::from(iterator)),
@@ -347,7 +347,7 @@ impl<'a> AsyncGeneratorFunctions<'a, '_> {
             let catch_scope_id = ctx.create_child_scope(parent_scope_id, ScopeFlags::CatchClause);
             let block_scope_id = ctx.create_child_scope(catch_scope_id, ScopeFlags::empty());
             let err_ident = ctx.generate_binding(
-                Atom::from("err"),
+                ctx.ast.ident("err"),
                 block_scope_id,
                 SymbolFlags::CatchVariable | SymbolFlags::FunctionScopedVariable,
             );

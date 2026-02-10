@@ -4,6 +4,68 @@ All notable changes to this package will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0).
 
+## [0.29.0] - 2026-02-10
+
+### 💥 BREAKING CHANGES
+
+- 856a01f formatter/sort_imports: [**BREAKING**] Replace prefix match with glob pattern in `customGroups.elementNamePattern` (#19066) (leaysgur)
+
+### 🚀 Features
+
+- 91e67f3 oxfmt/lsp: Do not refer `.gitignore` (#19206) (leaysgur)
+- 23c0753 oxfmt: Better Tailwind CSS intergration (#19000) (Dunqing)
+- 87a920d ci: Add riscv64 and s390x napi targets for oxlint and oxfmt (#19039) (Boshen)
+- 8536dce oxfmt: Support glob for CLI paths (#18976) (leaysgur)
+- 6ee2d59 oxfmt: Use `oxc_formatter` in js-in-xxx part (#18373) (leaysgur)
+- 9788a96 oxlint,oxfmt: Add more native builds (#18853) (Boshen)
+
+### 🐛 Bug Fixes
+
+- 119348b oxfmt: Resolve relative -> absolute path for other usages (#19207) (leaysgur)
+- 5f4cf30 oxfmt: Fix relative -> absolute path resolution with refactoring (#19202) (leaysgur)
+- dc335d1 oxfmt: Temporarily disable the override for js-in-xxx (not ready yet) (#19043) (leaysgur)
+- 5ea5bda oxfmt: Handle `isSingleJsxExpressionStatementInMarkdown()` check for js-in-md (#19042) (leaysgur)
+- 9b205b3 formatter: Fallback to formatting when package.json sorting fails (#19097) (Boshen)
+- f39c96c oxfmt: Do not override `babel-ts` for now (#19030) (leaysgur)
+- ef5bfab oxfmt: Workaround Node.js ThreadsafeFunction cleanup race condition (#18980) (Boshen)
+
+### ⚡ Performance
+
+- 467724f oxfmt: Collect glob paths in parallel (#19209) (leaysgur)
+- 61e0efa oxfmt: Use RwLock instead of Mutex for TSFN handles (#18888) (Boshen)
+
+## [0.28.0] - 2026-02-02
+
+### 🚀 Features
+
+- ee30de9 oxfmt: Add config migration from biome (#18638) (Luca Fischer)
+
+### 🐛 Bug Fixes
+
+- e754b18 oxfmt/migrate-prettier: Set `experimentalSortPackagejson: false` by default (#18831) (leaysgur)
+- 34ee194 formatter: Tailwindcss sorting doesn't work for object property keys (#18773) (Dunqing)
+- 48f1e35 oxfmt: Prevent ThreadsafeFunction crash on Node.js exit (#18723) (Boshen)
+- c3d05c1 formatter,oxfmt: Handle CRLF with embedded formatting (#18686) (leaysgur)
+- ac1ff4e oxfmt: Use `empty_line` IR for empty xxx-in-js line (#18623) (leaysgur)
+- 8f76900 oxfmt: Dedent xxx-in-js templates before calling prettier (#18622) (leaysgur)
+- 6b726ef oxfmt: Trim whitespace only xxx-in-js templates (#18621) (leaysgur)
+
+## [0.27.0] - 2026-01-26
+
+### 🚀 Features
+
+- d71c15d oxfmt: Enable tailwind sort inside xxx-in-js (#18417) (leaysgur)
+- 52b5003 formatter,oxfmt: Support Angular `@Component({ template, styles })` (#18324) (leaysgur)
+
+### 🐛 Bug Fixes
+
+- 224140c oxfmt: Canonicalize `..` component in config path (#18570) (leaysgur)
+- 7e6c15b oxfmt: Increase Tailwind CSS test timeout for Windows CI (#18339) (Boshen)
+
+### ⚡ Performance
+
+- b2df8fb oxfmt: Enable tailwind plugin only for relevant parser (#18418) (leaysgur)
+
 ## [0.26.0] - 2026-01-19
 
 ### 🐛 Bug Fixes

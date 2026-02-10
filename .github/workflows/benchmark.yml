@@ -12,6 +12,8 @@ on:
   workflow_dispatch:
   pull_request:
     types: [opened, synchronize]
+    branches-ignore:
+      - "**/graphite-base/**"
     paths: &paths
       - "crates/**/*.rs"
       - "tasks/benchmark/**/*.rs"
@@ -36,7 +38,7 @@ jobs:
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
     steps:
-      - uses: taiki-e/checkout-action@afad4df3ab3122b166e8226ac83be4d981fb64e8 # v1.3.2
+      - uses: taiki-e/checkout-action@3ab630d442e198ebb0ca30872832406ca01c46eb # v1.4.0
 
       - name: Determine affected components
         id: set-matrix
@@ -65,7 +67,7 @@ jobs:
         include: ${{ fromJSON(needs.determine-matrix.outputs.matrix) }}
     name: Bench ${{ matrix.component }}
     steps:
-      - uses: taiki-e/checkout-action@afad4df3ab3122b166e8226ac83be4d981fb64e8 # v1.3.2
+      - uses: taiki-e/checkout-action@3ab630d442e198ebb0ca30872832406ca01c46eb # v1.4.0
 
       - uses: oxc-project/setup-rust@c8224157c0bf235aabc633e8cd50d344f087a7de # v1.0.12
         with:
@@ -83,15 +85,15 @@ jobs:
           else
             cargo build --release -p oxc_benchmark \
               --bench lexer --bench parser --bench transformer --bench semantic \
-              --bench minifier --bench codegen --bench formatter \
+              --bench minifier --bench codegen --bench formatter --bench pipeline \
               --no-default-features --features ${{ matrix.feature }} --features codspeed
           fi
-          mkdir -p target/codspeed/simulation/oxc_benchmark
-          mv target/release/deps/${{ matrix.component }}-* target/codspeed/simulation/oxc_benchmark
-          rm target/codspeed/simulation/oxc_benchmark/*.d
+          mkdir -p target/codspeed/analysis/oxc_benchmark
+          mv target/release/deps/${{ matrix.component }}-* target/codspeed/analysis/oxc_benchmark
+          rm target/codspeed/analysis/oxc_benchmark/*.d
 
       - name: Run benchmark
-        uses: CodSpeedHQ/action@0700edb451d0e9f2426f99bd6977027e550fb2a6 # v4.7.0
+        uses: CodSpeedHQ/action@9a74b6ba663684052277e8f342b5eb99c7442a03 # v4.10.5
         timeout-minutes: 30
         with:
           mode: simulation

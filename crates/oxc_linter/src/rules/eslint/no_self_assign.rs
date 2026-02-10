@@ -24,7 +24,7 @@ fn no_self_assign_diagnostic(span: Span) -> OxcDiagnostic {
 }
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase", default)]
+#[serde(rename_all = "camelCase", default, deny_unknown_fields)]
 pub struct NoSelfAssign {
     /// The `props` option when set to `false`, disables the checking of properties.
     ///
@@ -104,9 +104,7 @@ declare_oxc_lint!(
 
 impl Rule for NoSelfAssign {
     fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
-        Ok(serde_json::from_value::<DefaultRuleConfig<Self>>(value)
-            .unwrap_or_default()
-            .into_inner())
+        serde_json::from_value::<DefaultRuleConfig<Self>>(value).map(DefaultRuleConfig::into_inner)
     }
 
     fn run<'a>(&self, node: &AstNode<'a>, ctx: &LintContext<'a>) {
@@ -419,8 +417,7 @@ fn test() {
         ("a['b'] = a['b']", Some(serde_json::json!([{ "props": true }]))),
         ("a[\n    'b'\n] = a[\n    'b'\n]", Some(serde_json::json!([{ "props": true }]))),
         ("this.x = this.x", Some(serde_json::json!([{ "props": true }]))),
-        // TODO: <https://github.com/eslint/eslint/blob/eb3d7946e1e9f70254008744dba2397aaa730114/lib/rules/utils/ast-utils.js#L362>
-        // ("a['/(?<zero>0)/'] = a[/(?<zero>0)/]", Some(serde_json::json!([{ "props": true }]))),
+        ("a['/(?<zero>0)/'] = a[/(?<zero>0)/]", Some(serde_json::json!([{ "props": true }]))),
         ("(a?.b).c = (a?.b).c", None),
         ("a.b = a?.b", None),
         ("class C { #field; foo() { this.#field = this.#field; } }", None),

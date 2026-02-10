@@ -14,6 +14,14 @@ use crate::{
 
 fn prefer_namespace_keyword_diagnostic(span: Span) -> OxcDiagnostic {
     OxcDiagnostic::warn("Use `namespace` instead of `module` to declare custom TypeScript modules.")
+        .with_help("Replace `module` with `namespace` for internal declarations.")
+        .with_note(
+            "`module` for internal declarations is no longer supported: treat it as a hard \
+             error. Expect it to become a parse error in a future version of TypeScript and Oxlint. See: \
+             https://github.com/microsoft/TypeScript/issues/54500, \
+             https://github.com/microsoft/TypeScript/issues/62211, \
+             https://github.com/microsoft/TypeScript/pull/62876.",
+        )
         .with_label(span)
 }
 
@@ -25,6 +33,14 @@ declare_oxc_lint!(
     ///
     /// This rule reports when the module keyword is used instead of namespace.
     /// This rule does not report on the use of TypeScript module declarations to describe external APIs (declare module 'foo' {}).
+    ///
+    /// ::: warning
+    /// This rule is deprecated and will be removed in a future release.
+    ///
+    /// In a future version of TypeScript and Oxlint, this will be a hard error produced by the parser.
+    ///
+    /// See: https://github.com/microsoft/TypeScript/issues/54500, https://github.com/microsoft/TypeScript/issues/62211 and https://github.com/microsoft/TypeScript/pull/62876.
+    /// :::
     ///
     /// ### Why is this bad?
     ///
@@ -44,7 +60,7 @@ declare_oxc_lint!(
     /// ```
     PreferNamespaceKeyword,
     typescript,
-    style,
+    correctness,
     fix
 );
 

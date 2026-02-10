@@ -1,6 +1,7 @@
 use oxc_ast::{
     AstKind,
-    ast::{TSSignature, TSType, TSTypeName},
+    ast::{TSSignature, TSTupleElement, TSType, TSTypeName},
+    match_ts_type,
 };
 use oxc_diagnostics::OxcDiagnostic;
 use oxc_macros::declare_oxc_lint;
@@ -110,9 +111,7 @@ declare_oxc_lint!(
 
 impl Rule for ConsistentIndexedObjectStyle {
     fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
-        Ok(serde_json::from_value::<DefaultRuleConfig<Self>>(value)
-            .unwrap_or_default()
-            .into_inner())
+        serde_json::from_value::<DefaultRuleConfig<Self>>(value).map(DefaultRuleConfig::into_inner)
     }
 
     fn run<'a>(&self, node: &AstNode<'a>, ctx: &LintContext<'a>) {
@@ -450,8 +449,12 @@ fn references_identifier(type_: &TSType, name: &str) -> bool {
                 || references_identifier(&i.index_type, name)
         }
         TSType::TSArrayType(a) => references_identifier(&a.element_type, name),
-        TSType::TSTupleType(t) => t.element_types.iter().any(|e| {
-            if let Some(ty) = e.as_ts_type() { references_identifier(ty, name) } else { false }
+        TSType::TSTupleType(t) => t.element_types.iter().any(|e| match e {
+            TSTupleElement::TSOptionalType(opt) => {
+                references_identifier(&opt.type_annotation, name)
+            }
+            TSTupleElement::TSRestType(rest) => references_identifier(&rest.type_annotation, name),
+            match_ts_type!(TSTupleElement) => references_identifier(e.to_ts_type(), name),
         }),
         TSType::TSTypeLiteral(lit) => lit.members.iter().any(|m| {
             if let TSSignature::TSIndexSignature(sig) = m {
@@ -463,6 +466,13 @@ fn references_identifier(type_: &TSType, name: &str) -> bool {
         TSType::TSFunctionType(f) => references_identifier(&f.return_type.type_annotation, name),
         TSType::TSTypeOperatorType(op) => references_identifier(&op.type_annotation, name),
         TSType::TSParenthesizedType(p) => references_identifier(&p.type_annotation, name),
+        TSType::TSNamedTupleMember(m) => match &m.element_type {
+            TSTupleElement::TSOptionalType(opt) => {
+                references_identifier(&opt.type_annotation, name)
+            }
+            TSTupleElement::TSRestType(rest) => references_identifier(&rest.type_annotation, name),
+            e @ match_ts_type!(TSTupleElement) => references_identifier(e.to_ts_type(), name),
+        },
         _ => false,
     }
 }
@@ -878,6 +888,12 @@ fn test() {
 			  return {};
 			}
 			      ",
+            None,
+        ),
+        (
+            "interface Foo { } interface Bar { } type Baz<T extends string> = T;
+             export type Error = Foo & { [P in Baz<keyof Bar>]: [P?]; };
+            ",
             None,
         ),
     ];

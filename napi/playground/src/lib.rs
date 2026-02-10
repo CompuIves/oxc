@@ -337,7 +337,7 @@ impl Oxc {
         };
         let mangle = if options.run.mangle {
             options.mangle.map(|o| MangleOptions {
-                top_level: o.top_level,
+                top_level: Some(o.top_level),
                 keep_names: MangleOptionsKeepNames { function: o.keep_names, class: o.keep_names },
                 debug: false,
             })
@@ -392,15 +392,14 @@ impl Oxc {
             let mut external_plugin_store = ExternalPluginStore::default();
             let semantic_ret = SemanticBuilder::new().with_cfg(true).build(program);
             let semantic = semantic_ret.semantic;
-            let lint_config = if linter_options.config.is_some() {
-                let oxlintrc =
-                    Oxlintrc::from_string(&linter_options.config.as_ref().unwrap().clone())
-                        .unwrap_or_default();
+            let lint_config = if let Some(config) = &linter_options.config {
+                let oxlintrc = Oxlintrc::from_string(config).unwrap_or_default();
                 let config_builder = ConfigStoreBuilder::from_oxlintrc(
                     false,
                     oxlintrc,
                     None,
                     &mut external_plugin_store,
+                    None,
                 )
                 .unwrap_or_default();
                 config_builder.build(&mut external_plugin_store)

@@ -365,15 +365,15 @@ fn compute_minimal_text_edit<'a>(
     (start, end, replacement)
 }
 
-// Almost the same as `oxfmt::walk::load_ignore_paths`, but does not handle custom ignore files.
+// Almost the same as `cli::walk::load_ignore_paths`, but does not handle custom ignore files.
+//
+// NOTE: `.gitignore` is intentionally NOT included here.
+// In LSP, every file is explicitly opened by the user (like directly specifying a file in CLI),
+// so `.gitignore` should not prevent formatting.
+// Only formatter-specific ignore files apply.
 fn load_ignore_paths(cwd: &Path) -> Vec<PathBuf> {
-    [".gitignore", ".prettierignore"]
-        .iter()
-        .filter_map(|file_name| {
-            let path = cwd.join(file_name);
-            if path.exists() { Some(path) } else { None }
-        })
-        .collect::<Vec<_>>()
+    let path = cwd.join(".prettierignore");
+    if path.exists() { vec![path] } else { vec![] }
 }
 
 // ---
@@ -401,49 +401,6 @@ mod test_watchers {
     // formatter file watcher-system does not depend on the actual file system,
     // so we can use a fake directory for testing.
     const FAKE_DIR: &str = "fixtures/formatter/watchers";
-
-    mod init_watchers {
-        use crate::lsp::{server_formatter::test_watchers::FAKE_DIR, tester::Tester};
-        use serde_json::json;
-
-        #[test]
-        fn test_default_options() {
-            let patterns = Tester::new(FAKE_DIR, json!({})).get_watcher_patterns();
-            assert_eq!(patterns.len(), 3);
-            assert_eq!(patterns[0], ".oxfmtrc.json");
-            assert_eq!(patterns[1], ".oxfmtrc.jsonc");
-            assert_eq!(patterns[2], ".editorconfig");
-        }
-
-        #[test]
-        fn test_formatter_custom_config_path() {
-            let patterns = Tester::new(
-                FAKE_DIR,
-                json!({
-                    "fmt.configPath": "configs/formatter.json"
-                }),
-            )
-            .get_watcher_patterns();
-            assert_eq!(patterns.len(), 2);
-            assert_eq!(patterns[0], "configs/formatter.json");
-            assert_eq!(patterns[1], ".editorconfig");
-        }
-
-        #[test]
-        fn test_empty_string_config_path() {
-            let patterns = Tester::new(
-                FAKE_DIR,
-                json!({
-                    "fmt.configPath": ""
-                }),
-            )
-            .get_watcher_patterns();
-            assert_eq!(patterns.len(), 3);
-            assert_eq!(patterns[0], ".oxfmtrc.json");
-            assert_eq!(patterns[1], ".oxfmtrc.jsonc");
-            assert_eq!(patterns[2], ".editorconfig");
-        }
-    }
 
     mod handle_configuration_change {
         use crate::lsp::{server_formatter::test_watchers::FAKE_DIR, tester::Tester};

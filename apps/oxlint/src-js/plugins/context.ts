@@ -26,7 +26,7 @@
  * and global variables (`filePath`, `settings`, `cwd`).
  */
 
-import { ast, initAst, SOURCE_CODE } from "./source_code.ts";
+import { ast, initAst, fileIsJsx, SOURCE_CODE } from "./source_code.ts";
 import { report } from "./report.ts";
 import { settings, initSettings } from "./settings.ts";
 import visitorKeys from "../generated/keys.ts";
@@ -41,12 +41,21 @@ import type { Settings } from "./settings.ts";
 import type { SourceCode } from "./source_code.ts";
 import type { ModuleKind, Program } from "../generated/types.d.ts";
 
-// Cached current working directory
-let cwd: string | null = null;
-
 // Absolute path of file being linted.
 // When `null`, indicates that no file is currently being linted (in `createOnce`, or between linting files).
 export let filePath: string | null = null;
+
+// Current working directory for file being linted.
+// Set by `setOptions` at end of registering all plugins, and may also be changed when switching workspaces.
+export let cwd: string | null = null;
+
+/**
+ * Set CWD. Used when switching workspaces.
+ * @param cwdInput - CWD
+ */
+export function setCwd(cwdInput: string) {
+  cwd = cwdInput;
+}
 
 /**
  * Set up context for linting a file.
@@ -132,8 +141,64 @@ const PARSER = Object.freeze({
   supportedEcmaVersions: SUPPORTED_ECMA_VERSIONS,
 });
 
+// In conformance build, setting properties of this object to `true` or `false` overrides the defaults
+export const ecmaFeaturesOverride: {
+  globalReturn: boolean | null;
+  impliedStrict: boolean | null;
+} = {
+  globalReturn: null,
+  impliedStrict: null,
+};
+
+// Singleton object for ECMA features.
+const ECMA_FEATURES = Object.freeze({
+  /**
+   * `true` if file was parsed as JSX.
+   */
+  get jsx(): boolean {
+    return fileIsJsx();
+  },
+
+  /**
+   * `true` if file was parsed with top-level `return` statements allowed.
+   */
+  get globalReturn(): boolean {
+    // TODO: Would be better to get `sourceType` without deserializing whole AST,
+    // in case it's used in `create` to return an empty visitor if wrong type.
+    if (ast === null) initAst();
+    debugAssertIsNonNull(ast);
+
+    // In conformance build, allow overriding from `languageOptions.parserOptions.ecmaFeatures.globalReturn` config
+    if (CONFORMANCE) {
+      const { globalReturn } = ecmaFeaturesOverride;
+      if (globalReturn !== null) return globalReturn;
+    }
+
+    return ast.sourceType === "commonjs";
+  },
+
+  /**
+   * `true` if file was parsed as strict mode code.
+   */
+  get impliedStrict(): boolean {
+    // TODO: Would be better to get `sourceType` without deserializing whole AST,
+    // in case it's used in `create` to return an empty visitor if wrong type.
+    if (ast === null) initAst();
+    debugAssertIsNonNull(ast);
+
+    // In conformance build, allow overriding from `languageOptions.parserOptions.ecmaFeatures.impliedStrict` config
+    if (CONFORMANCE) {
+      const { impliedStrict } = ecmaFeaturesOverride;
+      if (impliedStrict !== null) return impliedStrict;
+    }
+
+    return ast.sourceType === "module";
+  },
+});
+
 // Singleton object for parser options.
-// TODO: `sourceType` is the only property ESLint provides. But does TS-ESLint provide any further properties?
+// TODO: `sourceType` and `ecmaFeatures` are the only property ESLint provides.
+// But does TS-ESLint provide any further properties?
 const PARSER_OPTIONS = Object.freeze({
   /**
    * Source type of the file being linted.
@@ -146,6 +211,11 @@ const PARSER_OPTIONS = Object.freeze({
 
     return ast.sourceType;
   },
+
+  /**
+   * ECMA features.
+   */
+  ecmaFeatures: ECMA_FEATURES,
 });
 
 // Singleton object for language options.
@@ -204,7 +274,7 @@ const LANGUAGE_OPTIONS = {
 // In conformance build, replace `LANGUAGE_OPTIONS.ecmaVersion` with a getter which returns value of local var.
 // This is to allow changing the ECMAScript version in conformance tests.
 // Some of ESLint's rules change behavior based on the version, and ESLint's tests rely on this.
-let ecmaVersion = ECMA_VERSION;
+export let ecmaVersion = ECMA_VERSION;
 
 export function setEcmaVersion(version: number): void {
   if (!CONFORMANCE) throw new Error("Should be unreachable in release or debug builds");
@@ -250,7 +320,7 @@ export type LanguageOptions = Readonly<typeof LANGUAGE_OPTIONS>;
 // However, we still want to discourage using these deprecated methods/getters in rules, because such rules
 // will not work in ESLint 10 in compatibility mode.
 //
-// TODO: When we write a rule tester, throw an error in the tester if the rule uses deprecated methods/getters.
+// TODO: Throw an error in `RuleTester` if the rule uses deprecated methods/getters.
 // We'll need to offer an option to opt out of these errors, for rules which delegate to another rule whose code
 // the author doesn't control.
 const FILE_CONTEXT = Object.freeze({
@@ -303,7 +373,7 @@ const FILE_CONTEXT = Object.freeze({
   get cwd(): string {
     // Note: If we change this implementation, also change `getCwd` method below
     if (filePath === null) throw new Error("Cannot access `context.cwd` in `createOnce`");
-    if (cwd === null) cwd = process.cwd();
+    debugAssertIsNonNull(cwd, "`cwd` should not be null");
     return cwd;
   },
 
@@ -314,7 +384,7 @@ const FILE_CONTEXT = Object.freeze({
    */
   getCwd(): string {
     if (filePath === null) throw new Error("Cannot call `context.getCwd` in `createOnce`");
-    if (cwd === null) cwd = process.cwd();
+    debugAssertIsNonNull(cwd, "`cwd` should not be null");
     return cwd;
   },
 
@@ -384,9 +454,9 @@ const FILE_CONTEXT = Object.freeze({
    * The path to the parser used to parse this file.
    * @deprecated No longer supported.
    */
-  get parserPath(): string {
-    // TODO: Implement this?
-    throw new Error("`context.parserPath` is unsupported at present (and deprecated)");
+  get parserPath(): string | undefined {
+    if (filePath === null) throw new Error("Cannot access `context.parserPath` in `createOnce`");
+    return undefined;
   },
 });
 
@@ -465,8 +535,49 @@ export function createContext(ruleDetails: RuleDetails): Readonly<Context> {
      * @throws {TypeError} If `diagnostic` is invalid
      */
     report(this: void, diagnostic: Diagnostic): void {
+      const normalizedDiagnostic = normalizeReportCallArgs(diagnostic, arguments);
+
       // Delegate to `report` implementation shared between all rules, passing rule-specific details (`RuleDetails`)
-      report(diagnostic, ruleDetails);
+      report(normalizedDiagnostic, ruleDetails);
     },
   } as unknown as Context); // It seems TS can't understand `__proto__: FILE_CONTEXT`
+}
+
+/**
+ * Normalize `context.report()` arguments.
+ *
+ * Supports both forms:
+ * 1. New-style: `context.report({ ...descriptor })`
+ * 2. Legacy: `context.report(node, message, data?, fix?)`
+ *    or `context.report(node, loc, message, data?, fix?)`
+ */
+function normalizeReportCallArgs(diagnostic: Diagnostic, args: IArguments): Diagnostic {
+  // New-style call already has a descriptor object.
+  if (args.length <= 1) return diagnostic;
+
+  // Legacy positional forms.
+  const node = diagnostic as unknown;
+  let loc: unknown = undefined,
+    message: unknown,
+    data: unknown = undefined,
+    fix: unknown = undefined;
+
+  if (typeof args[1] === "string") {
+    // [node, message, data, fix]
+    message = args[1];
+    data = args[2];
+    fix = args[3];
+  } else {
+    // [node, loc, message, data, fix]
+    loc = args[1];
+    message = args[2];
+    data = args[3];
+    fix = args[4];
+  }
+
+  const descriptor: Record<string, unknown> = { node, message };
+  if (loc !== undefined) descriptor.loc = loc;
+  if (data !== undefined) descriptor.data = data;
+  if (fix !== undefined) descriptor.fix = fix;
+  return descriptor as Diagnostic;
 }

@@ -4,6 +4,195 @@ All notable changes to this package will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0).
 
+## [1.44.0] - 2026-02-10
+
+### 🚀 Features
+
+- aef2af5 linter/unicorn: Add fixer for `unicorn/relative-url-style` rule (#19186) (Mikhail Baev)
+- 80eba6f linter/max-params: Support `countThis` option (#19175) (camc314)
+- e19bc45 linter/no-new-func: Improve rule diagnostic with note and actionable help message (#19132) (Sean Gallen)
+- 27c241b linter/plugins: `RuleTester` test fixes (#19091) (overlookmotel)
+- 7318275 linter/new-cap: Tighten diagnostic spans and add help text (#19131) (camchenry)
+- ac2b16b linter: Improve `no-misleading-character-class` diagnostic spans (#19109) (Sysix)
+- 7be8613 linter: Move `no-misleading-chracter-class` to `correctness` (#19006) (Sysix)
+- ee2925b oxlint/lsp: Enable JS plugins (#18834) (overlookmotel)
+- 533013d linter/unicorn: Implement suggestion for `unicorn/prefer-dom-node-dataset` (#19051) (Mikhail Baev)
+- 384abae linter/oxc/no-async-endpoint-handlers: Improve diagnostic message (#19001) (camc314)
+- d35ece3 linter/array-callback-return: Improve diagnostic hints for some cases (#18993) (camc314)
+- dd0f754 linter/array-callback-return: Improve diagnostic message for `forEach` case (#18992) (camc314)
+- e2d28fe linter/plugins: Implement suggestions (#18963) (overlookmotel)
+- a398152 linter: Promote the `eslint/no-iterator` rule to correctness, which makes it a default rule (#18915) (connorshea)
+- 3184f36 linter: Ban relative js plugin specifiers in js extends config (#18944) (camc314)
+- b270739 linter: Support extends in oxlint.config.ts (#18942) (camc314)
+- 6024ddf linter: Implement suggestion for `unicorn/prefer-reflect-apply` (#18932) (Mikhail Baev)
+- b06b3a9 linter: Implement `typescript/consistent-type-assertions`  (#18869) (Bazyli Brzóska)
+- 5ee7b2f linter/vitest: Implements `prefer-expect-type-of` rule (#17957) (Said Atrahouch)
+- a7b360a linter/unicorn: Implement `unicorn/relative-url-style` rule (#18857) (Mikhail Baev)
+
+### 🐛 Bug Fixes
+
+- 7800fc5 linter/prefer-event-target: Ignore EventEmitter imported from packages (#19188) (camc314)
+- 03b2955 linter/typescript/ban-types: Mark rule as deprecated (#19179) (camc314)
+- e08157e linter/jsx-filename-extension: Include filename in as-needed diagnostic (#19172) (camc314)
+- 51c3fc8 linter/no-array-for-each: Skip `Effect.forEach` calls (#19127) (camc314)
+- 825f148 linter/plugins: `RuleTester` consider adjacent fixes as overlapping in ESLint compat mode (#19094) (overlookmotel)
+- ecd2456 linter/plugins: Handle fix with -1 offsets in file with BOM (#19092) (overlookmotel)
+- 5969d26 linter/no-array-sort: Avoid false positives for effect Chunk.sort (#19125) (camc314)
+- de10f04 linter: `no-misleading-character-class`: do not skip reporting on first invalid sequence of the checking group (#19111) (Sysix)
+- 8c0ce78 linter: Scope no-misleading-character-class sequences to single character class (#19108) (copilot-swe-agent)
+- 879e3a0 linter: `no-misleading-character-class`: split sequences on all `CharacterSet` (#19107) (Sysix)
+- f969d5e linter/prefer-dom-node-dataset: Address some edge cases in the fixer (#19065) (camc314)
+- ed759d1 linter/plugins: Fix error messages for invalid suggestions (#19059) (overlookmotel)
+- 34851a7 linter/plugins: Error not panic if invalid fix range (#19058) (overlookmotel)
+- 4823b58 linter/plugins: Fix fixes in files with BOM (#19056) (overlookmotel)
+- 2ef405e linter/no-map-spread: Improve actionability of error message (#19007) (Artyom Alekseevich)
+- 56c086b parser: Add modifier ordering validation (TS1029) (#19024) (Boshen)
+- 6067a49 linter/jsdoc: False positive in `check-tag-names` for `@` in email addresses and npm scopes (#19021) (Boshen)
+- 6d46ed9 linter/capitalized-comments: Ignore prettier and oxfmt directives (#19008) (Artyom Alekseevich)
+- a46c878 linter/react/no-array-index-key: Look for keys in expressions (#18997) (camc314)
+- 7d61704 linter/prefer-at: Skip autofix for `arguments`  (#18991) (camc314)
+- 3ebae53 linter/preserve-caught-error: Skip traversing into nested try/catch stmts (#18990) (camc314)
+- e94d37e linter/react/no-unknown-property: Add missing `popover` related props (#18953) (Christoph Nakazawa)
+- 04b0d99 linter: Normalize relative paths with `./` prefix in overrides. (#18954) (connorshea)
+- 07742ea linter/prefer-as-const: Implement fixer for type annotation (#18899) (camc314)
+- ec39944 linter/jsx-a11y/no-distracting-elements: Support elements option (#18892) (camc314)
+- f609cb6 linter/prefer-expect-type-of: Handle computed elements in fixer correctly (#18890) (camc314)
+- dbfdc40 linter/bad-replace-all-args: Skip extracting flags from conditional expressions (#18844) (camc314)
+
+### ⚡ Performance
+
+- ed8c054 oxc_str: Add precomputed hash to Ident for fast HashMap lookups (#19143) (Boshen)
+- 4ce3772 linter: Remove pointless string cloning when combining suggestions (#19075) (overlookmotel)
+- c417bf5 linter: Avoid allocating `Vec` when compiling `PossibleFixes` (#19074) (overlookmotel)
+- adb2baa linter/plugins: Avoid allocation when rule provides single suggestion (#19071) (overlookmotel)
+- 2537924 semantic: Optimize scope resolution with fast paths and inlining (#19029) (Boshen)
+
+### 📚 Documentation
+
+- e7ec06a linter: Improve docs for `import/max-dependencies` rule. (#19119) (connorshea)
+- 367f730 linter/consistent-test-filename: Escape file names fixes #19114 (#19123) (camc314)
+- 8753a54 linter: Rewrite the docs for the `jsx-a11y/no-redundant-roles` rule. (#19117) (connorshea)
+- dd44b1a linter: Fix invalid directive in example code for `import/no-nodejs-modules`. (#19115) (connorshea)
+- 9561e7f linter/plugins: Alter JS plugins example (#18900) (overlookmotel)
+- b425a0c linter: Document jsPlugins examples (#18671) (Cameron)
+- df2b7fa linter: Expand settings example with reference to custom plugins (#18670) (camc314)
+
+## [1.43.0] - 2026-02-02
+
+### 🚀 Features
+
+- 17ca42d linter: Implement `react/no-multi-comp` rule. (#18794) (connorshea)
+- 9f533db linter: Add `find_prev_token_within` method for token search (#18769) (camc314)
+- 558b588 linter/prefer-namespace-keyword: Move to correctness (#18733) (camc314)
+- 7a5c268 oxlint/lsp: Support `jsPlugins` (#17840) (Sysix)
+- c07497c linter/prefer-modern-dom-apis: Implement suggestion (#17965) (Mikhail Baev)
+- 8531bc9 linter: Implement `prefer-const` (#18687) (camchenry)
+- 8670b18 parser: Error on ambient class accessor implementations (#18592) (camc314)
+- 6b8a5ae linter: Add `eslint-plugin-import/no-nodejs-modules` rule (#18006) (Mikhail Baev)
+- 04f400d linter/no-duplicates: Add support for `considerQueryString` option (#18657) (camc314)
+- 3b7f260 linter/consistent-generic-constructor: Implement fixer (#18616) (camc314)
+- 794f9e4 linter/prefer-exponentation-operator: Implement suggestion (#18602) (camc314)
+- 773d916 linter: `eslint/sort_keys` ignore leading and trailing spreads in auto-fix (#18485) (Lonami)
+- 20d4ede linter: Implement `import/no-relative-parent-imports` rule (#18513) (Valentin Maerten)
+
+### 🐛 Bug Fixes
+
+- c7b0a65 linter: Fix config option docs for `react/jsx-boolean-value` rule. (#18811) (connorshea)
+- cce374e linter/prefer-const: Replace entire declaration over just the `let` kw (#18814) (camc314)
+- 41f92d1 linter: Error when given config options for a lint rule that has no config options defined. (#18809) (connorshea)
+- 0867a36 linter/consistent-index-object-style: False positive with mapped + generic types (#18801) (camc314)
+- 95df577 linter/plugins: Handle error from `destroyWorkspace` (#18763) (overlookmotel)
+- b3261dc linter: Fix the curly rule config to enforce the shape of the config and emit correct docs (#18743) (connorshea)
+- 005910a linter/plugins: Support plugins outside of workspace (#18755) (overlookmotel)
+- 358b2c1 linter/consistent-generic-constructors: Check bounds when searching for `:` token (#18745) (connorshea)
+- abd0c28 linter/capitalized-comments: Fix generated rule option docs (#18748) (connorshea)
+- d90a9f6 linter: Add more tests for `prefer-const`'s fixer and fix its invalid behavior. (#18747) (connorshea)
+- 94505c8 linter/jest: Change `prefer-spy-on` autofix to suggestion (#18152) (Ben Lowery)
+- 6ec1112 linter: Mark unused disable directive fix as suggestion (#18703) (ddmoney420)
+- 49609ec linter/no-useless-constructor: Consider argument transformation as used (#18706) (ddmoney420)
+- 40218de linter: Fix behavior of jsx-a11y/no-static-element-interactions rule. (#17817) (connorshea)
+- db9751d linter/no-html-link-for-pages: Handle `target=_blank` correctly (#18693) (camc314)
+- b393430 linter/curly: Fix multi-or-nest and consistent conflict (#18660) (camc314)
+
+### ⚡ Performance
+
+- 6bc0bde linter: Remove string allocation (#18725) (overlookmotel)
+
+### 📚 Documentation
+
+- dd1a653 linter: Fix doc comment for ignoreStateless config option. (#18808) (connorshea)
+- 5909085 linter/plugins: Add doc comments (#18753) (overlookmotel)
+- b82faec linter: Glob for any css module for no-unassigned-import (#18713) (Ben Stickley)
+- cd86347 linter: Mark some react rules as unsupported, misc docs improvements  (#18617) (connorshea)
+- 23401d8 linter: Update fixes and suggestions status for tsgolint rules (#18619) (camchenry)
+
+## [1.42.0] - 2026-01-26
+
+### 💥 BREAKING CHANGES
+
+- 777fc40 ast: [**BREAKING**] Add `Ident` type (#18354) (Boshen)
+
+### 🚀 Features
+
+- 34c3ec3 linter/prefer-logical-operator-over-ternary: Implement fixer (#18545) (camc314)
+- 019e0aa linter/valid-typeof: Add suggestions if type is misspelled (#18543) (camchenry)
+- 704c8eb linter/use-isnan: Add more specific error message for equality/inequality (#18542) (camchenry)
+- 1e99ace linter/use-isnan: Support more `indexOf` cases and improve diagnostic messages (#18537) (camchenry)
+- bffd134 linter/text-encoding-identifier-case: Add `withDash` option (#18533) (camc314)
+- 993fd2b parser: Parse unambiguous await with better error messages (#18480) (Boshen)
+- 15d69dc linter: Implement react/display-name rule (#18426) (camchenry)
+- 2fbceae linter: Implement rule docs and config support for rules with tuple config options. (#18372) (connorshea)
+- 8db0e78 linter/plugins: Handle BOMs (#18376) (overlookmotel)
+- fc3c86b linter: Update 125 rules to raise errors when provided with invalid config options. (#18104) (connorshea)
+
+### 🐛 Bug Fixes
+
+- 7d9bb1b linter: Update `eslint/func-names` to error on invalid rule config options, improve docs. (#18510) (connorshea)
+- 9c67974 linter: Improve the jsx-a11y/no-noninteractive-tabindex rule to match original rule logic better (#17848) (connorshea)
+- c205b0d ast: Remove `ThisExpression` from `TSModuleReference` (#18489) (Boshen)
+- c44c093 linter: Fix behavior of unicorn/catch-error-name to match original rule (#18209) (connorshea)
+- 9c65aff linter/jsx-a11y: Change `no-autofocus` autofix to suggestion (#18155) (Ben Lowery)
+- 235c820 linter/unicorn: Fix `prefer-array-some` autofix for `.filter().length` pattern (#18153) (Ben Lowery)
+- a9925dc linter: Mark fixes in `unicorn/no-null` rule as dangerous. (#18436) (connorshea)
+- cee29b4 linter: Remove confusing scope from `react/only-export-components` rule diagnostics. (#18434) (connorshea)
+- aed3669 parser: Parse HTML-like comments in unambiguous mode (#18442) (Boshen)
+- e046ea6 linter: `vue/no-lifecycle-after-await` skip looking into arrow functions (#18302) (Sysix)
+- 10ab424 linter: `react/no_array_index_key` continue search for other attributes (#18409) (Lonami)
+- 9d776d4 linter: Update `import/no-cycle` rule to error on invalid config options. (#18330) (connorshea)
+- c163231 linter: Update eslint/sort-imports to validate options. (#18378) (connorshea)
+- 79bbcff linter: Update `eslint/func-style` to error on invalid configuration options. (#18390) (connorshea)
+- 5985141 linter: Update `jest/prefer-lowercase-title` rule to error on invalid config options. (#18332) (connorshea)
+- 88e0896 linter: Update `typescript/no-restricted-types` rule to error on invalid config options. (#18329) (connorshea)
+- 9eec600 linter: Update `react/jsx-fragments` rule to raise an error on invalid configuration options (#18111) (connorshea)
+- 0fa969d linter: Update `react/no-will-update-set-state` to error on invalid config options (#18112) (connorshea)
+- 70e7be4 linter: Update `import/no-unassigned-import` to raise an error when passed invalid config options. (#18108) (connorshea)
+- 496cac7 linter: Update `unicorn/explicit-length-check` to raise an error when passed invalid config options. (#18107) (connorshea)
+- 080b1ec linter: Update 5 more rules to error on invalid config options. (#18113) (connorshea)
+- c5d05dd linter: Update 11 rules to raise an error on invalid config options. (#18109) (connorshea)
+- 8c98e69 linter: `vitest/prefer-describe-function-title`: Check earlier to avoid false positive (#18177) (Jovi De Croock)
+
+### ⚡ Performance
+
+- dc931ba linter/no-inner-declarations: Skip scope flags lookup in modules (#18249) (overlookmotel)
+- 07618a7 linter: Turn off `scope_build_child_ids` for SemanticBuilder (#18360) (Dunqing)
+- 1aac079 linter/exhaustive-deps: Simplify the logic of checking if the identifier it is a dependency of hook (#18350) (Dunqing)
+- 591d522 linter/block-scoped-var: Avoid `iter_all_scope_child_ids` by walking references/redeclarations scope ancestors (#18335) (Dunqing)
+
+### 📚 Documentation
+
+- 698c21d linter: Modernize docs for various React rules (#18559) (connorshea)
+- 314a47c linter: Clarify the `no-find-dom-node` rule with a note that the method was removed in React 19. (#18556) (connorshea)
+- 5eff704 linter: Update `no-inner-declarations` to fix config option docs (#18511) (connorshea)
+- dd5d2f6 linter: Improve diagnostic message in `valid_typeof` rule. (#18507) (connorshea)
+- 4958233 linter: Add missing "What it does" section in prefer-reflect-apply rule. (#18475) (connorshea)
+- 2fa83a4 linter: Improve the docs for import/unambiguous. (#18474) (connorshea)
+- 7b1505c linter: Improve docs for `oxc/only-used-in-recursion` rule. (#18473) (connorshea)
+- 4565c73 linter: `react/display-name`: add docs for config options (#18430) (camchenry)
+- b95a89f linter: Fix docs for the curly rule. (#18374) (connorshea)
+- f675eb4 linter: Fix the `react/only-export-components` rule docs. (#18319) (connorshea)
+- 704db95 linter: "no-unused-vars" extend ignored files section for svelte and astro files (#18304) (Sysix)
+- 3af4a88 linter: Add "Examples" headers to rules missing them (#18266) (connorshea)
+
 ## [1.41.0] - 2026-01-19
 
 ### ⚡ Performance

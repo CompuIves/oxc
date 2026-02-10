@@ -487,9 +487,12 @@ impl<'a> ParserImpl<'a> {
         if source_type.is_unambiguous() {
             if module_record.has_module_syntax {
                 // Resolved to Module - discard deferred script errors (TLA is valid in ESM)
+                // but emit deferred module errors (HTML comments are invalid in ESM)
                 program.source_type = source_type.with_module(true);
+                errors.append(&mut self.lexer.deferred_module_errors);
             } else {
                 // Resolved to Script - emit deferred script errors
+                // discard deferred module errors (HTML comments are valid in scripts)
                 program.source_type = source_type.with_script(true);
                 errors.extend(self.deferred_script_errors);
             }
@@ -527,8 +530,8 @@ impl<'a> ParserImpl<'a> {
         self.token = self.lexer.first_token();
 
         let hashbang = self.parse_hashbang();
-        let (directives, mut statements) =
-            self.parse_directives_and_statements(/* is_top_level */ true);
+        self.ctx |= Context::TopLevel;
+        let (directives, mut statements) = self.parse_directives_and_statements();
 
         // In unambiguous mode, if ESM syntax was detected (import/export/import.meta),
         // we need to reparse statements that were originally parsed with `await` as identifier.
@@ -568,9 +571,9 @@ impl<'a> ParserImpl<'a> {
             // Rewind to the checkpoint
             self.rewind(checkpoint);
 
-            // Parse the statement with await context enabled
+            // Parse the statement with await context enabled (TopLevel context is already set)
             let stmt = self.context_add(Context::Await, |p| {
-                p.parse_statement_list_item(StatementContext::TopLevelStatementList)
+                p.parse_statement_list_item(StatementContext::StatementList)
             });
 
             // Replace the statement if the index is valid
@@ -803,6 +806,23 @@ mod test {
             let ret = Parser::new(&allocator, source, source_type).parse();
             assert!(ret.program.source_type.is_script());
         }
+    }
+
+    #[test]
+    fn binary_file() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::default();
+
+        // U+FFFD as a standalone token — file appears to be binary
+        let ret = Parser::new(&allocator, "\u{FFFD}", source_type).parse();
+        assert!(ret.program.is_empty());
+        assert_eq!(ret.errors.len(), 1);
+        assert_eq!(ret.errors[0].to_string(), "File appears to be binary.");
+
+        // U+FFFD inside string literals — should parse fine
+        let ret = Parser::new(&allocator, "\"oops \u{FFFD} oops\";", source_type).parse();
+        assert!(!ret.program.is_empty());
+        assert!(ret.errors.is_empty());
     }
 
     #[test]

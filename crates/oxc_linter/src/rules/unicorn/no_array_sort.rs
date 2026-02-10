@@ -11,8 +11,10 @@ use serde_json::Value;
 
 use crate::{
     AstNode,
+    ast_util::leftmost_identifier_reference,
     context::LintContext,
     rule::{DefaultRuleConfig, Rule},
+    utils::is_import_symbol,
 };
 
 fn no_array_sort_diagnostic(span: Span) -> OxcDiagnostic {
@@ -22,7 +24,7 @@ fn no_array_sort_diagnostic(span: Span) -> OxcDiagnostic {
 }
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase", default)]
+#[serde(rename_all = "camelCase", default, deny_unknown_fields)]
 pub struct NoArraySort {
     /// When set to `true` (default), allows `array.sort()` as an expression statement.
     /// Set to `false` to forbid `Array#sort()` even if it's an expression statement.
@@ -70,9 +72,7 @@ declare_oxc_lint!(
 
 impl Rule for NoArraySort {
     fn from_configuration(value: Value) -> Result<Self, serde_json::error::Error> {
-        Ok(serde_json::from_value::<DefaultRuleConfig<Self>>(value)
-            .unwrap_or_default()
-            .into_inner())
+        serde_json::from_value::<DefaultRuleConfig<Self>>(value).map(DefaultRuleConfig::into_inner)
     }
 
     fn run<'a>(&self, node: &AstNode<'a>, ctx: &LintContext<'a>) {
@@ -97,6 +97,11 @@ impl Rule for NoArraySort {
             return;
         };
         if static_property_name != "sort" {
+            return;
+        }
+        if leftmost_identifier_reference(member_expr.object())
+            .is_ok_and(|ident| is_import_symbol(ident, "effect", "Chunk", ctx))
+        {
             return;
         }
 
@@ -145,6 +150,8 @@ fn test() {
         ("sorted = array.sort(...[])", None),
         ("sorted = array.sort(...[compareFn])", None),
         ("sorted = array.sort(compareFn, extraArgument)", None),
+        (r#"import { Chunk } from "effect"; const sorted = Chunk.sort(compareFn)"#, None),
+        (r#"import { Chunk as C } from "effect"; const sorted = C.sort(compareFn)"#, None),
     ];
 
     let fail = vec![

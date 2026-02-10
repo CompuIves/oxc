@@ -4,6 +4,7 @@ import {
   formatEmbeddedCode,
   formatFile,
   sortTailwindClasses,
+  disposeExternalFormatter,
 } from "./cli/worker-proxy";
 
 // napi-JS `oxfmt` CLI entry point
@@ -40,11 +41,27 @@ void (async () => {
     await import("./cli/migration/migrate-prettier").then((m) => m.runMigratePrettier());
     return;
   }
+  if (mode === "migrate:biome") {
+    await import("./cli/migration/migrate-biome").then((m) => m.runMigrateBiome());
+    return;
+  }
 
   // Other modes are handled by Rust, just need to set `exitCode`
+
+  // Clean up worker pool to not V8 crashes on process exit
+  await disposeExternalFormatter();
 
   // NOTE: It's recommended to set `process.exitCode` instead of calling `process.exit()`.
   // `process.exit()` kills the process immediately and `stdout` may not be flushed before process dies.
   // https://nodejs.org/api/process.html#processexitcode
   process.exitCode = exitCode!;
+
+  // Node.js < 25.4.0 has a race condition with ThreadsafeFunction cleanup that causes
+  // crashes on large codebases. Add a small delay to allow pending NAPI operations
+  // to complete before exit. Fixed in Node.js 25.4.0+.
+  // See: https://github.com/nodejs/node/issues/55706
+  const [major, minor] = process.versions.node.split(".").map(Number);
+  if (major < 25 || (major === 25 && minor < 4)) {
+    setTimeout(() => process.exit(), 50);
+  }
 })();

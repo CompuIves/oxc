@@ -4,6 +4,28 @@ All notable changes to this package will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0).
 
+## [0.113.0] - 2026-02-10
+
+### 🚀 Features
+
+- e316857 allocator/bitset: Add `Ones` iterator to `BitSet` (#19027) (sapphi-red)
+
+### ⚡ Performance
+
+- ed8c054 oxc_str: Add precomputed hash to Ident for fast HashMap lookups (#19143) (Boshen)
+
+## [0.112.0] - 2026-02-02
+
+### 💥 BREAKING CHANGES
+
+- 445cb1a oxc_allocator: [**BREAKING**] Remove dangerous `Allocator` methods (#18715) (overlookmotel)
+
+## [0.111.0] - 2026-01-26
+
+### ⚡ Performance
+
+- 2349031 allocator: Increase initial chunk size from 512B to 16KB (#18234) (Boshen)
+
 ## [0.109.0] - 2026-01-19
 
 ### ⚡ Performance

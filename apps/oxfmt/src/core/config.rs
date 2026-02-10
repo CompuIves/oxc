@@ -15,7 +15,7 @@ use super::{
     FormatFileStrategy,
     oxfmtrc::{
         EndOfLineConfig, FormatConfig, OxfmtOptions, OxfmtOverrideConfig, Oxfmtrc,
-        populate_prettier_config,
+        finalize_external_options, sync_external_options,
     },
     utils,
 };
@@ -45,6 +45,31 @@ pub fn resolve_editorconfig_path(cwd: &Path) -> Option<PathBuf> {
     cwd.ancestors().map(|dir| dir.join(".editorconfig")).find(|p| p.exists())
 }
 
+/// Resolve format options directly from a raw JSON config value.
+///
+/// This is the simplified path for the NAPI `format()` API,
+/// which doesn't need `.oxfmtrc` overrides, `.editorconfig`, or ignore patterns.
+#[cfg(feature = "napi")]
+pub fn resolve_options_from_value(
+    cwd: &Path,
+    raw_config: Value,
+    strategy: &FormatFileStrategy,
+) -> Result<ResolvedOptions, String> {
+    let mut format_config: FormatConfig = serde_json::from_value(raw_config)
+        .map_err(|err| format!("Failed to deserialize FormatConfig: {err}"))?;
+    format_config.resolve_tailwind_paths(cwd);
+
+    let mut external_options =
+        serde_json::to_value(&format_config).expect("FormatConfig serialization should not fail");
+    let oxfmt_options = format_config
+        .into_oxfmt_options()
+        .map_err(|err| format!("Failed to parse configuration.\n{err}"))?;
+
+    sync_external_options(&oxfmt_options.format_options, &mut external_options);
+
+    Ok(ResolvedOptions::from_oxfmt_options(oxfmt_options, external_options, strategy))
+}
+
 // ---
 
 /// Resolved options for each file type.
@@ -72,6 +97,55 @@ pub enum ResolvedOptions {
     },
 }
 
+impl ResolvedOptions {
+    /// Build `ResolvedOptions` from `OxfmtOptions`, `external_options`, and `FormatFileStrategy`.
+    ///
+    /// This also applies plugin-specific options (Tailwind, oxfmt plugin flags) based on strategy.
+    fn from_oxfmt_options(
+        oxfmt_options: OxfmtOptions,
+        mut external_options: Value,
+        strategy: &FormatFileStrategy,
+    ) -> Self {
+        // Apply plugin-specific options based on strategy
+        finalize_external_options(&mut external_options, strategy);
+
+        #[cfg(feature = "napi")]
+        let OxfmtOptions { format_options, toml_options, sort_package_json, insert_final_newline } =
+            oxfmt_options;
+        #[cfg(not(feature = "napi"))]
+        let OxfmtOptions { format_options, toml_options, insert_final_newline, .. } = oxfmt_options;
+
+        match strategy {
+            FormatFileStrategy::OxcFormatter { .. } => ResolvedOptions::OxcFormatter {
+                format_options: Box::new(format_options),
+                external_options,
+                insert_final_newline,
+            },
+            FormatFileStrategy::OxfmtToml { .. } => {
+                ResolvedOptions::OxfmtToml { toml_options, insert_final_newline }
+            }
+            #[cfg(feature = "napi")]
+            FormatFileStrategy::ExternalFormatter { .. } => {
+                ResolvedOptions::ExternalFormatter { external_options, insert_final_newline }
+            }
+            #[cfg(feature = "napi")]
+            FormatFileStrategy::ExternalFormatterPackageJson { .. } => {
+                ResolvedOptions::ExternalFormatterPackageJson {
+                    external_options,
+                    sort_package_json,
+                    insert_final_newline,
+                }
+            }
+            #[cfg(not(feature = "napi"))]
+            _ => {
+                unreachable!("If `napi` feature is disabled, this should not be passed here")
+            }
+        }
+    }
+}
+
+// ---
+
 /// Configuration resolver to handle `.oxfmtrc` and `.editorconfig` files.
 ///
 /// Priority order: `Oxfmtrc::default()` → user's `.oxfmtrc` base → `.oxfmtrc` overrides
@@ -96,18 +170,6 @@ pub struct ConfigResolver {
 }
 
 impl ConfigResolver {
-    /// Create a new resolver from a raw JSON config value.
-    #[cfg(feature = "napi")]
-    pub fn from_value(raw_config: Value) -> Self {
-        Self {
-            raw_config,
-            config_dir: None,
-            cached_options: None,
-            oxfmtrc_overrides: None,
-            editorconfig: None,
-        }
-    }
-
     /// Create a resolver by loading config from a file path.
     ///
     /// # Errors
@@ -174,7 +236,7 @@ impl ConfigResolver {
             .map_err(|err| format!("Failed to deserialize Oxfmtrc: {err}"))?;
 
         // Resolve `overrides` from `Oxfmtrc` for later per-file matching
-        let base_dir = self.config_dir.take();
+        let base_dir = self.config_dir.clone();
         self.oxfmtrc_overrides =
             oxfmtrc.overrides.map(|overrides| OxfmtrcOverrides::new(overrides, base_dir));
 
@@ -187,6 +249,11 @@ impl ConfigResolver {
                 editorconfig.sections().iter().find(|s| s.name == "*").map(|s| &s.properties)
         {
             apply_editorconfig(&mut format_config, props);
+        }
+
+        // Resolve relative tailwind paths before serialization
+        if let Some(config_dir) = &self.config_dir {
+            format_config.resolve_tailwind_paths(config_dir);
         }
 
         // NOTE: Revisit this when adding Prettier plugin support.
@@ -203,7 +270,10 @@ impl ConfigResolver {
             .into_oxfmt_options()
             .map_err(|err| format!("Failed to parse configuration.\n{err}"))?;
 
-        populate_prettier_config(&oxfmt_options.format_options, &mut external_options);
+        // Apply common Prettier mappings for caching.
+        // Plugin options will be added later in `resolve()` via `finalize_external_options()`.
+        // If we finalize here, every per-file options contain plugin options even if not needed.
+        sync_external_options(&oxfmt_options.format_options, &mut external_options);
 
         // Save cache for fast path: no per-file overrides
         self.cached_options = Some((oxfmt_options, external_options));
@@ -216,43 +286,13 @@ impl ConfigResolver {
     #[instrument(level = "debug", name = "oxfmt::config::resolve", skip_all, fields(path = %strategy.path().display()))]
     pub fn resolve(&self, strategy: &FormatFileStrategy) -> ResolvedOptions {
         let (oxfmt_options, external_options) = self.resolve_options(strategy.path());
-
-        #[cfg(feature = "napi")]
-        let OxfmtOptions { format_options, toml_options, sort_package_json, insert_final_newline } =
-            oxfmt_options;
-        #[cfg(not(feature = "napi"))]
-        let OxfmtOptions { format_options, toml_options, insert_final_newline, .. } = oxfmt_options;
-
-        match strategy {
-            FormatFileStrategy::OxcFormatter { .. } => ResolvedOptions::OxcFormatter {
-                format_options: Box::new(format_options),
-                external_options,
-                insert_final_newline,
-            },
-            FormatFileStrategy::OxfmtToml { .. } => {
-                ResolvedOptions::OxfmtToml { toml_options, insert_final_newline }
-            }
-            #[cfg(feature = "napi")]
-            FormatFileStrategy::ExternalFormatter { .. } => {
-                ResolvedOptions::ExternalFormatter { external_options, insert_final_newline }
-            }
-            #[cfg(feature = "napi")]
-            FormatFileStrategy::ExternalFormatterPackageJson { .. } => {
-                ResolvedOptions::ExternalFormatterPackageJson {
-                    external_options,
-                    sort_package_json,
-                    insert_final_newline,
-                }
-            }
-            #[cfg(not(feature = "napi"))]
-            _ => {
-                unreachable!("If `napi` feature is disabled, this should not be passed here")
-            }
-        }
+        ResolvedOptions::from_oxfmt_options(oxfmt_options, external_options, strategy)
     }
 
     /// Resolve options for a specific file path.
     /// Priority: oxfmtrc base → oxfmtrc overrides → editorconfig (fallback for unset fields) -> defaults
+    ///
+    /// Returns cached options (with `strategy: None` applied) for later plugin option addition.
     fn resolve_options(&self, path: &Path) -> (OxfmtOptions, Value) {
         let has_editorconfig_overrides =
             self.editorconfig.as_ref().is_some_and(|ec| has_editorconfig_overrides(ec, path));
@@ -285,15 +325,19 @@ impl ConfigResolver {
             apply_editorconfig(&mut format_config, &props);
         }
 
+        // Resolve relative tailwind paths before serialization
+        if let Some(config_dir) = &self.config_dir {
+            format_config.resolve_tailwind_paths(config_dir);
+        }
+
         // NOTE: See `build_and_validate()` for details about `external_options` handling
         let mut external_options = serde_json::to_value(&format_config)
             .expect("FormatConfig serialization should not fail");
-
         let oxfmt_options = format_config
             .into_oxfmt_options()
             .expect("If this fails, there is an issue with override values");
 
-        populate_prettier_config(&oxfmt_options.format_options, &mut external_options);
+        sync_external_options(&oxfmt_options.format_options, &mut external_options);
 
         (oxfmt_options, external_options)
     }
@@ -316,6 +360,10 @@ impl OxfmtrcOverrides {
         let normalize_patterns = |patterns: Vec<String>| {
             patterns
                 .into_iter()
+                // This may be problematic if user writes glob patterns with `\` as separator on Windows.
+                // But fine for now since:
+                // - `fast_glob::glob_match()` supports both `/` and `\`
+                // - Glob patterns are usually written with `/` even on Windows
                 .map(|pat| if pat.contains('/') { pat } else { format!("**/{pat}") })
                 .collect()
         };
@@ -345,6 +393,8 @@ impl OxfmtrcOverrides {
         self.entries.iter().filter(move |e| Self::is_entry_match(e, &relative)).map(|e| &e.options)
     }
 
+    /// NOTE: On Windows, `to_string_lossy()` produces `\`-separated paths.
+    /// This is OK since `fast_glob::glob_match()` supports both `/` and `\` via `std::path::is_separator`.
     fn relative_path(&self, path: &Path) -> String {
         self.base_dir
             .as_ref()
@@ -361,6 +411,7 @@ impl OxfmtrcOverrides {
 }
 
 /// A single override entry with normalized glob patterns.
+/// NOTE: Written path patterns are glob patterns; use `/` as the path separator on all platforms.
 #[derive(Debug)]
 struct OxfmtrcOverrideEntry {
     files: Vec<String>,

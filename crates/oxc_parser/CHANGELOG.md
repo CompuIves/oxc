@@ -4,6 +4,58 @@ All notable changes to this package will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0).
 
+## [0.113.0] - 2026-02-10
+
+### 🚀 Features
+
+- 142a1be parser: Detect binary files with TS1490 error (#19047) (Boshen)
+- 0eff6be parser: Error JSX-like type assertions and generics in `.mts`/`.cts` (#18910) (Boshen)
+
+### 🐛 Bug Fixes
+
+- 56c086b parser: Add modifier ordering validation (TS1029) (#19024) (Boshen)
+- 57917ee parser: Parse decorators on rest parameters (#18938) (Boshen)
+- 1f6b193 parser: Validate TypeScript import type options (#18889) (Boshen)
+- 1663184 parser: Allow conditional types in function type parameters (#18886) (Boshen)
+- 5758046 parser: Error on property access after instantiation expression (#18887) (Boshen)
+- 5eb4a94 parser: Handle `<<` as two `<` tokens in type argument contexts (#18885) (Boshen)
+
+### ⚡ Performance
+
+- ed8c054 oxc_str: Add precomputed hash to Ident for fast HashMap lookups (#19143) (Boshen)
+- f78c525 parser: Try hybrid parsing for jsx children and closing element/fragments (#18789) (camchenry)
+
+## [0.112.0] - 2026-02-02
+
+### 🚀 Features
+
+- 8670b18 parser: Error on ambient class accessor implementations (#18592) (camc314)
+
+## [0.111.0] - 2026-01-26
+
+### 💥 BREAKING CHANGES
+
+- 777fc40 ast: [**BREAKING**] Add `Ident` type (#18354) (Boshen)
+
+### 🚀 Features
+
+- 0a02026 semantic: Add TS1499 code to diagnostic (#18557) (camc314)
+- 8b4618f parser: Add TS1500 code to diagnostic (#18547) (camc314)
+- 866b6b3 parser: Add TS1048 code to diagnostic (#18546) (camc314)
+- 1117c44 parser: Add TS1054 code to diagnostic (#18541) (camc314)
+- e4fcdde semantic: Add TS1053 code to diagnostic (#18539) (camc314)
+- bcbf396 semantic: Add TS1052 code to diagnostic (#18538) (camc314)
+- 8155edf semantic: Add TS1049 code to diagnostic (#18535) (camc314)
+- 51d3b3f parser: Add TS1502 code to diagnostic (#18534) (camc314)
+- 993fd2b parser: Parse unambiguous await with better error messages (#18480) (Boshen)
+- 2ef5647 ast: Add escape_raw parameter to template_element builders (#18121) (Boshen)
+
+### 🐛 Bug Fixes
+
+- c205b0d ast: Remove `ThisExpression` from `TSModuleReference` (#18489) (Boshen)
+- aed3669 parser: Parse HTML-like comments in unambiguous mode (#18442) (Boshen)
+- c4132fb parser: Validate accessor parameters in interface method signatures (#18391) (Boshen)
+
 ## [0.109.0] - 2026-01-19
 
 ### 🚀 Features

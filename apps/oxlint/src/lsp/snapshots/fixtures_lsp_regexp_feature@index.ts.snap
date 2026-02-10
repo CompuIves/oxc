@@ -32,7 +32,7 @@ tags: None
 ########### Code Actions/Commands
 CodeAction: 
 Title: Disable no-control-regex for this line
-Is Preferred: Some(true)
+Is Preferred: Some(false)
 TextEdit: TextEdit {
     range: Range {
         start: Position {
@@ -117,4 +117,23 @@ TextEdit: TextEdit {
         },
     },
     new_text: "// oxlint-disable no-useless-escape\n",
+}
+
+
+########### Fix All Action
+CodeAction: 
+Title: quick fix
+Is Preferred: Some(true)
+TextEdit: TextEdit {
+    range: Range {
+        start: Position {
+            line: 0,
+            character: 16,
+        },
+        end: Position {
+            line: 0,
+            character: 18,
+        },
+    },
+    new_text: "/",
 }

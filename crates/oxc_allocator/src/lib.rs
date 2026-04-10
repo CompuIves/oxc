@@ -36,8 +36,6 @@
 //! * `disable_track_allocations` - Disables `track_allocations` feature.
 //!   Purpose is to prevent `--all-features` enabling allocation tracking.
 
-#![warn(missing_docs)]
-
 mod accessor;
 mod address;
 mod alloc;
@@ -46,8 +44,7 @@ mod allocator_api2;
 #[cfg(feature = "bitset")]
 mod bitset;
 mod boxed;
-pub(crate) mod bump;
-pub(crate) mod bumpalo_alloc;
+mod bumpalo_alloc;
 mod clone_in;
 mod convert;
 #[cfg(feature = "from_raw_parts")]
@@ -55,7 +52,6 @@ mod from_raw_parts;
 pub mod hash_map;
 pub mod hash_set;
 pub mod ident_hasher;
-mod passthrough_hasher;
 #[cfg(feature = "pool")]
 mod pool;
 mod string_builder;
@@ -64,6 +60,12 @@ mod take_in;
 mod tracking;
 mod vec;
 mod vec2;
+
+// Only expose `bump` module for doc tests
+#[cfg(not(feature = "testing"))]
+mod bump;
+#[cfg(feature = "testing")]
+pub mod bump;
 
 pub use accessor::AllocatorAccessor;
 pub use address::{Address, GetAddress, UnstableAddress};
@@ -76,7 +78,6 @@ pub use convert::{FromIn, IntoIn};
 pub use hash_map::HashMap;
 pub use hash_set::HashSet;
 pub use ident_hasher::{IdentBuildHasher, ident_hash, pack_len_hash};
-pub use passthrough_hasher::{PassthroughBuildHasher, PassthroughHasher};
 #[cfg(feature = "pool")]
 pub use pool::*;
 pub use string_builder::StringBuilder;

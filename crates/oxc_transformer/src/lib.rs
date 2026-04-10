@@ -11,7 +11,7 @@ use oxc_allocator::{Allocator, TakeIn, Vec as ArenaVec};
 use oxc_ast::{AstBuilder, ast::*};
 use oxc_diagnostics::OxcDiagnostic;
 use oxc_semantic::Scoping;
-use oxc_span::SPAN;
+use oxc_span::{GetSpan, SPAN};
 use oxc_traverse::{ReusableTraverseCtx, Traverse, traverse_mut_with_ctx};
 
 // Core
@@ -83,15 +83,21 @@ pub use crate::{
     typescript::{RewriteExtensionsMode, TypeScriptOptions},
 };
 
+/// Result of running [`Transformer::build_with_scoping`].
 #[non_exhaustive]
 pub struct TransformerReturn {
+    /// Diagnostics produced during transformation.
     pub errors: std::vec::Vec<OxcDiagnostic>,
+    /// Updated semantic scoping after all transforms have run.
     pub scoping: Scoping,
     /// Helpers used by this transform.
     #[deprecated = "Internal usage only"]
     pub helpers_used: FxHashMap<Helper, String>,
 }
 
+/// JavaScript/TypeScript transformer pipeline.
+///
+/// Create with [`Transformer::new`] and run with [`Transformer::build_with_scoping`].
 pub struct Transformer<'a> {
     state: TransformState<'a>,
     allocator: &'a Allocator,
@@ -106,6 +112,7 @@ pub struct Transformer<'a> {
 }
 
 impl<'a> Transformer<'a> {
+    /// Create a transformer with source path and transform options.
     pub fn new(allocator: &'a Allocator, source_path: &Path, options: &TransformOptions) -> Self {
         let state = TransformState::new(source_path, options);
         Self {
@@ -120,6 +127,7 @@ impl<'a> Transformer<'a> {
         }
     }
 
+    /// Run all configured transforms on `program` and return diagnostics and updated scoping.
     pub fn build_with_scoping(
         mut self,
         scoping: Scoping,
@@ -131,9 +139,15 @@ impl<'a> Transformer<'a> {
         self.state.source_type = program.source_type;
         self.state.source_text = program.source_text;
 
-        if program.source_type.is_jsx() {
+        if program.source_type.is_jsx()
+            && let Some(first_statement) = program.body.first()
+        {
+            // Only scan comments before the first statement for pragmas,
+            // since pragmas are file-level directives (aligned with TypeScript and SWC).
+            let leading_comments_end =
+                program.comments.partition_point(|c| c.span.start < first_statement.span().start);
             jsx::update_options_with_comments(
-                &program.comments,
+                &program.comments[..leading_comments_end],
                 &mut self.typescript,
                 &mut self.jsx,
                 &self.state,
@@ -597,9 +611,6 @@ impl<'a> Traverse<'a, TransformState<'a>> for TransformerImpl<'a> {
         stmts: &mut ArenaVec<'a, Statement<'a>>,
         ctx: &mut TraverseCtx<'a>,
     ) {
-        if let Some(typescript) = self.x0_typescript.as_mut() {
-            typescript.exit_statements(stmts, ctx);
-        }
         self.common.exit_statements(stmts, ctx);
     }
 
@@ -696,6 +707,16 @@ impl<'a> Traverse<'a, TransformState<'a>> for TransformerImpl<'a> {
     ) {
         if let Some(typescript) = self.x0_typescript.as_mut() {
             typescript.enter_import_declaration(node, ctx);
+        }
+    }
+
+    fn enter_import_expression(
+        &mut self,
+        node: &mut ImportExpression<'a>,
+        ctx: &mut TraverseCtx<'a>,
+    ) {
+        if let Some(typescript) = self.x0_typescript.as_mut() {
+            typescript.enter_import_expression(node, ctx);
         }
     }
 

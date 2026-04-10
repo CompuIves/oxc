@@ -5,7 +5,8 @@ use std::f64::consts as f64;
 use oxc_ast::AstKind;
 use oxc_diagnostics::OxcDiagnostic;
 use oxc_macros::declare_oxc_lint;
-use oxc_span::{Ident, Span};
+use oxc_span::Span;
+use oxc_str::static_ident;
 
 use crate::{AstNode, context::LintContext, fixer::RuleFixer, rule::Rule};
 
@@ -62,7 +63,7 @@ impl Rule for ApproxConstant {
                     |fixer| {
                         if ctx
                             .scoping()
-                            .find_binding(node.scope_id(), Ident::new_const("Math"))
+                            .find_binding(node.scope_id(), static_ident!("Math"))
                             .is_some()
                         {
                             fixer.noop()

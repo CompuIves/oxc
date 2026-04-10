@@ -94,6 +94,7 @@ declare_oxc_lint!(
     RequireReturns,
     jsdoc,
     pedantic,
+    pending,
     config = RequireReturnsConfig,
 );
 
@@ -314,6 +315,36 @@ fn test() {
 			            return foo;
 			          }
 			      ",
+            None,
+            None,
+        ),
+        (
+            "
+			          /**
+			           * @param md
+			           */
+			          const component = (md) => {
+			            md.renderer.rules.fence = (...args) => {
+			              const [tokens, index] = args;
+			              return tokens[index];
+			            };
+			          };
+			      ",
+            None,
+            None,
+        ),
+        (
+            "
+                      /**
+                       * Random float in [min, max).
+                       * @param {number} min - Minimum float value.
+                       * @param {number} max - Maximum float value.
+                       * @returns {number} Random float in [min, max).
+                       */
+                      function randomRange(min, max) {
+                        return min + Math.random() * (max - min);
+                      }
+                  ",
             None,
             None,
         ),

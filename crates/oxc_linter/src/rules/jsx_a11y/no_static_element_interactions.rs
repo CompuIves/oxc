@@ -8,7 +8,8 @@ use oxc_ast::{
 };
 use oxc_diagnostics::OxcDiagnostic;
 use oxc_macros::declare_oxc_lint;
-use oxc_span::{CompactStr, GetSpan, Span};
+use oxc_span::{GetSpan, Span};
+use oxc_str::CompactStr;
 
 use crate::{
     AstNode,
@@ -79,7 +80,7 @@ declare_oxc_lint!(
     /// ```
     NoStaticElementInteractions,
     jsx_a11y,
-    nursery,
+    correctness,
     config = NoStaticElementInteractionsConfig,
 );
 

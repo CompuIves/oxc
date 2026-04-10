@@ -16,7 +16,8 @@ use oxc_cfg::{
     IterationInstructionKind, ReturnInstructionKind,
 };
 use oxc_diagnostics::OxcDiagnostic;
-use oxc_span::{Ident, IdentHashMap, SourceType, Span};
+use oxc_span::{SourceType, Span};
+use oxc_str::{Ident, IdentHashMap};
 use oxc_syntax::{
     node::{NodeFlags, NodeId},
     reference::{Reference, ReferenceFlags, ReferenceId},
@@ -24,8 +25,6 @@ use oxc_syntax::{
     symbol::{SymbolFlags, SymbolId},
 };
 
-#[cfg(feature = "linter")]
-use crate::jsdoc::JSDocBuilder;
 use crate::{
     Semantic,
     binder::{Binder, ModuleInstanceState},
@@ -36,8 +35,10 @@ use crate::{
     node::AstNodes,
     scoping::{Bindings, Scoping},
     stats::Stats,
-    unresolved_stack::UnresolvedReferencesStack,
+    unresolved_stack::UnresolvedReferences,
 };
+#[cfg(feature = "jsdoc")]
+use oxc_jsdoc::JSDocBuilder;
 
 #[cfg(feature = "cfg")]
 macro_rules! control_flow {
@@ -84,19 +85,29 @@ pub struct SemanticBuilder<'a> {
     pub(crate) current_function_node_id: NodeId,
     pub(crate) module_instance_state_cache: FxHashMap<Address, ModuleInstanceState>,
     current_reference_flags: ReferenceFlags,
+    /// Symbols that have been hoisted out of a scope (e.g. `var` declarations hoisted to
+    /// the enclosing function scope, or Annex B function declarations hoisted to the var scope).
+    /// Keyed by the **original** scope the symbol was declared in, so that future declarations
+    /// in that scope can still detect redeclarations via `check_redeclaration`.
     pub(crate) hoisting_variables: FxHashMap<ScopeId, IdentHashMap<'a, SymbolId>>,
 
     // builders
     pub(crate) nodes: AstNodes<'a>,
     pub(crate) scoping: Scoping,
 
-    pub(crate) unresolved_references: UnresolvedReferencesStack<'a>,
+    pub(crate) unresolved_references: UnresolvedReferences<'a>,
+    /// Checkpoint for early resolution of function parameter / catch parameter references.
+    /// Tracks the start index in the flat unresolved references list.
+    unresolved_references_checkpoint: usize,
 
     unused_labels: UnusedLabels<'a>,
-    #[cfg(feature = "linter")]
+    #[cfg(feature = "jsdoc")]
     jsdoc: JSDocBuilder<'a>,
     stats: Option<Stats>,
     excess_capacity: f64,
+
+    /// Should enum member values be evaluated?
+    enum_eval: bool,
 
     /// Should additional syntax checks be performed?
     ///
@@ -117,7 +128,9 @@ pub struct SemanticBuilder<'a> {
 
 /// Data returned by [`SemanticBuilder::build`].
 pub struct SemanticBuilderReturn<'a> {
+    /// Built semantic model.
     pub semantic: Semantic<'a>,
+    /// Diagnostics collected during semantic analysis.
     pub errors: Vec<OxcDiagnostic>,
 }
 
@@ -128,6 +141,7 @@ impl Default for SemanticBuilder<'_> {
 }
 
 impl<'a> SemanticBuilder<'a> {
+    /// Create a new semantic builder with default settings.
     pub fn new() -> Self {
         let scoping = Scoping::default();
         let current_scope_id = scoping.root_scope_id();
@@ -145,12 +159,14 @@ impl<'a> SemanticBuilder<'a> {
             nodes: AstNodes::default(),
             hoisting_variables: FxHashMap::default(),
             scoping,
-            unresolved_references: UnresolvedReferencesStack::new(),
+            unresolved_references: UnresolvedReferences::new(),
+            unresolved_references_checkpoint: 0,
             unused_labels: UnusedLabels::default(),
-            #[cfg(feature = "linter")]
+            #[cfg(feature = "jsdoc")]
             jsdoc: JSDocBuilder::default(),
             stats: None,
             excess_capacity: 0.0,
+            enum_eval: false,
             check_syntax_error: false,
             #[cfg(feature = "cfg")]
             cfg: None,
@@ -175,6 +191,19 @@ impl<'a> SemanticBuilder<'a> {
         self
     }
 
+    /// Enable or disable evaluation of TypeScript enum member values.
+    ///
+    /// When enabled, enum member values are computed during semantic analysis
+    /// and stored in [`Scoping`], allowing the transformer to inline const enum
+    /// member accesses.
+    ///
+    /// By default, this is `false`.
+    #[must_use]
+    pub fn with_enum_eval(mut self, yes: bool) -> Self {
+        self.enum_eval = yes;
+        self
+    }
+
     /// Enable or disable building a [`ControlFlowGraph`].
     ///
     /// [`ControlFlowGraph`]: oxc_cfg::ControlFlowGraph
@@ -187,6 +216,7 @@ impl<'a> SemanticBuilder<'a> {
 
     #[cfg(not(feature = "cfg"))]
     #[must_use]
+    /// No-op when `cfg` feature is disabled.
     pub fn with_cfg(self, _cfg: bool) -> Self {
         self
     }
@@ -228,7 +258,7 @@ impl<'a> SemanticBuilder<'a> {
     pub fn build(mut self, program: &'a Program<'a>) -> SemanticBuilderReturn<'a> {
         self.source_text = program.source_text;
         self.source_type = program.source_type;
-        #[cfg(feature = "linter")]
+        #[cfg(feature = "jsdoc")]
         {
             self.jsdoc = JSDocBuilder::new(self.source_text, &program.comments);
         }
@@ -275,12 +305,14 @@ impl<'a> SemanticBuilder<'a> {
             stats.assert_accurate(actual_stats);
         }
 
-        debug_assert_eq!(self.unresolved_references.scope_depth(), 1);
-        self.scoping
-            .set_root_unresolved_references(self.unresolved_references.into_root().into_iter());
+        // Root unresolved references are already populated by `resolve_all_references()`
+        // which is called at the end of `visit_program()`.
 
-        #[cfg(feature = "linter")]
-        let jsdoc = self.jsdoc.build();
+        #[cfg(feature = "jsdoc")]
+        let jsdoc = {
+            let result = self.jsdoc.build();
+            crate::jsdoc::JSDocFinder::new(result.attached, result.not_attached)
+        };
 
         #[cfg(debug_assertions)]
         self.unused_labels.assert_empty();
@@ -293,7 +325,7 @@ impl<'a> SemanticBuilder<'a> {
             nodes: self.nodes,
             scoping: self.scoping,
             classes: self.class_table_builder.build(),
-            #[cfg(feature = "linter")]
+            #[cfg(feature = "jsdoc")]
             jsdoc,
             unused_labels: self.unused_labels.labels,
             #[cfg(feature = "cfg")]
@@ -318,11 +350,11 @@ impl<'a> SemanticBuilder<'a> {
     }
 
     fn create_ast_node(&mut self, kind: AstKind<'a>) {
-        #[cfg(not(feature = "linter"))]
+        #[cfg(not(feature = "jsdoc"))]
         let flags = self.current_node_flags;
-        #[cfg(feature = "linter")]
+        #[cfg(feature = "jsdoc")]
         let mut flags = self.current_node_flags;
-        #[cfg(feature = "linter")]
+        #[cfg(feature = "jsdoc")]
         if self.jsdoc.retrieve_attached_jsdoc(&kind) {
             flags |= NodeFlags::JSDoc;
         }
@@ -405,7 +437,7 @@ impl<'a> SemanticBuilder<'a> {
         includes: SymbolFlags,
         excludes: SymbolFlags,
     ) -> SymbolId {
-        if let Some(symbol_id) = self.check_redeclaration(scope_id, span, name, excludes, true) {
+        if let Some(symbol_id) = self.check_redeclaration(scope_id, span, name, excludes) {
             self.add_redeclare_variable(symbol_id, includes, span);
             self.scoping.union_symbol_flag(symbol_id, includes);
             return symbol_id;
@@ -431,15 +463,12 @@ impl<'a> SemanticBuilder<'a> {
 
     /// Check if a symbol with the same name has already been declared in the
     /// current scope. Returns the symbol ID if it exists and is not excluded by `excludes`.
-    ///
-    /// Only records a redeclaration error if `report_error` is `true`.
     pub(crate) fn check_redeclaration(
         &self,
         scope_id: ScopeId,
         span: Span,
         name: Ident<'_>,
         excludes: SymbolFlags,
-        report_error: bool,
     ) -> Option<SymbolId> {
         let symbol_id = self.scoping.get_binding(scope_id, name).or_else(|| {
             self.hoisting_variables.get(&scope_id).and_then(|symbols| symbols.get(&name).copied())
@@ -461,12 +490,10 @@ impl<'a> SemanticBuilder<'a> {
             return None;
         }
 
-        if report_error {
-            let flags = self.scoping.symbol_flags(symbol_id);
-            if flags.intersects(excludes) {
-                let symbol_span = self.scoping.symbol_span(symbol_id);
-                self.error(redeclaration(&name, symbol_span, span));
-            }
+        let flags = self.scoping.symbol_flags(symbol_id);
+        if flags.intersects(excludes) {
+            let symbol_span = self.scoping.symbol_span(symbol_id);
+            self.error(redeclaration(&name, symbol_span, span));
         }
 
         Some(symbol_id)
@@ -482,8 +509,7 @@ impl<'a> SemanticBuilder<'a> {
         reference: Reference,
     ) -> ReferenceId {
         let reference_id = self.scoping.create_reference(reference);
-
-        self.unresolved_references.current_mut().entry(name).or_default().push(reference_id);
+        self.unresolved_references.push(name, reference_id);
         reference_id
     }
 
@@ -506,101 +532,107 @@ impl<'a> SemanticBuilder<'a> {
         symbol_id
     }
 
-    /// Try to resolve all references from the current scope that are not
-    /// already resolved.
+    /// Resolve all collected references by walking up the scope chain from each
+    /// reference's scope. This replaces the old bubble-up approach where unresolved
+    /// references were merged into parent scope hashmaps on every scope exit.
     ///
-    /// This gets called every time [`SemanticBuilder`] exits a scope.
+    /// Walk-up is faster because it only does hashmap lookups (no drain+insert),
+    /// and reference creation is a simple Vec push instead of a hashmap insert.
+    fn resolve_all_references(&mut self) {
+        let refs = self.unresolved_references.take();
+        for (name, reference_id) in refs {
+            if !self.walk_up_resolve_reference(name, reference_id) {
+                self.scoping.add_root_unresolved_reference(name, reference_id);
+            }
+        }
+    }
+
+    /// Walk up the scope chain trying to resolve a reference.
+    /// Returns `true` if resolved.
+    #[expect(clippy::inline_always, reason = "Hot path — called for every reference resolution")]
+    #[inline(always)]
+    fn walk_up_resolve_reference(&mut self, name: Ident<'a>, reference_id: ReferenceId) -> bool {
+        let mut scope_id = Some(self.scoping.references[reference_id].scope_id());
+        while let Some(sid) = scope_id {
+            if let Some(symbol_id) = self.scoping.get_binding(sid, name)
+                && self.try_resolve_reference(reference_id, symbol_id)
+            {
+                return true;
+            }
+            scope_id = self.scoping.scope_parent_id(sid);
+        }
+        false
+    }
+
+    /// Try to resolve a reference to a symbol. Returns `true` if resolved.
+    fn try_resolve_reference(&mut self, reference_id: ReferenceId, symbol_id: SymbolId) -> bool {
+        let symbol_flags = self.scoping.symbol_flags(symbol_id);
+        let reference = &mut self.scoping.references[reference_id];
+        let flags = reference.flags_mut();
+
+        // Determine whether the symbol can be referenced by this reference.
+        // For pure type references (not value or typeof) in qualified names,
+        // only resolve to namespaces (modules, namespaces, enums, imports).
+        // Type parameters and type aliases cannot have member access in type space.
+        // Value references (including typeof) can always have member access.
+        let can_resolve = if flags.is_namespace()
+            && !flags.is_value()
+            && !flags.is_value_as_type()
+            && !symbol_flags.can_be_referenced_as_namespace()
+        {
+            false
+        } else {
+            (flags.is_value() && symbol_flags.can_be_referenced_by_value())
+                || (flags.is_type() && symbol_flags.can_be_referenced_by_type())
+                || (flags.is_value_as_type() && symbol_flags.can_be_referenced_by_value_as_type())
+        };
+
+        if !can_resolve {
+            return false;
+        }
+
+        if symbol_flags.is_value() && flags.is_value() {
+            // The non type-only ExportSpecifier can reference both type/value symbols,
+            // if the symbol is a value symbol and reference flag is not type-only,
+            // remove the type flag. For example: `const B = 1; export { B };`
+            *flags -= ReferenceFlags::Type;
+        } else {
+            // 1. ReferenceFlags::ValueAsType -> ReferenceFlags::Type
+            // `const ident = 0; typeof ident`
+            //                          ^^^^^ -> The ident is a value symbols,
+            //                                   but it used as a type.
+            // 2. ReferenceFlags::Value | ReferenceFlags::Type -> ReferenceFlags::Type
+            // `type ident = string; export default ident;
+            //                                      ^^^^^ We have confirmed the symbol is
+            //                                            not a value symbol, so we need to
+            //                                            make sure the reference is a type only.
+            *flags = ReferenceFlags::Type;
+        }
+        reference.set_symbol_id(symbol_id);
+        self.scoping.add_resolved_reference(symbol_id, reference_id);
+        true
+    }
+
+    /// Early-resolve references collected since the checkpoint by walking up the
+    /// full scope chain. Used for function parameters and catch parameters where
+    /// references must be resolved before entering the function body, to avoid
+    /// binding to variables declared inside the body (which share the same scope).
+    ///
+    /// Resolved references are removed. Unresolved references stay in the flat
+    /// list for later resolution by `resolve_all_references` (which handles
+    /// forward references to declarations not yet visited).
     fn resolve_references_for_current_scope(&mut self) {
-        let (current_refs, parent_refs) = self.unresolved_references.current_and_parent_mut();
-
-        if current_refs.is_empty() {
+        let checkpoint = self.unresolved_references_checkpoint;
+        let refs = self.unresolved_references.slice_from(checkpoint).to_vec();
+        if refs.is_empty() {
             return;
         }
+        self.unresolved_references.truncate(checkpoint);
 
-        // Fast path: scope has no bindings — skip resolution, just merge to parent.
-        // Many scopes (if-blocks, try-blocks, loop bodies without `let`) have no bindings,
-        // so all unresolved references just bubble up unchanged.
-        if self.scoping.get_bindings(self.current_scope_id).is_empty() {
-            // Union by size: swap so we drain the smaller map into the larger one.
-            if current_refs.len() > parent_refs.len() {
-                mem::swap(current_refs, parent_refs);
-            }
-            for (name, references) in current_refs.drain() {
-                if let Some(parent_reference_ids) = parent_refs.get_mut(&name) {
-                    parent_reference_ids.extend(references);
-                } else {
-                    parent_refs.insert(name, references);
-                }
-            }
-            return;
-        }
-
-        for (name, mut references) in current_refs.drain() {
-            // Try to resolve a reference.
-            // If unresolved, transfer it to parent scope's unresolved references.
-            let bindings = self.scoping.get_bindings(self.current_scope_id);
-            if let Some(symbol_id) = bindings.get(&name).copied() {
-                let symbol_flags = self.scoping.symbol_flags(symbol_id);
-                references.retain(|reference_id| {
-                    let reference_id = *reference_id;
-                    let reference = &mut self.scoping.references[reference_id];
-
-                    let flags = reference.flags_mut();
-
-                    // Determine whether the symbol can be referenced by this reference.
-                    // For pure type references (not value or typeof) in qualified names,
-                    // only resolve to namespaces (modules, namespaces, enums, imports).
-                    // Type parameters and type aliases cannot have member access in type space.
-                    // Value references (including typeof) can always have member access.
-                    let resolved = if flags.is_namespace()
-                        && !flags.is_value()
-                        && !flags.is_value_as_type()
-                        && !symbol_flags.can_be_referenced_as_namespace()
-                    {
-                        false
-                    } else {
-                        (flags.is_value() && symbol_flags.can_be_referenced_by_value())
-                            || (flags.is_type() && symbol_flags.can_be_referenced_by_type())
-                            || (flags.is_value_as_type()
-                                && symbol_flags.can_be_referenced_by_value_as_type())
-                    };
-
-                    if !resolved {
-                        return true;
-                    }
-
-                    if symbol_flags.is_value() && flags.is_value() {
-                        // The non type-only ExportSpecifier can reference both type/value symbols,
-                        // if the symbol is a value symbol and reference flag is not type-only,
-                        // remove the type flag. For example: `const B = 1; export { B };`
-                        *flags -= ReferenceFlags::Type;
-                    } else {
-                        // 1. ReferenceFlags::ValueAsType -> ReferenceFlags::Type
-                        // `const ident = 0; typeof ident`
-                        //                          ^^^^^ -> The ident is a value symbols,
-                        //                                   but it used as a type.
-                        // 2. ReferenceFlags::Value | ReferenceFlags::Type -> ReferenceFlags::Type
-                        // `type ident = string; export default ident;
-                        //                                      ^^^^^ We have confirmed the symbol is
-                        //                                            not a value symbol, so we need to
-                        //                                            make sure the reference is a type only.
-                        *flags = ReferenceFlags::Type;
-                    }
-                    reference.set_symbol_id(symbol_id);
-                    self.scoping.add_resolved_reference(symbol_id, reference_id);
-
-                    false
-                });
-
-                if references.is_empty() {
-                    continue;
-                }
-            }
-
-            if let Some(parent_reference_ids) = parent_refs.get_mut(&name) {
-                parent_reference_ids.extend(references);
-            } else {
-                parent_refs.insert(name, references);
+        for (name, reference_id) in refs {
+            if !self.walk_up_resolve_reference(name, reference_id) {
+                // Keep in the flat list — may resolve later via forward declarations
+                self.unresolved_references.push(name, reference_id);
             }
         }
     }
@@ -623,14 +655,10 @@ impl<'a> Visit<'a> for SemanticBuilder<'a> {
         self.current_scope_id =
             self.scoping.add_scope(Some(parent_scope_id), self.current_node_id, flags);
         scope_id.set(Some(self.current_scope_id));
-
-        self.unresolved_references.increment_scope_depth();
     }
 
     // NB: Not called for `Program`
     fn leave_scope(&mut self) {
-        self.resolve_references_for_current_scope();
-
         // `get_parent_id` always returns `Some` because this method is not called for `Program`.
         // So we could `.unwrap()` here. But that seems to produce a small perf impact, probably because
         // `leave_scope` then doesn't get inlined because of its larger size due to the panic code.
@@ -643,8 +671,6 @@ impl<'a> Visit<'a> for SemanticBuilder<'a> {
             }
             self.current_scope_id = parent_id;
         }
-
-        self.unresolved_references.decrement_scope_depth();
     }
 
     // NB: Not called for `Program`.
@@ -717,11 +743,9 @@ impl<'a> Visit<'a> for SemanticBuilder<'a> {
         control_flow!(self, |cfg| cfg.release_error_harness(error_harness));
         /* cfg */
 
-        // Don't call `leave_scope` here as `Program` is a special case - scope has no `parent_id`.
-        // This simplifies `leave_scope`.
-        self.resolve_references_for_current_scope();
-        // NB: Don't call `self.unresolved_references.decrement_scope_depth()`
-        // as scope depth must remain >= 1.
+        // Resolve all remaining unresolved references by walking up the scope chain.
+        // This replaces the old bubble-up approach where references were merged on every scope exit.
+        self.resolve_all_references();
 
         self.leave_node(kind);
 
@@ -763,13 +787,14 @@ impl<'a> Visit<'a> for SemanticBuilder<'a> {
 
         self.visit_decorators(&class.decorators);
         self.enter_scope(ScopeFlags::StrictMode, &class.scope_id);
-        if let Some(id) = &class.id {
-            self.visit_binding_identifier(id);
-        }
 
         if class.is_expression() {
-            // We need to bind class expression in the class scope
+            // We need to bind class expressions in the class scope before visiting the identifier.
             class.bind(self);
+        }
+
+        if let Some(id) = &class.id {
+            self.visit_binding_identifier(id);
         }
 
         if let Some(type_parameters) = &class.type_parameters {
@@ -1848,6 +1873,10 @@ impl<'a> Visit<'a> for SemanticBuilder<'a> {
         ));
         /* cfg */
 
+        // Save checkpoint before visiting type params/params/return type
+        let saved_checkpoint = self.unresolved_references_checkpoint;
+        self.unresolved_references_checkpoint = self.unresolved_references.checkpoint();
+
         if let Some(type_parameters) = &func.type_parameters {
             self.visit_ts_type_parameter_declaration(type_parameters);
         }
@@ -1869,6 +1898,7 @@ impl<'a> Visit<'a> for SemanticBuilder<'a> {
             // In both cases, need to avoid binding to variables/types declared inside the function body.
             self.resolve_references_for_current_scope();
         }
+        self.unresolved_references_checkpoint = saved_checkpoint;
 
         if let Some(body) = &func.body {
             self.visit_function_body(body);
@@ -1928,6 +1958,10 @@ impl<'a> Visit<'a> for SemanticBuilder<'a> {
             &expr.scope_id,
         );
 
+        // Save checkpoint before visiting type params/params/return type
+        let saved_checkpoint = self.unresolved_references_checkpoint;
+        self.unresolved_references_checkpoint = self.unresolved_references.checkpoint();
+
         if let Some(parameters) = &expr.type_parameters {
             self.visit_ts_type_parameter_declaration(parameters);
         }
@@ -1956,6 +1990,7 @@ impl<'a> Visit<'a> for SemanticBuilder<'a> {
             // In both cases, need to avoid binding to variables/types declared inside the function body.
             self.resolve_references_for_current_scope();
         }
+        self.unresolved_references_checkpoint = saved_checkpoint;
 
         self.visit_function_body(&expr.body);
 
@@ -1995,7 +2030,15 @@ impl<'a> Visit<'a> for SemanticBuilder<'a> {
     fn visit_member_expression(&mut self, it: &MemberExpression<'a>) {
         // A.B = 1;
         // ^^^ Can't treat A as a Write reference since it's A's property(B) that changes.
-        self.current_reference_flags -= ReferenceFlags::Write;
+        // For write-only references (simple `=` assignment), mark as MemberWriteTarget
+        // so the minifier can identify property-write-only references.
+        // Compound assignments (`+=`) and update expressions (`++`) have Read|Write flags,
+        // so `is_write_only()` is false and they correctly skip this branch.
+        if self.current_reference_flags.is_write_only() {
+            self.current_reference_flags = ReferenceFlags::Read | ReferenceFlags::MemberWriteTarget;
+        } else {
+            self.current_reference_flags -= ReferenceFlags::Write;
+        }
 
         match it {
             MemberExpression::ComputedMemberExpression(it) => {
@@ -2004,6 +2047,12 @@ impl<'a> Visit<'a> for SemanticBuilder<'a> {
             MemberExpression::StaticMemberExpression(it) => self.visit_static_member_expression(it),
             MemberExpression::PrivateFieldExpression(it) => self.visit_private_field_expression(it),
         }
+
+        // Clear any unconsumed flags to prevent leaking to sibling AST nodes.
+        // When the object is `this` or a call expression (not an IdentifierReference),
+        // the flags set above aren't consumed by `resolve_reference_usages`,
+        // and would incorrectly propagate to the next visited identifier (e.g., the RHS).
+        self.current_reference_flags = ReferenceFlags::empty();
     }
 
     fn visit_simple_assignment_target(&mut self, it: &SimpleAssignmentTarget<'a>) {
@@ -2090,7 +2139,7 @@ impl<'a> Visit<'a> for SemanticBuilder<'a> {
                 } else {
                     // If the export specifier is not a explicit type export, we consider it as a potential
                     // type and value reference. If it references to a value in the end, we would delete the
-                    // `ReferenceFlags::Type` flag in `fn resolve_references_for_current_scope`.
+                    // `ReferenceFlags::Type` flag in `fn try_resolve_reference`.
                     self.current_reference_flags = ReferenceFlags::Read | ReferenceFlags::Type;
                 }
                 self.visit_export_specifier(specifier);
@@ -2135,12 +2184,17 @@ impl<'a> Visit<'a> for SemanticBuilder<'a> {
         let kind = AstKind::CatchParameter(self.alloc(param));
         self.enter_node(kind);
         param.bind(self);
+
+        let saved_checkpoint = self.unresolved_references_checkpoint;
+        self.unresolved_references_checkpoint = self.unresolved_references.checkpoint();
+
         self.visit_span(&param.span);
         self.visit_binding_pattern(&param.pattern);
         if let Some(type_annotation) = &param.type_annotation {
             self.visit_ts_type_annotation(type_annotation);
         }
         self.resolve_references_for_current_scope();
+        self.unresolved_references_checkpoint = saved_checkpoint;
         self.leave_node(kind);
     }
 
@@ -2350,6 +2404,10 @@ impl<'a> Visit<'a> for SemanticBuilder<'a> {
         self.visit_span(&decl.span);
         self.visit_binding_identifier(&decl.id);
         self.visit_ts_enum_body(&decl.body);
+        // Evaluate enum member values after all members are bound
+        if self.enum_eval {
+            crate::ts_enum::eval::evaluate_enum_members(decl, &mut self.scoping);
+        }
         self.leave_node(kind);
     }
 

@@ -32,6 +32,7 @@ import { settings, initSettings } from "./settings.ts";
 import visitorKeys from "../generated/keys.ts";
 import { debugAssertIsNonNull } from "../utils/asserts.ts";
 import { envs, globals, initGlobals } from "./globals.ts";
+import { version as packageVersion } from "../../package.json" with { type: "json" };
 
 import type { Globals, Envs } from "./globals.ts";
 import type { RuleDetails } from "./load.ts";
@@ -91,13 +92,12 @@ const PARSER = Object.freeze({
   /**
    * Parser name.
    */
-  name: "oxc",
+  name: "oxlint",
 
   /**
    * Parser version.
    */
-  // TODO: This can be statically defined, but need it be to be updated when we make a new release.
-  version: "0.0.0",
+  version: packageVersion,
 
   /**
    * Parse code into an AST.
@@ -474,10 +474,12 @@ export interface Context extends FileContext {
   /**
    * Rule ID, in form `<plugin>/<rule>`.
    */
+  // Note: This is `null` during `createOnce` call, but we keep the type simple to make it easier for the user.
   id: string;
   /**
    * Rule options for this rule on this file.
    */
+  // Note: This is `null` during `createOnce` call, but we keep the type simple to make it easier for the user.
   options: Readonly<Options>;
   /**
    * Report an error/warning.
@@ -490,7 +492,7 @@ export interface Context extends FileContext {
  * @param ruleDetails - `RuleDetails` object
  * @returns `Context` object
  */
-export function createContext(ruleDetails: RuleDetails): Readonly<Context> {
+export function createContext(ruleDetails: RuleDetails): Context {
   // Create `Context` object for rule.
   //
   // All properties are enumerable, to support a pattern which some ESLint plugins use:
@@ -508,76 +510,54 @@ export function createContext(ruleDetails: RuleDetails): Readonly<Context> {
   // }
   // ```
   //
-  // Object is frozen to prevent user mutating it.
+  // ESLint freezes the `Context` object, but we can't as we need to alter `id` and `options` properties.
+  // We get as close as we can by making `id` and `options` properties `writable: false`, and preventing user adding
+  // new properties with `Object.preventExtensions`.
   //
-  // IMPORTANT: Methods/getters must not use `this`, to support wrapped context objects
+  // `id` and `options` properties are `configurable` so we can alter them with `Object.defineProperty`.
+  // In any case, `Context` objects are specific to each rule, so if a rule does mutate the context object,
+  // that won't affect anyone other than themselves. Options objects are frozen, so user can't mutate them.
+  //
+  // IMPORTANT: `report` must not use `this`, to support wrapped context objects
   // or e.g. `const { report } = context; report(diagnostic);`.
   // https://github.com/oxc-project/oxc/issues/15325
-  return Object.freeze({
-    // Inherit from `FILE_CONTEXT`, which provides getters for file-specific properties
-    __proto__: FILE_CONTEXT,
-    // Rule ID, in form `<plugin>/<rule>`
-    get id(): string {
-      // It's not possible to allow access to `id` in `createOnce` in ESLint compatibility mode, so we don't
-      // allow it here either. It's probably not very useful anyway - a rule should know what its own name is!
-      if (filePath === null) throw new Error("Cannot access `context.id` in `createOnce`");
-      return ruleDetails.fullName;
-    },
-    // Getter for rule options for this rule on this file
-    get options(): Readonly<Options> {
-      if (filePath === null) throw new Error("Cannot access `context.options` in `createOnce`");
-      debugAssertIsNonNull(ruleDetails.options);
-      return ruleDetails.options;
-    },
-    /**
-     * Report error.
-     * @param diagnostic - Diagnostic object
-     * @throws {TypeError} If `diagnostic` is invalid
-     */
-    report(this: void, diagnostic: Diagnostic): void {
-      const normalizedDiagnostic = normalizeReportCallArgs(diagnostic, arguments);
-
-      // Delegate to `report` implementation shared between all rules, passing rule-specific details (`RuleDetails`)
-      report(normalizedDiagnostic, ruleDetails);
-    },
-  } as unknown as Context); // It seems TS can't understand `__proto__: FILE_CONTEXT`
-}
-
-/**
- * Normalize `context.report()` arguments.
- *
- * Supports both forms:
- * 1. New-style: `context.report({ ...descriptor })`
- * 2. Legacy: `context.report(node, message, data?, fix?)`
- *    or `context.report(node, loc, message, data?, fix?)`
- */
-function normalizeReportCallArgs(diagnostic: Diagnostic, args: IArguments): Diagnostic {
-  // New-style call already has a descriptor object.
-  if (args.length <= 1) return diagnostic;
-
-  // Legacy positional forms.
-  const node = diagnostic as unknown;
-  let loc: unknown = undefined,
-    message: unknown,
-    data: unknown = undefined,
-    fix: unknown = undefined;
-
-  if (typeof args[1] === "string") {
-    // [node, message, data, fix]
-    message = args[1];
-    data = args[2];
-    fix = args[3];
-  } else {
-    // [node, loc, message, data, fix]
-    loc = args[1];
-    message = args[2];
-    data = args[3];
-    fix = args[4];
-  }
-
-  const descriptor: Record<string, unknown> = { node, message };
-  if (loc !== undefined) descriptor.loc = loc;
-  if (data !== undefined) descriptor.data = data;
-  if (fix !== undefined) descriptor.fix = fix;
-  return descriptor as Diagnostic;
+  return Object.preventExtensions(
+    Object.create(FILE_CONTEXT, {
+      // Rule ID, in form `<plugin>/<rule>`.
+      // Initially `null` during `createOnce`, set to full rule name after `createOnce` is called.
+      id: {
+        value: null!,
+        enumerable: true,
+        configurable: true,
+      },
+      // Rule options for this rule on this file.
+      // Initially `null` during `createOnce`, set to options object before linting a file in `lintFileImpl`.
+      options: {
+        value: null!,
+        enumerable: true,
+        configurable: true,
+      },
+      report: {
+        /**
+         * Report error.
+         *
+         * Normally called with a single `Diagnostic` object.
+         *
+         * Can also be called with legacy positional forms:
+         * - `context.report(node, message, data?, fix?)`
+         * - `context.report(node, loc, message, data?, fix?)`
+         * These legacy forms are not included in type def for this method, as they are deprecated,
+         * but some plugins still use them, so we support them.
+         *
+         * @param diagnostic - Diagnostic object
+         * @throws {TypeError} If `diagnostic` is invalid
+         */
+        value(this: void, diagnostic: Diagnostic, ...extraArgs: unknown[]): void {
+          // Delegate to `report` implementation shared between all rules, passing rule-specific details (`RuleDetails`)
+          report(diagnostic, extraArgs, ruleDetails);
+        },
+        enumerable: true,
+      },
+    }),
+  );
 }

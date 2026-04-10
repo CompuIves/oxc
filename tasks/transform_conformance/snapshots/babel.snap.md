@@ -1,6 +1,6 @@
-commit: 92c052dc
+commit: 91b4ce32
 
-Passed: 695/1160
+Passed: 690/1165
 
 # All Passed:
 * babel-plugin-transform-logical-assignment-operators
@@ -9,7 +9,7 @@ Passed: 695/1160
 * babel-plugin-transform-react-display-name
 
 
-# babel-preset-env (30/82)
+# babel-preset-env (33/85)
 * dynamic-import/auto-esm-unsupported-import-unsupported/input.mjs
 x Output mismatch
 
@@ -966,65 +966,9 @@ rebuilt        : ["o"]
 x Output mismatch
 
 
-# babel-plugin-transform-object-rest-spread (27/40)
+# babel-plugin-transform-object-rest-spread (28/40)
 * object-rest/for-x/input.js
-Bindings mismatch:
-after transform: ScopeId(0): ["_excluded", "_excluded2", "_excluded3", "_ref", "a", "b"]
-rebuilt        : ScopeId(0): ["_excluded", "_excluded2", "_excluded3", "_ref", "_ref2", "_ref3", "a"]
-Bindings mismatch:
-after transform: ScopeId(2): []
-rebuilt        : ScopeId(2): ["a", "b"]
-Bindings mismatch:
-after transform: ScopeId(3): ["_ref2"]
-rebuilt        : ScopeId(3): []
-Bindings mismatch:
-after transform: ScopeId(4): ["_ref3"]
-rebuilt        : ScopeId(4): []
-Bindings mismatch:
-after transform: ScopeId(5): []
-rebuilt        : ScopeId(5): ["_ref4", "_ref5"]
-Bindings mismatch:
-after transform: ScopeId(6): ["_ref4"]
-rebuilt        : ScopeId(6): []
-Bindings mismatch:
-after transform: ScopeId(7): ["_ref5"]
-rebuilt        : ScopeId(7): []
-Symbol flags mismatch for "a":
-after transform: SymbolId(0): SymbolFlags(BlockScopedVariable)
-rebuilt        : SymbolId(8): SymbolFlags(Function)
-Symbol span mismatch for "a":
-after transform: SymbolId(0): Span { start: 27, end: 28 }
-rebuilt        : SymbolId(8): Span { start: 86, end: 87 }
-Symbol scope ID mismatch for "a":
-after transform: SymbolId(0): ScopeId(2)
-rebuilt        : SymbolId(8): ScopeId(0)
-Symbol redeclarations mismatch for "a":
-after transform: SymbolId(0): [Span { start: 27, end: 28 }, Span { start: 86, end: 87 }, Span { start: 189, end: 190 }, Span { start: 274, end: 275 }]
-rebuilt        : SymbolId(8): [Span { start: 86, end: 87 }, Span { start: 189, end: 190 }, Span { start: 274, end: 275 }]
-Symbol reference IDs mismatch for "b":
-after transform: SymbolId(1): [ReferenceId(1), ReferenceId(3)]
-rebuilt        : SymbolId(5): []
-Symbol scope ID mismatch for "_ref2":
-after transform: SymbolId(4): ScopeId(3)
-rebuilt        : SymbolId(6): ScopeId(0)
-Symbol scope ID mismatch for "_ref3":
-after transform: SymbolId(5): ScopeId(4)
-rebuilt        : SymbolId(7): ScopeId(0)
-Symbol scope ID mismatch for "_ref4":
-after transform: SymbolId(7): ScopeId(6)
-rebuilt        : SymbolId(9): ScopeId(5)
-Symbol scope ID mismatch for "_ref5":
-after transform: SymbolId(8): ScopeId(7)
-rebuilt        : SymbolId(10): ScopeId(5)
-Reference symbol mismatch for "b":
-after transform: SymbolId(1) "b"
-rebuilt        : <None>
-Reference symbol mismatch for "b":
-after transform: SymbolId(1) "b"
-rebuilt        : <None>
-Unresolved references mismatch:
-after transform: ["babelHelpers"]
-rebuilt        : ["b", "babelHelpers"]
+x Output mismatch
 
 * object-rest/for-x-array-pattern/input.js
 x Output mismatch
@@ -1036,21 +980,7 @@ x Output mismatch
 x Output mismatch
 
 * object-rest/for-x-completion-record/input.js
-Bindings mismatch:
-after transform: ScopeId(0): ["_excluded"]
-rebuilt        : ScopeId(0): ["_excluded", "_ref", "_ref2"]
-Bindings mismatch:
-after transform: ScopeId(1): ["_ref"]
-rebuilt        : ScopeId(1): []
-Bindings mismatch:
-after transform: ScopeId(2): ["_ref2"]
-rebuilt        : ScopeId(2): []
-Symbol scope ID mismatch for "_ref":
-after transform: SymbolId(0): ScopeId(1)
-rebuilt        : SymbolId(1): ScopeId(0)
-Symbol scope ID mismatch for "_ref2":
-after transform: SymbolId(1): ScopeId(2)
-rebuilt        : SymbolId(2): ScopeId(0)
+x Output mismatch
 
 * object-rest/for-x-declaration-shadowed-block-scoped-bindings/input.js
 x Output mismatch
@@ -1104,75 +1034,8 @@ rebuilt        : ["_ref3", "babelHelpers", "d"]
 * object-rest/object-ref-computed/input.js
 x Output mismatch
 
-* object-rest/parameters-object-rest-used-in-default/input.js
-Symbol reference IDs mismatch for "R":
-after transform: SymbolId(0): [ReferenceId(0)]
-rebuilt        : SymbolId(3): []
-Symbol reference IDs mismatch for "Y":
-after transform: SymbolId(2): [ReferenceId(1)]
-rebuilt        : SymbolId(6): []
-Symbol reference IDs mismatch for "R":
-after transform: SymbolId(6): [ReferenceId(2)]
-rebuilt        : SymbolId(10): []
-Symbol reference IDs mismatch for "R":
-after transform: SymbolId(7): [ReferenceId(3)]
-rebuilt        : SymbolId(16): []
-Symbol reference IDs mismatch for "R":
-after transform: SymbolId(13): [ReferenceId(6)]
-rebuilt        : SymbolId(20): []
-Symbol reference IDs mismatch for "R":
-after transform: SymbolId(15): [ReferenceId(7)]
-rebuilt        : SymbolId(23): []
-Reference symbol mismatch for "R":
-after transform: SymbolId(0) "R"
-rebuilt        : <None>
-Reference symbol mismatch for "Y":
-after transform: SymbolId(2) "Y"
-rebuilt        : <None>
-Reference symbol mismatch for "R":
-after transform: SymbolId(6) "R"
-rebuilt        : <None>
-Reference symbol mismatch for "R":
-after transform: SymbolId(7) "R"
-rebuilt        : <None>
-Reference symbol mismatch for "R":
-after transform: SymbolId(13) "R"
-rebuilt        : <None>
-Reference symbol mismatch for "R":
-after transform: SymbolId(15) "R"
-rebuilt        : <None>
-Unresolved references mismatch:
-after transform: ["b", "babelHelpers", "f", "q"]
-rebuilt        : ["R", "Y", "b", "babelHelpers", "f", "q"]
-
 * object-rest/symbol/input.js
-Bindings mismatch:
-after transform: ScopeId(0): ["_Symbol$for", "_Symbol$for2", "_Symbol$for3", "_ref", "_ref2", "_ref3", "foo", "rest"]
-rebuilt        : ScopeId(0): ["_Symbol$for", "_Symbol$for2", "_ref", "_ref2", "foo", "rest"]
-Reference symbol mismatch for "_ref3":
-after transform: SymbolId(6) "_ref3"
-rebuilt        : <None>
-Reference symbol mismatch for "_Symbol$for3":
-after transform: SymbolId(7) "_Symbol$for3"
-rebuilt        : <None>
-Reference symbol mismatch for "_ref3":
-after transform: SymbolId(6) "_ref3"
-rebuilt        : <None>
-Reference symbol mismatch for "_ref3":
-after transform: SymbolId(6) "_ref3"
-rebuilt        : <None>
-Reference symbol mismatch for "_Symbol$for3":
-after transform: SymbolId(7) "_Symbol$for3"
-rebuilt        : <None>
-Reference symbol mismatch for "_ref3":
-after transform: SymbolId(6) "_ref3"
-rebuilt        : <None>
-Unresolved references mismatch:
-after transform: ["Symbol", "babelHelpers"]
-rebuilt        : ["Symbol", "_Symbol$for3", "_ref3", "babelHelpers"]
-Unresolved reference IDs mismatch for "Symbol":
-after transform: [ReferenceId(0), ReferenceId(1), ReferenceId(4)]
-rebuilt        : [ReferenceId(0), ReferenceId(7)]
+x Output mismatch
 
 * regression/gh-17274/input.js
 x Output mismatch
@@ -2564,7 +2427,16 @@ after transform: ["T", "f"]
 rebuilt        : ["f"]
 
 
-# babel-preset-react (6/9)
+# babel-preset-react (4/10)
+* preset-options/development/input.js
+react: unknown field `developmentSourceSelf`, expected one of `runtime`, `development`, `throwIfNamespace`, `pure`, `importSource`, `pragma`, `pragmaFrag`, `useBuiltIns`, `useSpread`, `refresh`
+
+* preset-options/development-no-source-self/input.js
+x Output mismatch
+
+* preset-options/development-runtime-automatic/input.js
+react: unknown field `developmentSourceSelf`, expected one of `runtime`, `development`, `throwIfNamespace`, `pure`, `importSource`, `pragma`, `pragmaFrag`, `useBuiltIns`, `useSpread`, `refresh`
+
 * preset-options/pure/input.js
 x Output mismatch
 
@@ -2668,8 +2540,32 @@ transform-react-jsx: unknown field `autoImport`, expected one of `runtime`, `dev
 
 
 
-# babel-plugin-transform-react-jsx-development (7/8)
-* cross-platform/within-ts-module-block/input.ts
+# babel-plugin-transform-react-jsx-development (0/9)
+* cross-platform/auto-import-dev/input.js
+transform-react-jsx-development: unknown field `sourceSelf`, expected one of `runtime`, `development`, `throwIfNamespace`, `pure`, `importSource`, `pragma`, `pragmaFrag`, `useBuiltIns`, `useSpread`, `refresh`
+
+* cross-platform/classic-runtime/input.js
+transform-react-jsx-development: unknown field `sourceSelf`, expected one of `runtime`, `development`, `throwIfNamespace`, `pure`, `importSource`, `pragma`, `pragmaFrag`, `useBuiltIns`, `useSpread`, `refresh`
+
+* cross-platform/fragments/input.js
+transform-react-jsx-development: unknown field `sourceSelf`, expected one of `runtime`, `development`, `throwIfNamespace`, `pure`, `importSource`, `pragma`, `pragmaFrag`, `useBuiltIns`, `useSpread`, `refresh`
+
+* cross-platform/handle-fragments-with-key/input.js
+transform-react-jsx-development: unknown field `sourceSelf`, expected one of `runtime`, `development`, `throwIfNamespace`, `pure`, `importSource`, `pragma`, `pragmaFrag`, `useBuiltIns`, `useSpread`, `refresh`
+
+* cross-platform/handle-nonstatic-children/input.js
+transform-react-jsx-development: unknown field `sourceSelf`, expected one of `runtime`, `development`, `throwIfNamespace`, `pure`, `importSource`, `pragma`, `pragmaFrag`, `useBuiltIns`, `useSpread`, `refresh`
+
+* cross-platform/handle-static-children/input.js
+transform-react-jsx-development: unknown field `sourceSelf`, expected one of `runtime`, `development`, `throwIfNamespace`, `pure`, `importSource`, `pragma`, `pragmaFrag`, `useBuiltIns`, `useSpread`, `refresh`
+
+* cross-platform/no-source-self/input.js
 x Output mismatch
+
+* cross-platform/within-derived-classes-constructor/input.js
+transform-react-jsx-development: unknown field `sourceSelf`, expected one of `runtime`, `development`, `throwIfNamespace`, `pure`, `importSource`, `pragma`, `pragmaFrag`, `useBuiltIns`, `useSpread`, `refresh`
+
+* cross-platform/within-ts-module-block/input.ts
+transform-react-jsx-development: unknown field `sourceSelf`, expected one of `runtime`, `development`, `throwIfNamespace`, `pure`, `importSource`, `pragma`, `pragmaFrag`, `useBuiltIns`, `useSpread`, `refresh`
 
 

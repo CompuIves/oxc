@@ -114,28 +114,28 @@ fn test() {
     use crate::tester::Tester;
 
     let pass = vec![
-        r"new foo.forEach(element => bar())",
-        r"forEach(element => bar())",
-        r"foo.notForEach(element => bar())",
-        r"React.Children.forEach(children, (child) => {});",
-        r"Children.forEach(children, (child) => {});",
+        "new foo.forEach(element => bar())",
+        "forEach(element => bar())",
+        "foo.notForEach(element => bar())",
+        "React.Children.forEach(children, (child) => {});",
+        "Children.forEach(children, (child) => {});",
         r#"import { Effect } from "effect"; Effect.forEach([], () => {})"#,
         r#"import { Effect as E } from "effect"; E.forEach([], () => {})"#,
     ];
 
     let fail = vec![
-        r"foo.forEach?.(element => bar(element))",
-        r"1?.forEach((a, b) => call(a, b))",
-        r"array.forEach((arrayInArray) => arrayInArray.forEach(element => bar(element)));",
-        r"array.forEach((arrayInArray) => arrayInArray?.forEach(element => bar(element)));",
-        r"array.forEach((element, index = element) => {})",
-        r"array.forEach(({foo}, index = foo) => {})",
-        r"array.forEach((element, {bar = element}) => {})",
-        r"array.forEach(({foo}, {bar = foo}) => {})",
-        r"foo.forEach(function(element, element1) {})",
-        r"foo.forEach(function element(element, element1) {})",
-        r"this._listeners.forEach((listener: () => void) => listener());",
-        r"return foo.forEach(element => {bar(element)});",
+        "foo.forEach?.(element => bar(element))",
+        "1?.forEach((a, b) => call(a, b))",
+        "array.forEach((arrayInArray) => arrayInArray.forEach(element => bar(element)));",
+        "array.forEach((arrayInArray) => arrayInArray?.forEach(element => bar(element)));",
+        "array.forEach((element, index = element) => {})",
+        "array.forEach(({foo}, index = foo) => {})",
+        "array.forEach((element, {bar = element}) => {})",
+        "array.forEach(({foo}, {bar = foo}) => {})",
+        "foo.forEach(function(element, element1) {})",
+        "foo.forEach(function element(element, element1) {})",
+        "this._listeners.forEach((listener: () => void) => listener());",
+        "return foo.forEach(element => {bar(element)});",
     ];
 
     // TODO: Implement a fixer.
@@ -150,7 +150,6 @@ fn test() {
                 delete element;
                 console.log(element)
             }",
-            None::<()>,
         ),
         (
             "staticPages.forEach((pg) => allStaticPages.add(pg))
@@ -161,21 +160,18 @@ fn test() {
             pageInfos.forEach((info: PageInfo, key: string) => {
                 allPageInfos.set(key, info)
             })",
-            None,
         ),
         (
             "const cloakVals: string[] = [];
             elements.forEach(element => cloakVals.push(cloakElement(element)));",
             "const cloakVals: string[] = [];
             for (const element of elements) cloakVals.push(cloakElement(element));",
-            None,
         ),
         (
             "while (true) return;
             foo.forEach(element => bar(element));",
             "while (true) return;
             for (const element of foo) bar(element);",
-            None,
         ),
         (
             "foo.forEach(_ => {
@@ -184,7 +180,6 @@ fn test() {
             "for (const _ of foo) {
                 with (a)  { ({}); continue; }
             }",
-            None,
         ),
     ];
 

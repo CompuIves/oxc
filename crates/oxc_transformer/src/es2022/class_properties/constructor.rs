@@ -106,7 +106,8 @@ use rustc_hash::FxHashMap;
 
 use oxc_ast::{NONE, ast::*};
 use oxc_ast_visit::{VisitMut, walk_mut};
-use oxc_span::{Ident, SPAN};
+use oxc_span::SPAN;
+use oxc_str::Ident;
 use oxc_syntax::{
     node::NodeId,
     scope::{ScopeFlags, ScopeId},
@@ -405,7 +406,7 @@ impl<'a> ClassProperties<'a> {
         let init = if self.current_class().is_declaration {
             Some(super_func)
         } else {
-            let assignment = create_assignment(super_binding, super_func, ctx);
+            let assignment = create_assignment(super_binding, super_func, SPAN, ctx);
             // TODO: Why does this end up before class, not after?
             // TODO: This isn't right. Should not be adding to `insert_after_exprs` in entry phase.
             self.insert_after_exprs.push(assignment);
@@ -582,7 +583,7 @@ impl<'a> ConstructorParamsSuperReplacer<'a, '_> {
             Expression::from(ctx.ast.member_expression_static(
                 SPAN,
                 super_binding.create_read_expression(ctx),
-                ctx.ast.identifier_name(SPAN, Atom::from("call")),
+                ctx.ast.identifier_name(SPAN, Str::from("call")),
                 false,
             )),
             NONE,

@@ -320,6 +320,14 @@ source: crates/oxc_linter/src/tester.rs
   help: This `if` has no `else` branch, so the callback may reach the end without a `return`. Add an `else`, or add a final `return`/`throw` after the `if`.
         Return a value on each path (or enable `allowImplicit` to allow `return;`).
 
+  ⚠ eslint(array-callback-return): Callback for array method "Array.prototype.map" does not return on all code paths
+   ╭─[array_callback_return.tsx:1:15]
+ 1 │ foo.map(() => { while (true) { if (a) break; return 1; } })
+   ·               ────────────────────────────────────────────
+   ╰────
+  help: "Array.prototype.map" uses the callback's return value. Add a `return` on every possible code path.
+        Return a value on each path (or enable `allowImplicit` to allow `return;`).
+
   ⚠ eslint(array-callback-return): Callback for array method "Array.prototype.every" does not return on all code paths
    ╭─[array_callback_return.tsx:1:22]
  1 │ foo.every(function() { switch (a) { case 0: break; default: return true; } })
@@ -581,6 +589,87 @@ source: crates/oxc_linter/src/tester.rs
 
   ⚠ eslint(array-callback-return): Unexpected return value in callback for "Array.prototype.forEach"
    ╭─[array_callback_return.tsx:1:5]
+ 1 │ foo.forEach(x => !x)
+   ·     ───┬───      ─┬
+   ·        │          ╰── This returned value is ignored.
+   ·        ╰── "Array.prototype.forEach" is called here.
+   ╰────
+  help: "Array.prototype.forEach" ignores the callback's return value. Remove the returned value (use `return;` or no `return`), or use `map`/`flatMap` if you meant to produce a new array.
+
+  ⚠ eslint(array-callback-return): Unexpected return value in callback for "Array.prototype.forEach"
+   ╭─[array_callback_return.tsx:1:5]
+ 1 │ foo.forEach(x => (x))
+   ·     ───┬───      ─┬─
+   ·        │          ╰── This returned value is ignored.
+   ·        ╰── "Array.prototype.forEach" is called here.
+   ╰────
+  help: "Array.prototype.forEach" ignores the callback's return value. Remove the returned value (use `return;` or no `return`), or use `map`/`flatMap` if you meant to produce a new array.
+
+  ⚠ eslint(array-callback-return): Unexpected return value in callback for "Array.prototype.forEach"
+   ╭─[array_callback_return.tsx:1:5]
+ 1 │ foo.forEach((x) => { return x; })
+   ·     ───┬───                 ┬
+   ·        │                    ╰── This returned value is ignored.
+   ·        ╰── "Array.prototype.forEach" is called here.
+   ╰────
+  help: "Array.prototype.forEach" ignores the callback's return value. Remove the returned value (use `return;` or no `return`), or use `map`/`flatMap` if you meant to produce a new array.
+
+  ⚠ eslint(array-callback-return): Unexpected return value in callback for "Array.prototype.forEach"
+   ╭─[array_callback_return.tsx:1:5]
+ 1 │ foo.forEach((x) => { return !x; })
+   ·     ───┬───                 ─┬
+   ·        │                     ╰── This returned value is ignored.
+   ·        ╰── "Array.prototype.forEach" is called here.
+   ╰────
+  help: "Array.prototype.forEach" ignores the callback's return value. Remove the returned value (use `return;` or no `return`), or use `map`/`flatMap` if you meant to produce a new array.
+
+  ⚠ eslint(array-callback-return): Unexpected return value in callback for "Array.prototype.forEach"
+   ╭─[array_callback_return.tsx:1:5]
+ 1 │ foo.forEach((x) => { return(x); })
+   ·     ───┬───                ─┬─
+   ·        │                    ╰── This returned value is ignored.
+   ·        ╰── "Array.prototype.forEach" is called here.
+   ╰────
+  help: "Array.prototype.forEach" ignores the callback's return value. Remove the returned value (use `return;` or no `return`), or use `map`/`flatMap` if you meant to produce a new array.
+
+  ⚠ eslint(array-callback-return): Unexpected return value in callback for "Array.prototype.forEach"
+   ╭─[array_callback_return.tsx:1:5]
+ 1 │ foo.forEach((x) => { return (x + 1); })
+   ·     ───┬───                 ───┬───
+   ·        │                       ╰── This returned value is ignored.
+   ·        ╰── "Array.prototype.forEach" is called here.
+   ╰────
+  help: "Array.prototype.forEach" ignores the callback's return value. Remove the returned value (use `return;` or no `return`), or use `map`/`flatMap` if you meant to produce a new array.
+
+  ⚠ eslint(array-callback-return): Unexpected return value in callback for "Array.prototype.forEach"
+   ╭─[array_callback_return.tsx:1:5]
+ 1 │ foo.forEach((x) => { if (a === b) { return x; } })
+   ·     ───┬───                                ┬
+   ·        │                                   ╰── This returned value is ignored.
+   ·        ╰── "Array.prototype.forEach" is called here.
+   ╰────
+  help: "Array.prototype.forEach" ignores the callback's return value. Remove the returned value (use `return;` or no `return`), or use `map`/`flatMap` if you meant to produce a new array.
+
+  ⚠ eslint(array-callback-return): Unexpected return value in callback for "Array.prototype.forEach"
+   ╭─[array_callback_return.tsx:1:5]
+ 1 │ foo.forEach((x) => { if (a === b) { return !x; } })
+   ·     ───┬───                                ─┬
+   ·        │                                    ╰── This returned value is ignored.
+   ·        ╰── "Array.prototype.forEach" is called here.
+   ╰────
+  help: "Array.prototype.forEach" ignores the callback's return value. Remove the returned value (use `return;` or no `return`), or use `map`/`flatMap` if you meant to produce a new array.
+
+  ⚠ eslint(array-callback-return): Unexpected return value in callback for "Array.prototype.forEach"
+   ╭─[array_callback_return.tsx:1:5]
+ 1 │ foo.forEach((x) => { if (a === b) { return (x + a); } })
+   ·     ───┬───                                ───┬───
+   ·        │                                      ╰── This returned value is ignored.
+   ·        ╰── "Array.prototype.forEach" is called here.
+   ╰────
+  help: "Array.prototype.forEach" ignores the callback's return value. Remove the returned value (use `return;` or no `return`), or use `map`/`flatMap` if you meant to produce a new array.
+
+  ⚠ eslint(array-callback-return): Unexpected return value in callback for "Array.prototype.forEach"
+   ╭─[array_callback_return.tsx:1:5]
  1 │ foo.forEach(function(x) { if (a == b) {return x;}})
    ·     ───┬───                                   ┬
    ·        │                                      ╰── This returned value is ignored.
@@ -656,15 +745,6 @@ source: crates/oxc_linter/src/tester.rs
  1 │ foo.forEach(function(x) { if (a == b) {return undefined;}})
    ·     ───┬───                                   ────┬────
    ·        │                                          ╰── This returned value is ignored.
-   ·        ╰── "Array.prototype.forEach" is called here.
-   ╰────
-  help: "Array.prototype.forEach" ignores the callback's return value. Remove the returned value (use `return;` or no `return`), or use `map`/`flatMap` if you meant to produce a new array.
-
-  ⚠ eslint(array-callback-return): Unexpected return value in callback for "Array.prototype.forEach"
-   ╭─[array_callback_return.tsx:1:5]
- 1 │ foo.forEach(function bar(x) { return x;})
-   ·     ───┬───                          ┬
-   ·        │                             ╰── This returned value is ignored.
    ·        ╰── "Array.prototype.forEach" is called here.
    ╰────
   help: "Array.prototype.forEach" ignores the callback's return value. Remove the returned value (use `return;` or no `return`), or use `map`/`flatMap` if you meant to produce a new array.
@@ -824,6 +904,51 @@ source: crates/oxc_linter/src/tester.rs
    ╰────
   help: "Array.prototype.forEach" ignores the callback's return value. Remove the returned value (use `return;` or no `return`), or use `map`/`flatMap` if you meant to produce a new array.
 
+  ⚠ eslint(array-callback-return): Unexpected return value in callback for "Array.prototype.forEach"
+   ╭─[array_callback_return.tsx:1:5]
+ 1 │ foo.forEach(x => (x))
+   ·     ───┬───      ─┬─
+   ·        │          ╰── This returned value is ignored.
+   ·        ╰── "Array.prototype.forEach" is called here.
+   ╰────
+  help: "Array.prototype.forEach" ignores the callback's return value. Remove the returned value (use `return;` or no `return`), or use `map`/`flatMap` if you meant to produce a new array.
+
+  ⚠ eslint(array-callback-return): Unexpected return value in callback for "Array.prototype.forEach"
+   ╭─[array_callback_return.tsx:1:5]
+ 1 │ foo.forEach((x) => void x)
+   ·     ───┬───        ───┬──
+   ·        │              ╰── This returned value is ignored.
+   ·        ╰── "Array.prototype.forEach" is called here.
+   ╰────
+  help: "Array.prototype.forEach" ignores the callback's return value. Remove the returned value (use `return;` or no `return`), or use `map`/`flatMap` if you meant to produce a new array.
+
+  ⚠ eslint(array-callback-return): Unexpected return value in callback for "Array.prototype.forEach"
+   ╭─[array_callback_return.tsx:1:5]
+ 1 │ foo.forEach((x) => void bar(x))
+   ·     ───┬───        ─────┬─────
+   ·        │                ╰── This returned value is ignored.
+   ·        ╰── "Array.prototype.forEach" is called here.
+   ╰────
+  help: "Array.prototype.forEach" ignores the callback's return value. Remove the returned value (use `return;` or no `return`), or use `map`/`flatMap` if you meant to produce a new array.
+
+  ⚠ eslint(array-callback-return): Unexpected return value in callback for "Array.prototype.forEach"
+   ╭─[array_callback_return.tsx:1:5]
+ 1 │ foo.forEach((x) => { return void bar(x); })
+   ·     ───┬───                 ─────┬─────
+   ·        │                         ╰── This returned value is ignored.
+   ·        ╰── "Array.prototype.forEach" is called here.
+   ╰────
+  help: "Array.prototype.forEach" ignores the callback's return value. Remove the returned value (use `return;` or no `return`), or use `map`/`flatMap` if you meant to produce a new array.
+
+  ⚠ eslint(array-callback-return): Unexpected return value in callback for "Array.prototype.forEach"
+   ╭─[array_callback_return.tsx:1:5]
+ 1 │ foo.forEach((x) => { if (a === b) { return void a; } bar(x) })
+   ·     ───┬───                                ───┬──
+   ·        │                                      ╰── This returned value is ignored.
+   ·        ╰── "Array.prototype.forEach" is called here.
+   ╰────
+  help: "Array.prototype.forEach" ignores the callback's return value. Remove the returned value (use `return;` or no `return`), or use `map`/`flatMap` if you meant to produce a new array.
+
   ⚠ eslint(array-callback-return): Callback for array method "Array.prototype.filter" does not return on all code paths
    ╭─[array_callback_return.tsx:1:22]
  1 │ foo.filter(function(){})
@@ -910,6 +1035,14 @@ source: crates/oxc_linter/src/tester.rs
    ╰────
   help: "Array.prototype.forEach" ignores the callback's return value. Remove the returned value (use `return;` or no `return`), or use `map`/`flatMap` if you meant to produce a new array.
 
+  × Invalid Unicode escape sequence
+   ╭─[array_callback_return.tsx:2:29]
+ 1 │ Array.fromAsync(x,
+ 2 │             async   function \\u0066oo // bar
+   ·                               ─
+ 3 │                () {})
+   ╰────
+
   ⚠ eslint(array-callback-return): Callback for array method "Array.prototype.filter" does not return on all code paths
    ╭─[array_callback_return.tsx:1:19]
  1 │ foo?.filter(() => { console.log('hello') })
@@ -949,3 +1082,141 @@ source: crates/oxc_linter/src/tester.rs
    ╰────
   help: "Array.prototype.filter" uses the callback's return value. Add a `return` on every possible code path.
         Return a value on each path (or enable `allowImplicit` to allow `return;`).
+
+  ⚠ eslint(array-callback-return): Callback for array method "Array.fromAsync" does not return on all code paths
+   ╭─[array_callback_return.tsx:1:31]
+ 1 │ Array.fromAsync(x, function() {})
+   ·                               ──
+   ╰────
+  help: "Array.fromAsync" uses the callback's return value. Add a `return` on every possible code path.
+        Return a value on each path (or enable `allowImplicit` to allow `return;`).
+
+  ⚠ eslint(array-callback-return): Callback for array method "Array.fromAsync" does not return on all code paths
+   ╭─[array_callback_return.tsx:1:31]
+ 1 │ Array.fromAsync(x, function() {})
+   ·                               ──
+   ╰────
+  help: "Array.fromAsync" uses the callback's return value. Add a `return` on every possible code path.
+  note: With `allowImplicit`, callbacks that don't explicitly return a value are considered to return `undefined`.
+
+  ⚠ eslint(array-callback-return): Callback for array method "Array.fromAsync" does not return on all code paths
+   ╭─[array_callback_return.tsx:1:26]
+ 1 │ Array.fromAsync(x, () => {})
+   ·                          ──
+   ╰────
+  help: "Array.fromAsync" uses the callback's return value. Add a `return` on every possible code path.
+        Return a value on each path (or enable `allowImplicit` to allow `return;`).
+
+  ⚠ eslint(array-callback-return): Callback for array method "Array.fromAsync" does not return on all code paths
+   ╭─[array_callback_return.tsx:1:35]
+ 1 │ Array.fromAsync(x, function foo() {})
+   ·                                   ──
+   ╰────
+  help: "Array.fromAsync" uses the callback's return value. Add a `return` on every possible code path.
+        Return a value on each path (or enable `allowImplicit` to allow `return;`).
+
+  ⚠ eslint(array-callback-return): Callback for array method "Array.fromAsync" does not return on all code paths
+   ╭─[array_callback_return.tsx:1:37]
+ 1 │ Array.fromAsync(x, async function() {})
+   ·                                     ──
+   ╰────
+  help: "Array.fromAsync" uses the callback's return value. Add a `return` on every possible code path.
+        Return a value on each path (or enable `allowImplicit` to allow `return;`).
+
+  ⚠ eslint(array-callback-return): Callback for array method "Array.fromAsync" does not return on all code paths
+   ╭─[array_callback_return.tsx:1:32]
+ 1 │ Array.fromAsync(x, async () => {})
+   ·                                ──
+   ╰────
+  help: "Array.fromAsync" uses the callback's return value. Add a `return` on every possible code path.
+        Return a value on each path (or enable `allowImplicit` to allow `return;`).
+
+  ⚠ eslint(array-callback-return): Unexpected return value in callback for "Array.prototype.forEach"
+   ╭─[array_callback_return.tsx:1:5]
+ 1 │ foo.forEach(x => x);
+   ·     ───┬───      ┬
+   ·        │         ╰── Prepend `void` to the expression.
+   ·        ╰── "Array.prototype.forEach" is called here.
+   ╰────
+  help: Expected the return expression to be started with `void`
+
+  ⚠ eslint(array-callback-return): Unexpected return value in callback for "Array.prototype.forEach"
+   ╭─[array_callback_return.tsx:1:5]
+ 1 │ foo.forEach(x => !x);
+   ·     ───┬───      ─┬
+   ·        │          ╰── Prepend `void` to the expression.
+   ·        ╰── "Array.prototype.forEach" is called here.
+   ╰────
+  help: Expected the return expression to be started with `void`
+
+  ⚠ eslint(array-callback-return): Unexpected return value in callback for "Array.prototype.forEach"
+   ╭─[array_callback_return.tsx:1:5]
+ 1 │ foo.forEach(x => (x));
+   ·     ───┬───      ─┬─
+   ·        │          ╰── Prepend `void` to the expression.
+   ·        ╰── "Array.prototype.forEach" is called here.
+   ╰────
+  help: Expected the return expression to be started with `void`
+
+  ⚠ eslint(array-callback-return): Unexpected return value in callback for "Array.prototype.forEach"
+   ╭─[array_callback_return.tsx:1:5]
+ 1 │ foo.forEach(x => { return x; });
+   ·     ───┬───               ┬
+   ·        │                  ╰── Prepend `void` to the expression.
+   ·        ╰── "Array.prototype.forEach" is called here.
+   ╰────
+  help: Expected the return expression to be started with `void`
+
+  ⚠ eslint(array-callback-return): Unexpected return value in callback for "Array.prototype.forEach"
+   ╭─[array_callback_return.tsx:1:5]
+ 1 │ foo.forEach(x => { return !x; });
+   ·     ───┬───               ─┬
+   ·        │                   ╰── Prepend `void` to the expression.
+   ·        ╰── "Array.prototype.forEach" is called here.
+   ╰────
+  help: Expected the return expression to be started with `void`
+
+  ⚠ eslint(array-callback-return): Unexpected return value in callback for "Array.prototype.forEach"
+   ╭─[array_callback_return.tsx:1:5]
+ 1 │ foo.forEach(x => { return (x); });
+   ·     ───┬───               ─┬─
+   ·        │                   ╰── Prepend `void` to the expression.
+   ·        ╰── "Array.prototype.forEach" is called here.
+   ╰────
+  help: Expected the return expression to be started with `void`
+
+  ⚠ eslint(array-callback-return): Unexpected return value in callback for "Array.prototype.forEach"
+   ╭─[array_callback_return.tsx:1:5]
+ 1 │ foo.forEach(x => { return x + 1; });
+   ·     ───┬───               ──┬──
+   ·        │                    ╰── Prepend `void` to the expression.
+   ·        ╰── "Array.prototype.forEach" is called here.
+   ╰────
+  help: Expected the return expression to be started with `void`
+
+  ⚠ eslint(array-callback-return): Unexpected return value in callback for "Array.prototype.forEach"
+   ╭─[array_callback_return.tsx:1:5]
+ 1 │ foo.forEach(x => { if (a === b) { return x; } });
+   ·     ───┬───                              ┬
+   ·        │                                 ╰── Prepend `void` to the expression.
+   ·        ╰── "Array.prototype.forEach" is called here.
+   ╰────
+  help: Expected the return expression to be started with `void`
+
+  ⚠ eslint(array-callback-return): Unexpected return value in callback for "Array.prototype.forEach"
+   ╭─[array_callback_return.tsx:1:5]
+ 1 │ foo.forEach(x => { if (a === b) { return !x; } });
+   ·     ───┬───                              ─┬
+   ·        │                                  ╰── Prepend `void` to the expression.
+   ·        ╰── "Array.prototype.forEach" is called here.
+   ╰────
+  help: Expected the return expression to be started with `void`
+
+  ⚠ eslint(array-callback-return): Unexpected return value in callback for "Array.prototype.forEach"
+   ╭─[array_callback_return.tsx:1:5]
+ 1 │ foo.forEach(x => { if (a === b) { return (x + a); } });
+   ·     ───┬───                              ───┬───
+   ·        │                                    ╰── Prepend `void` to the expression.
+   ·        ╰── "Array.prototype.forEach" is called here.
+   ╰────
+  help: Expected the return expression to be started with `void`

@@ -10,12 +10,8 @@ use oxc_ecmascript::{
     },
 };
 use oxc_semantic::{IsGlobalReference, SymbolId};
-use oxc_span::format_atom;
-use oxc_syntax::{
-    identifier::{is_identifier_part, is_identifier_start},
-    reference::ReferenceId,
-    scope::ScopeFlags,
-};
+use oxc_str::format_str;
+use oxc_syntax::{reference::ReferenceId, scope::ScopeFlags};
 
 use crate::{
     generated::ancestor::Ancestor, options::CompressOptions, state::MinifierState,
@@ -90,6 +86,10 @@ impl<'a> MayHaveSideEffectsContext<'a> for TraverseCtx<'a, MinifierState<'a>> {
         self.state.options.treeshake.property_read_side_effects
     }
 
+    fn property_write_side_effects(&self) -> bool {
+        self.state.options.treeshake.property_write_side_effects
+    }
+
     fn unknown_global_side_effects(&self) -> bool {
         self.state.options.treeshake.unknown_global_side_effects
     }
@@ -108,6 +108,10 @@ impl<'a> MayHaveSideEffectsContext<'a> for &TraverseCtx<'a, MinifierState<'a>> {
         (*self).property_read_side_effects()
     }
 
+    fn property_write_side_effects(&self) -> bool {
+        (*self).property_write_side_effects()
+    }
+
     fn unknown_global_side_effects(&self) -> bool {
         (*self).unknown_global_side_effects()
     }
@@ -124,6 +128,10 @@ impl<'a> MayHaveSideEffectsContext<'a> for &mut TraverseCtx<'a, MinifierState<'a
 
     fn property_read_side_effects(&self) -> PropertyReadSideEffects {
         (**self).property_read_side_effects()
+    }
+
+    fn property_write_side_effects(&self) -> bool {
+        (**self).property_write_side_effects()
     }
 
     fn unknown_global_side_effects(&self) -> bool {
@@ -194,11 +202,11 @@ impl<'a> TraverseCtx<'a, MinifierState<'a>> {
                 self.ast.expression_numeric_literal(span, n, None, number_base)
             }
             ConstantValue::BigInt(bigint) => {
-                let value = format_atom!(self.ast.allocator, "{bigint}");
+                let value = format_str!(self.ast.allocator, "{bigint}");
                 self.ast.expression_big_int_literal(span, value, None, BigintBase::Decimal)
             }
             ConstantValue::String(s) => {
-                self.ast.expression_string_literal(span, self.ast.atom_from_cow(&s), None)
+                self.ast.expression_string_literal(span, self.ast.str_from_cow(&s), None)
             }
             ConstantValue::Boolean(b) => self.ast.expression_boolean_literal(span, b),
             ConstantValue::Undefined => self.ast.void_0(span),
@@ -224,7 +232,12 @@ impl<'a> TraverseCtx<'a, MinifierState<'a>> {
         false
     }
 
-    pub fn init_value(&mut self, symbol_id: SymbolId, constant: Option<ConstantValue<'a>>) {
+    pub fn init_value(
+        &mut self,
+        symbol_id: SymbolId,
+        constant: Option<ConstantValue<'a>>,
+        is_fresh_value: bool,
+    ) {
         let mut exported = false;
         if self.scoping.current_scope_id() == self.scoping().root_scope_id() {
             for ancestor in self.ancestors() {
@@ -239,12 +252,16 @@ impl<'a> TraverseCtx<'a, MinifierState<'a>> {
 
         let mut read_references_count = 0;
         let mut write_references_count = 0;
+        let mut member_write_target_read_count = 0;
         for r in self.scoping().get_resolved_references(symbol_id) {
             if r.is_read() {
                 read_references_count += 1;
             }
             if r.is_write() {
                 write_references_count += 1;
+            }
+            if r.flags().is_member_write_target() {
+                member_write_target_read_count += 1;
             }
         }
 
@@ -259,6 +276,8 @@ impl<'a> TraverseCtx<'a, MinifierState<'a>> {
             exported,
             read_references_count,
             write_references_count,
+            member_write_target_read_count,
+            is_fresh_value,
             scope_id,
         };
         self.state.symbol_values.init_value(symbol_id, symbol_value);
@@ -298,16 +317,6 @@ impl<'a> TraverseCtx<'a, MinifierState<'a>> {
             })?;
         }
         Some(f64::from(int_value))
-    }
-
-    /// `is_identifier_name` patched with KATAKANA MIDDLE DOT and HALFWIDTH KATAKANA MIDDLE DOT
-    /// Otherwise `({ 'x・': 0 })` gets converted to `({ x・: 0 })`, which breaks in Unicode 4.1 to
-    /// 15.
-    /// <https://github.com/oxc-project/unicode-id-start/pull/3>
-    pub fn is_identifier_name_patched(s: &str) -> bool {
-        let mut chars = s.chars();
-        chars.next().is_some_and(is_identifier_start)
-            && chars.all(|c| is_identifier_part(c) && c != '・' && c != '･')
     }
 
     /// Whether the closest function scope is created by an async generator

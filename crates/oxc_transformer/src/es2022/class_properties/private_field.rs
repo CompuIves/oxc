@@ -297,7 +297,7 @@ impl<'a> ClassProperties<'a> {
         call_expr.callee = Expression::from(ctx.ast.member_expression_static(
             SPAN,
             callee,
-            ctx.ast.identifier_name(SPAN, Atom::from("call")),
+            ctx.ast.identifier_name(SPAN, Str::from("call")),
             // Make sure the `callee` can access `call` safely. i.e `callee?.()` -> `callee?.call()`
             mem::replace(&mut call_expr.optional, false),
         ));
@@ -756,7 +756,7 @@ impl<'a> ClassProperties<'a> {
             Expression::AssignmentExpression(assign_expr) => assign_expr.unbox(),
             _ => unreachable!(),
         };
-        let AssignmentExpression { span, operator, right: value, left } = assign_expr;
+        let AssignmentExpression { span, operator, right: value, left, .. } = assign_expr;
         let AssignmentTarget::PrivateFieldExpression(field_expr) = left else { unreachable!() };
         let PrivateFieldExpression { field, object, .. } = field_expr.unbox();
 
@@ -1015,7 +1015,7 @@ impl<'a> ClassProperties<'a> {
 
             // `_object$prop = _assertClassBrand(Class, object, _prop)._`
             let temp_binding = VarDeclarationsStore::create_uid_var(&temp_var_name_base, ctx);
-            let assignment = create_assignment(&temp_binding, get_expr, ctx);
+            let assignment = create_assignment(&temp_binding, get_expr, SPAN, ctx);
 
             // `++_object$prop` / `_object$prop++` (reusing existing `UpdateExpression`)
             let UpdateExpression { span, prefix, .. } = **update_expr;
@@ -1048,7 +1048,7 @@ impl<'a> ClassProperties<'a> {
 
                 // `_object$prop2 = _object$prop++`
                 let temp_binding2 = VarDeclarationsStore::create_uid_var(&temp_var_name_base, ctx);
-                let assignment2 = create_assignment(&temp_binding2, update_expr, ctx);
+                let assignment2 = create_assignment(&temp_binding2, update_expr, SPAN, ctx);
 
                 // `(_object$prop = _assertClassBrand(Class, object, _prop)._, _object$prop2 = _object$prop++, _object$prop)`
                 let mut value = ctx.ast.expression_sequence(
@@ -1111,7 +1111,7 @@ impl<'a> ClassProperties<'a> {
 
             // `_object$prop = _classPrivateFieldGet(_prop, object)`
             let temp_binding = VarDeclarationsStore::create_uid_var(&temp_var_name_base, ctx);
-            let assignment = create_assignment(&temp_binding, get_call, ctx);
+            let assignment = create_assignment(&temp_binding, get_call, SPAN, ctx);
 
             // `++_object$prop` / `_object$prop++` (reusing existing `UpdateExpression`)
             let UpdateExpression { span, prefix, .. } = **update_expr;
@@ -1139,7 +1139,7 @@ impl<'a> ClassProperties<'a> {
                 // Source = `object.#prop++` (postfix `++`)
                 // `_object$prop2 = _object$prop++`
                 let temp_binding2 = VarDeclarationsStore::create_uid_var(&temp_var_name_base, ctx);
-                let assignment2 = create_assignment(&temp_binding2, update_expr, ctx);
+                let assignment2 = create_assignment(&temp_binding2, update_expr, SPAN, ctx);
 
                 // `(_object$prop = _classPrivateFieldGet(_prop, object), _object$prop2 = _object$prop++, _object$prop)`
                 let value = ctx.ast.expression_sequence(
@@ -1774,7 +1774,7 @@ impl<'a> ClassProperties<'a> {
         let callee = Expression::from(ctx.ast.member_expression_static(
             SPAN,
             callee,
-            ctx.ast.identifier_name(SPAN, Atom::from("bind")),
+            ctx.ast.identifier_name(SPAN, Str::from("bind")),
             false,
         ));
         let arguments = ctx.ast.vec1(Argument::from(context));
@@ -1851,7 +1851,7 @@ impl<'a> ClassProperties<'a> {
         private_field: ArenaBox<'a, PrivateInExpression<'a>>,
         ctx: &mut TraverseCtx<'a>,
     ) -> Expression<'a> {
-        let PrivateInExpression { left, right, span } = private_field.unbox();
+        let PrivateInExpression { left, right, span, .. } = private_field.unbox();
 
         let ResolvedPrivateProp { class_bindings, prop_binding, is_method, is_static, .. } =
             self.classes_stack.find_private_prop(&left);
@@ -1873,7 +1873,7 @@ impl<'a> ClassProperties<'a> {
         } else {
             prop_binding.create_read_expression(ctx)
         };
-        let callee = create_member_callee(callee, "has", ctx);
+        let callee = create_member_callee(callee, "has", span, ctx);
         let argument = self.create_check_in_rhs(right, SPAN, ctx);
         ctx.ast.expression_call(span, callee, NONE, ctx.ast.vec1(Argument::from(argument)), false)
     }
@@ -2154,7 +2154,7 @@ impl<'a> ClassProperties<'a> {
             let class_ident = class_binding.create_read_expression(ctx);
             let object = self.create_assert_class_brand_without_value(class_ident, object, ctx);
             let arguments = ctx.ast.vec_from_array([Argument::from(object), Argument::from(value)]);
-            let callee = create_member_callee(prop_ident, "call", ctx);
+            let callee = create_member_callee(prop_ident, "call", span, ctx);
             // `_prop.call(_assertClassBrand(Class, object), value)`
             ctx.ast.expression_call(span, callee, NONE, arguments, false)
         } else {
@@ -2172,7 +2172,7 @@ impl<'a> ClassProperties<'a> {
         private_name: &str,
         ctx: &mut TraverseCtx<'a>,
     ) -> Expression<'a> {
-        let message = ctx.ast.atom_from_strs_array(["#", private_name]);
+        let message = ctx.ast.str_from_strs_array(["#", private_name]);
         let message = ctx.ast.expression_string_literal(SPAN, message, None);
         helper_call_expr(helper, SPAN, ctx.ast.vec1(Argument::from(message)), ctx)
     }

@@ -27,6 +27,7 @@ pub mod format_element;
 mod format_extensions;
 pub mod formatter;
 pub mod group_id;
+pub mod jsdoc;
 pub mod macros;
 pub mod prelude;
 pub mod printer;
@@ -41,7 +42,7 @@ use std::fmt::Debug;
 
 pub use buffer::{Buffer, BufferExtensions, VecBuffer};
 pub use format_element::FormatElement;
-pub use group_id::GroupId;
+pub use group_id::{GroupId, UniqueGroupIdBuilder};
 
 pub use self::comments::Comments;
 use self::printer::Printer;
@@ -54,7 +55,7 @@ pub use self::{
     state::FormatState,
     text_range::TextRange,
 };
-use self::{format_element::document::Document, group_id::UniqueGroupIdBuilder, prelude::TagKind};
+use self::{format_element::document::Document, prelude::TagKind};
 
 #[derive(Debug)]
 pub struct Formatted<'a> {
@@ -88,6 +89,10 @@ impl<'a> Formatted<'a> {
 }
 
 impl Formatted<'_> {
+    /// Prints the formatted document to a string.
+    ///
+    /// # Errors
+    /// Returns `PrintError` if the document contains invalid structure.
     pub fn print(self) -> PrintResult<Printed> {
         let print_options = self.context.options().as_print_options();
         let (elements, sorted_tailwind_classes) =
@@ -96,6 +101,10 @@ impl Formatted<'_> {
         Ok(printed)
     }
 
+    /// Prints the formatted document to a string, starting at the given indentation level.
+    ///
+    /// # Errors
+    /// Returns `PrintError` if the document contains invalid structure.
     pub fn print_with_indent(self, indent: u16) -> PrintResult<Printed> {
         let print_options = self.context.options().as_print_options();
         let (elements, sorted_tailwind_classes) =
@@ -149,7 +158,7 @@ pub type FormatResult<F> = Result<F, FormatError>;
 /// ## Example
 /// Implementing `Format` for a custom struct
 ///
-/// ```
+/// ```text
 /// use biome_formatter::{format, write, IndentStyle, LineWidth};
 /// use biome_formatter::prelude::*;
 /// use biome_rowan::TextSize;
@@ -237,7 +246,7 @@ impl Format<'_> for &'static str {
 ///
 /// # Examples
 ///
-/// ```
+/// ```text
 /// use biome_formatter::prelude::*;
 /// use biome_formatter::{VecBuffer, format_args, FormatState, write, Formatted};
 ///
@@ -256,7 +265,7 @@ impl Format<'_> for &'static str {
 ///
 /// Please note that using [`write!`] might be preferable. Example:
 ///
-/// ```
+/// ```text
 /// use biome_formatter::prelude::*;
 /// use biome_formatter::{VecBuffer, format_args, FormatState, write, Formatted};
 ///
@@ -286,7 +295,7 @@ pub fn write<'ast>(output: &mut dyn Buffer<'ast>, args: Arguments<'_, 'ast>) {
 ///
 /// Basic usage:
 ///
-/// ```
+/// ```text
 /// use biome_formatter::prelude::*;
 /// use biome_formatter::{format, format_args};
 ///
@@ -299,7 +308,7 @@ pub fn write<'ast>(output: &mut dyn Buffer<'ast>, args: Arguments<'_, 'ast>) {
 ///
 /// Please note that using [`format!`] might be preferable. Example:
 ///
-/// ```
+/// ```text
 /// use biome_formatter::prelude::*;
 /// use biome_formatter::{format};
 ///

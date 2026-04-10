@@ -70,13 +70,11 @@ const mixedQuery = gql\`
   }
 \`;
 
-const mixedTemplate = html\`
-  <div><h1>Title</h1></div>
-\`;
+const mixedTemplate = html\`<div><h1>Title</h1></div>\`;
 
 const mixedDocs = md\`
-  #Documentation
-  This is **important**.
+#Documentation
+This is **important**.
 \`;
 
 // Multi-line with blank lines - should preserve blank lines without trailing whitespace
@@ -281,11 +279,9 @@ export class AppComponent1 {}
 // Array form styles
 @Component({
   selector: "app-test",
-  template: \`
-    <ul>
-      <li>test</li>
-    </ul>
-  \`,
+  template: \`<ul>
+    <li>test</li>
+  </ul> \`,
   styles: [
     \`
       :host {
@@ -336,6 +332,18 @@ const cssProp = <div css={\`display: flex; align-items: center;\`}>Hello</div>;
 
 const styledJsx = <style jsx>{\`display: flex; align-items: center;\`}</style>;
 
+// Template literals with \${} substitutions
+const dynamic = css\`color:\${color};background:\${bg};\`;
+
+const styledWithExpr = styled.button\`font-size:\${size}px;color:\${theme.primary};\`;
+
+// printWidth-aware: long transition values should break across lines
+const animated = styled.div\`transition:width \${duration},height \${duration},top \${duration},left \${duration};\`;
+
+const multiProp = css\`
+  .card {padding:\${spacing}px;margin:\${margin};border:1px solid \${borderColor};box-shadow:0 2px 4px \${shadowColor};}
+\`;
+
 // Multi-line templates with inherited indentation (dedent before formatting)
 const documented = styled.div\`
   /**
@@ -403,6 +411,35 @@ const styledJsx = (
   \`}</style>
 );
 
+// Template literals with \${} substitutions
+const dynamic = css\`
+  color: \${color};
+  background: \${bg};
+\`;
+
+const styledWithExpr = styled.button\`
+  font-size: \${size}px;
+  color: \${theme.primary};
+\`;
+
+// printWidth-aware: long transition values should break across lines
+const animated = styled.div\`
+  transition:
+    width \${duration},
+    height \${duration},
+    top \${duration},
+    left \${duration};
+\`;
+
+const multiProp = css\`
+  .card {
+    padding: \${spacing}px;
+    margin: \${margin};
+    border: 1px solid \${borderColor};
+    box-shadow: 0 2px 4px \${shadowColor};
+  }
+\`;
+
 // Multi-line templates with inherited indentation (dedent before formatting)
 const documented = styled.div\`
   /**
@@ -424,6 +461,21 @@ const query = gql\`query GetUser($id:ID!){user(id:$id){name email}}\`;
 
 const mutation = graphql\`mutation CreatePost($input:PostInput!){createPost(input:$input){id title}}\`;
 
+// graphql() function call - single argument (hugging layout)
+const schema = graphql(\`query{users{name email}}\`);
+
+// graphql() function call - multiple arguments
+graphql(schema, \`mutation MarkReadNotificationMutation($input:MarkReadNotificationData!){markReadNotification(data:$input){notification{seenState}}}\`)
+
+// graphql() function call - empty
+graphql(\`\`);
+
+// Non-target: gql() is NOT recognized as a function call pattern
+gql(\`query{users{name}}\`);
+
+// Non-target: other function names
+someFunction(\`query{users{name}}\`);
+
 --- AFTER ----------
 // Tagged template literals with gql and graphql tags
 const query = gql\`
@@ -444,6 +496,40 @@ const mutation = graphql\`
   }
 \`;
 
+// graphql() function call - single argument (hugging layout)
+const schema =
+  graphql(\`
+    query {
+      users {
+        name
+        email
+      }
+    }
+  \`);
+
+// graphql() function call - multiple arguments
+graphql(
+  schema,
+  \`
+    mutation MarkReadNotificationMutation($input: MarkReadNotificationData!) {
+      markReadNotification(data: $input) {
+        notification {
+          seenState
+        }
+      }
+    }
+  \`,
+);
+
+// graphql() function call - empty
+graphql(\`\`);
+
+// Non-target: gql() is NOT recognized as a function call pattern
+gql(\`query{users{name}}\`);
+
+// Non-target: other function names
+someFunction(\`query{users{name}}\`);
+
 --------------------"
 `;
 
@@ -458,16 +544,12 @@ const component = html\`<button type="button" onclick="handleClick()">Click</but
 
 --- AFTER ----------
 // Tagged template literals with html tag
-const template = html\`
-  <div class="container">
-    <h1>Hello</h1>
-    <p>World</p>
-  </div>
-\`;
+const template = html\`<div class="container">
+  <h1>Hello</h1>
+  <p>World</p>
+</div>\`;
 
-const component = html\`
-  <button type="button" onclick="handleClick()">Click</button>
-\`;
+const component = html\`<button type="button" onclick="handleClick()">Click</button>\`;
 
 --------------------"
 `;
@@ -490,17 +572,18 @@ npm install package
 --- AFTER ----------
 // Tagged template literals with md and markdown tags
 const documentation = md\`
-  #Heading
-  This is **bold**.
-  -Item 1
-  -Item 2
+#Heading
+This is **bold**.
+-Item 1
+-Item 2
 \`;
 
 const readme = markdown\`
-  ##Installation
-  \\\`\\\`\\\`bash
-  npm install package
-  \\\`\\\`\\\`
+##Installation
+
+~~~bash
+npm install package
+~~~
 \`;
 
 --------------------"
@@ -529,6 +612,18 @@ const cssProp = <div css={\`display: flex; align-items: center;\`}>Hello</div>;
 
 const styledJsx = <style jsx>{\`display: flex; align-items: center;\`}</style>;
 
+// Template literals with \${} substitutions
+const dynamic = css\`color:\${color};background:\${bg};\`;
+
+const styledWithExpr = styled.button\`font-size:\${size}px;color:\${theme.primary};\`;
+
+// printWidth-aware: long transition values should break across lines
+const animated = styled.div\`transition:width \${duration},height \${duration},top \${duration},left \${duration};\`;
+
+const multiProp = css\`
+  .card {padding:\${spacing}px;margin:\${margin};border:1px solid \${borderColor};box-shadow:0 2px 4px \${shadowColor};}
+\`;
+
 // Multi-line templates with inherited indentation (dedent before formatting)
 const documented = styled.div\`
   /**
@@ -596,6 +691,35 @@ const styledJsx = (
   \`}</style>
 );
 
+// Template literals with \${} substitutions
+const dynamic = css\`
+  color: \${color};
+  background: \${bg};
+\`;
+
+const styledWithExpr = styled.button\`
+  font-size: \${size}px;
+  color: \${theme.primary};
+\`;
+
+// printWidth-aware: long transition values should break across lines
+const animated = styled.div\`
+  transition:
+    width \${duration},
+    height \${duration},
+    top \${duration},
+    left \${duration};
+\`;
+
+const multiProp = css\`
+  .card {
+    padding: \${spacing}px;
+    margin: \${margin};
+    border: 1px solid \${borderColor};
+    box-shadow: 0 2px 4px \${shadowColor};
+  }
+\`;
+
 // Multi-line templates with inherited indentation (dedent before formatting)
 const documented = styled.div\`
   /**
@@ -614,6 +738,21 @@ graphql.js
 const query = gql\`query GetUser($id:ID!){user(id:$id){name email}}\`;
 
 const mutation = graphql\`mutation CreatePost($input:PostInput!){createPost(input:$input){id title}}\`;
+
+// graphql() function call - single argument (hugging layout)
+const schema = graphql(\`query{users{name email}}\`);
+
+// graphql() function call - multiple arguments
+graphql(schema, \`mutation MarkReadNotificationMutation($input:MarkReadNotificationData!){markReadNotification(data:$input){notification{seenState}}}\`)
+
+// graphql() function call - empty
+graphql(\`\`);
+
+// Non-target: gql() is NOT recognized as a function call pattern
+gql(\`query{users{name}}\`);
+
+// Non-target: other function names
+someFunction(\`query{users{name}}\`);
 
 --- AFTER ----------
 // Tagged template literals with gql and graphql tags
@@ -635,6 +774,40 @@ const mutation = graphql\`
   }
 \`;
 
+// graphql() function call - single argument (hugging layout)
+const schema =
+  graphql(\`
+    query {
+      users {
+        name
+        email
+      }
+    }
+  \`);
+
+// graphql() function call - multiple arguments
+graphql(
+  schema,
+  \`
+    mutation MarkReadNotificationMutation($input: MarkReadNotificationData!) {
+      markReadNotification(data: $input) {
+        notification {
+          seenState
+        }
+      }
+    }
+  \`,
+);
+
+// graphql() function call - empty
+graphql(\`\`);
+
+// Non-target: gql() is NOT recognized as a function call pattern
+gql(\`query{users{name}}\`);
+
+// Non-target: other function names
+someFunction(\`query{users{name}}\`);
+
 --------------------
 
 --- FILE -----------
@@ -647,16 +820,12 @@ const component = html\`<button type="button" onclick="handleClick()">Click</but
 
 --- AFTER ----------
 // Tagged template literals with html tag
-const template = html\`
-  <div class="container">
-    <h1>Hello</h1>
-    <p>World</p>
-  </div>
-\`;
+const template = html\`<div class="container">
+  <h1>Hello</h1>
+  <p>World</p>
+</div>\`;
 
-const component = html\`
-  <button type="button" onclick="handleClick()">Click</button>
-\`;
+const component = html\`<button type="button" onclick="handleClick()">Click</button>\`;
 
 --------------------
 
@@ -677,17 +846,18 @@ npm install package
 --- AFTER ----------
 // Tagged template literals with md and markdown tags
 const documentation = md\`
-  #Heading
-  This is **bold**.
-  -Item 1
-  -Item 2
+#Heading
+This is **bold**.
+-Item 1
+-Item 2
 \`;
 
 const readme = markdown\`
-  ##Installation
-  \\\`\\\`\\\`bash
-  npm install package
-  \\\`\\\`\\\`
+##Installation
+
+~~~bash
+npm install package
+~~~
 \`;
 
 --------------------
@@ -765,11 +935,9 @@ export class AppComponent1 {}
 // Array form styles
 @Component({
   selector: "app-test",
-  template: \`
-    <ul>
-      <li>test</li>
-    </ul>
-  \`,
+  template: \`<ul>
+    <li>test</li>
+  </ul> \`,
   styles: [
     \`
       :host {
@@ -820,6 +988,18 @@ const cssProp = <div css={\`display: flex; align-items: center;\`}>Hello</div>;
 
 const styledJsx = <style jsx>{\`display: flex; align-items: center;\`}</style>;
 
+// Template literals with \${} substitutions
+const dynamic = css\`color:\${color};background:\${bg};\`;
+
+const styledWithExpr = styled.button\`font-size:\${size}px;color:\${theme.primary};\`;
+
+// printWidth-aware: long transition values should break across lines
+const animated = styled.div\`transition:width \${duration},height \${duration},top \${duration},left \${duration};\`;
+
+const multiProp = css\`
+  .card {padding:\${spacing}px;margin:\${margin};border:1px solid \${borderColor};box-shadow:0 2px 4px \${shadowColor};}
+\`;
+
 // Multi-line templates with inherited indentation (dedent before formatting)
 const documented = styled.div\`
   /**
@@ -850,6 +1030,18 @@ const cssProp = <div css={\`display: flex; align-items: center;\`}>Hello</div>;
 
 const styledJsx = <style jsx>{\`display: flex; align-items: center;\`}</style>;
 
+// Template literals with \${} substitutions
+const dynamic = css\`color:\${color};background:\${bg};\`;
+
+const styledWithExpr = styled.button\`font-size:\${size}px;color:\${theme.primary};\`;
+
+// printWidth-aware: long transition values should break across lines
+const animated = styled.div\`transition:width \${duration},height \${duration},top \${duration},left \${duration};\`;
+
+const multiProp = css\`
+  .card {padding:\${spacing}px;margin:\${margin};border:1px solid \${borderColor};box-shadow:0 2px 4px \${shadowColor};}
+\`;
+
 // Multi-line templates with inherited indentation (dedent before formatting)
 const documented = styled.div\`
   /**
@@ -869,11 +1061,44 @@ const query = gql\`query GetUser($id:ID!){user(id:$id){name email}}\`;
 
 const mutation = graphql\`mutation CreatePost($input:PostInput!){createPost(input:$input){id title}}\`;
 
+// graphql() function call - single argument (hugging layout)
+const schema = graphql(\`query{users{name email}}\`);
+
+// graphql() function call - multiple arguments
+graphql(schema, \`mutation MarkReadNotificationMutation($input:MarkReadNotificationData!){markReadNotification(data:$input){notification{seenState}}}\`)
+
+// graphql() function call - empty
+graphql(\`\`);
+
+// Non-target: gql() is NOT recognized as a function call pattern
+gql(\`query{users{name}}\`);
+
+// Non-target: other function names
+someFunction(\`query{users{name}}\`);
+
 --- AFTER ----------
 // Tagged template literals with gql and graphql tags
 const query = gql\`query GetUser($id:ID!){user(id:$id){name email}}\`;
 
 const mutation = graphql\`mutation CreatePost($input:PostInput!){createPost(input:$input){id title}}\`;
+
+// graphql() function call - single argument (hugging layout)
+const schema = graphql(\`query{users{name email}}\`);
+
+// graphql() function call - multiple arguments
+graphql(
+  schema,
+  \`mutation MarkReadNotificationMutation($input:MarkReadNotificationData!){markReadNotification(data:$input){notification{seenState}}}\`,
+);
+
+// graphql() function call - empty
+graphql(\`\`);
+
+// Non-target: gql() is NOT recognized as a function call pattern
+gql(\`query{users{name}}\`);
+
+// Non-target: other function names
+someFunction(\`query{users{name}}\`);
 
 --------------------
 

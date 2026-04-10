@@ -76,7 +76,8 @@ use oxc_ast::{
     ast::{Argument, CallExpression, Expression},
 };
 use oxc_semantic::{ReferenceFlags, SymbolFlags};
-use oxc_span::{Atom, SPAN, Span};
+use oxc_span::{SPAN, Span};
+use oxc_str::Str;
 use oxc_traverse::BoundIdentifier;
 
 use crate::context::TraverseCtx;
@@ -124,6 +125,7 @@ pub struct HelperLoaderOptions {
     /// The module name to import helper functions from.
     /// Default: `@oxc-project/runtime`
     pub module_name: Cow<'static, str>,
+    /// Strategy used to resolve helper calls.
     pub mode: HelperLoaderMode,
 }
 
@@ -140,38 +142,68 @@ fn default_as_module_name() -> Cow<'static, str> {
 /// Available helpers.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub enum Helper {
+    /// Runtime helper `awaitAsyncGenerator`.
     AwaitAsyncGenerator,
+    /// Runtime helper `asyncGeneratorDelegate`.
     AsyncGeneratorDelegate,
+    /// Runtime helper `asyncIterator`.
     AsyncIterator,
+    /// Runtime helper `asyncToGenerator`.
     AsyncToGenerator,
+    /// Runtime helper `objectSpread2`.
     ObjectSpread2,
+    /// Runtime helper `wrapAsyncGenerator`.
     WrapAsyncGenerator,
+    /// Runtime helper `extends`.
     Extends,
+    /// Runtime helper `objectDestructuringEmpty`.
     ObjectDestructuringEmpty,
+    /// Runtime helper `objectWithoutProperties`.
     ObjectWithoutProperties,
+    /// Runtime helper `toPropertyKey`.
     ToPropertyKey,
+    /// Runtime helper `defineProperty`.
     DefineProperty,
+    /// Runtime helper `classPrivateFieldInitSpec`.
     ClassPrivateFieldInitSpec,
+    /// Runtime helper `classPrivateMethodInitSpec`.
     ClassPrivateMethodInitSpec,
+    /// Runtime helper `classPrivateFieldGet2`.
     ClassPrivateFieldGet2,
+    /// Runtime helper `classPrivateFieldSet2`.
     ClassPrivateFieldSet2,
+    /// Runtime helper `assertClassBrand`.
     AssertClassBrand,
+    /// Runtime helper `toSetter`.
     ToSetter,
+    /// Runtime helper `classPrivateFieldLooseKey`.
     ClassPrivateFieldLooseKey,
+    /// Runtime helper `classPrivateFieldLooseBase`.
     ClassPrivateFieldLooseBase,
+    /// Runtime helper `superPropGet`.
     SuperPropGet,
+    /// Runtime helper `superPropSet`.
     SuperPropSet,
+    /// Runtime helper `readOnlyError`.
     ReadOnlyError,
+    /// Runtime helper `writeOnlyError`.
     WriteOnlyError,
+    /// Runtime helper `checkInRHS`.
     CheckInRHS,
+    /// Runtime helper `decorate`.
     Decorate,
+    /// Runtime helper `decorateParam`.
     DecorateParam,
+    /// Runtime helper `decorateMetadata`.
     DecorateMetadata,
+    /// Runtime helper `usingCtx`.
     UsingCtx,
+    /// Runtime helper `taggedTemplateLiteral`.
     TaggedTemplateLiteral,
 }
 
 impl Helper {
+    /// Canonical helper export name used by runtime/external helper loaders.
     pub const fn name(self) -> &'static str {
         match self {
             Self::AwaitAsyncGenerator => "awaitAsyncGenerator",
@@ -206,6 +238,7 @@ impl Helper {
         }
     }
 
+    /// Whether calling this helper is side-effect free.
     pub const fn pure(self) -> bool {
         matches!(self, Self::ClassPrivateFieldLooseKey)
     }
@@ -296,8 +329,8 @@ pub fn helper_load<'a>(helper: Helper, ctx: &mut TraverseCtx<'a>) -> Expression<
 // Internal methods
 impl<'a> HelperLoaderStore<'a> {
     // Construct string directly in arena without an intermediate temp allocation
-    fn get_runtime_source(&self, helper: Helper, ctx: &TraverseCtx<'a>) -> Atom<'a> {
-        ctx.ast.atom_from_strs_array([&self.module_name, "/helpers/", helper.name()])
+    fn get_runtime_source(&self, helper: Helper, ctx: &TraverseCtx<'a>) -> Str<'a> {
+        ctx.ast.str_from_strs_array([&self.module_name, "/helpers/", helper.name()])
     }
 
     fn transform_for_external_helper(helper: Helper, ctx: &mut TraverseCtx<'a>) -> Expression<'a> {

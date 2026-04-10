@@ -8,7 +8,8 @@ use oxc_ast::{
 };
 use oxc_diagnostics::OxcDiagnostic;
 use oxc_macros::declare_oxc_lint;
-use oxc_span::{CompactStr, Span};
+use oxc_span::Span;
+use oxc_str::CompactStr;
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Deserializer, de::Error};
 use serde_json::Value;
@@ -857,6 +858,11 @@ impl RestrictedPattern {
         }
     }
 
+    fn is_side_effect_import_allowed(&self) -> bool {
+        let unused_name = CompactStr::from("__<>import_name_that_cant_be_used<>__");
+        self.is_name_span_allowed(&unused_name) == NameSpanAllowedResult::Allowed
+    }
+
     fn get_group_glob_result(&self, name: &str) -> GlobResult {
         let Some(groups) = &self.group else {
             return GlobResult::None;
@@ -1040,6 +1046,15 @@ impl NoRestrictedImports {
                         ));
                     }
                     GlobResult::None => {}
+                }
+
+                if pattern.get_regex_result(source) && !pattern.is_side_effect_import_allowed() {
+                    ctx.diagnostic(get_diagnostic_from_import_name_result_pattern(
+                        spans[0],
+                        source,
+                        &ImportNameResult::GeneralDisallowed,
+                        pattern,
+                    ));
                 }
             }
             if !whitelist_found && let Some(err) = err {
@@ -1805,6 +1820,15 @@ fn test() {
                 "patterns": [{
                     "regex": "my/relative-module",
                     "importNamePattern": "^Foo"
+                }]
+            }])),
+        ),
+        (
+            "import 'foo';",
+            Some(serde_json::json!([{
+                "patterns": [{
+                    "regex": "foo",
+                    "importNames": ["Bar"],
                 }]
             }])),
         ),
@@ -3071,6 +3095,12 @@ fn test() {
             r"import 'foo'",
             Some(
                 serde_json::json!([{ "patterns": [{ "group": ["foo"], "message": "foo is forbidden, use bar instead" }] }]),
+            ),
+        ),
+        (
+            r"import 'foo'",
+            Some(
+                serde_json::json!([{ "patterns": [{ "regex": "foo", "message": "foo is forbidden, use bar instead" }] }]),
             ),
         ),
     ];

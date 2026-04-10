@@ -27,7 +27,7 @@ declare_oxc_lint!(
     /// ### Why is this bad?
     ///
     /// The ?? nullish coalescing runtime operator allows providing a default value when dealing
-    /// with null or undefined. Using a ! non-null assertion type operator in the left operand of
+    /// with `null` or `undefined`. Using a ! non-null assertion type operator in the left operand of
     /// a nullish coalescing operator is redundant, and likely a sign of programmer error or
     /// confusion over the two operators.
     ///
@@ -65,6 +65,7 @@ declare_oxc_lint!(
     NoNonNullAssertedNullishCoalescing,
     typescript,
     restriction,
+    pending,
 );
 
 impl Rule for NoNonNullAssertedNullishCoalescing {
@@ -121,49 +122,49 @@ fn test() {
         "foo() ?? bar!;",
         "(foo ?? bar)!;",
         "
-        	      let x: string;
-        	      x! ?? '';
-        	    ",
+                  let x: string;
+                  x! ?? '';
+                ",
         "
-        	      let x: string;
-        	      x ?? '';
-        	    ",
+                  let x: string;
+                  x ?? '';
+                ",
         "
-        	      let x!: string;
-        	      x ?? '';
-        	    ",
+                  let x!: string;
+                  x ?? '';
+                ",
         "
-        	      let x: string;
-        	      foo(x);
-        	      x! ?? '';
-        	    ",
+                  let x: string;
+                  foo(x);
+                  x! ?? '';
+                ",
         "
-        	      let x: string;
-        	      x! ?? '';
-        	      x = foo();
-        	    ",
+                  let x: string;
+                  x! ?? '';
+                  x = foo();
+                ",
         "
-        	      let x: string;
-        	      foo(x);
-        	      x! ?? '';
-        	      x = foo();
-        	    ",
+                  let x: string;
+                  foo(x);
+                  x! ?? '';
+                  x = foo();
+                ",
         "
-        	      let x = foo();
-        	      x ?? '';
-        	    ",
+                  let x = foo();
+                  x ?? '';
+                ",
         "
-        	      function foo() {
-        	        let x: string;
-        	        return x ?? '';
-        	      }
-        	    ",
+                  function foo() {
+                    let x: string;
+                    return x ?? '';
+                  }
+                ",
         "
-        	      let x: string;
-        	      function foo() {
-        	        return x ?? '';
-        	      }
-        	    ",
+                  let x: string;
+                  function foo() {
+                    return x ?? '';
+                  }
+                ",
     ];
 
     let fail = vec![
@@ -176,40 +177,40 @@ fn test() {
         "foo()! ?? bar;",
         "foo()! ?? bar!;",
         "
-        	let x!: string;
-        	x! ?? '';
-        	      ",
+            let x!: string;
+            x! ?? '';
+                  ",
         "
-        	let x: string;
-        	x = foo();
-        	x! ?? '';
-        	      ",
+            let x: string;
+            x = foo();
+            x! ?? '';
+                  ",
         "
-        	let x: string;
-        	x = foo();
-        	x! ?? '';
-        	x = foo();
-        	      ",
+            let x: string;
+            x = foo();
+            x! ?? '';
+            x = foo();
+                  ",
         "
-        	let x = foo();
-        	x! ?? '';
-        	      ",
+            let x = foo();
+            x! ?? '';
+                  ",
         "
-        	function foo() {
-        	  let x!: string;
-        	  return x! ?? '';
-        	}
-        	      ",
+            function foo() {
+              let x!: string;
+              return x! ?? '';
+            }
+                  ",
         "
-        	let x!: string;
-        	function foo() {
-        	  return x! ?? '';
-        	}
-        	      ",
+            let x!: string;
+            function foo() {
+              return x! ?? '';
+            }
+                  ",
         "
-        	let x = foo();
-        	x  ! ?? '';
-        	      ",
+            let x = foo();
+            x  ! ?? '';
+                  ",
     ];
 
     Tester::new(

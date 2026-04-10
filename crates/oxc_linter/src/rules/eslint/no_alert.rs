@@ -2,7 +2,8 @@ use oxc_ast::{AstKind, ast::Expression};
 use oxc_diagnostics::OxcDiagnostic;
 use oxc_macros::declare_oxc_lint;
 use oxc_semantic::ScopeId;
-use oxc_span::{GetSpan, Ident, Span};
+use oxc_span::{GetSpan, Span};
+use oxc_str::Ident;
 
 use crate::{AstNode, context::LintContext, rule::Rule};
 
@@ -18,12 +19,12 @@ pub struct NoAlert;
 declare_oxc_lint!(
     /// ### What it does
     ///
-    /// Disallow the use of alert, confirm, and prompt
+    /// Disallow the use of `alert`, `confirm`, and `prompt`.
     ///
     /// ### Why is this bad?
     ///
-    /// JavaScript’s alert, confirm, and prompt functions are widely considered to be obtrusive as UI elements and should be replaced by a more appropriate custom UI implementation.
-    /// Furthermore, alert is often used while debugging code, which should be removed before deployment to production.
+    /// JavaScript’s `alert`, `confirm`, and `prompt` functions are widely considered to be obtrusive as UI elements and should be replaced by a more appropriate custom UI implementation.
+    /// Furthermore, `alert` is often used while debugging code, which should be removed before deployment to production.
     ///
     /// ### Examples
     ///
@@ -159,19 +160,19 @@ fn test() {
         "window['prompt'](foo)",
         "function alert() {} window.alert(foo)",
         "var alert = function() {};
-        	window.alert(foo)",
+            window.alert(foo)",
         "function foo(alert) { window.alert(); }",
         "function foo() { alert(); }",
         "function foo() { var alert = function() {}; }
-        	alert();",
+            alert();",
         "this.alert(foo)",
         "this['alert'](foo)",
         "function foo() { var window = bar; window.alert(); }
-        	window.alert();",
+            window.alert();",
         "globalThis['alert'](foo)", // { "ecmaVersion": 2020 },
         "globalThis.alert();",      // { "ecmaVersion": 2020 },
         "function foo() { var globalThis = bar; globalThis.alert(); }
-        	globalThis.alert();", // { "ecmaVersion": 2020 },
+            globalThis.alert();", // { "ecmaVersion": 2020 },
         "window?.alert(foo)",       // { "ecmaVersion": 2020 },
         "(window?.alert)(foo)",     // { "ecmaVersion": 2020 }
     ];

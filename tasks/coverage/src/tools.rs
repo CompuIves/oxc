@@ -1,16 +1,22 @@
 //! Tool runner functions for coverage testing
 
-use std::{borrow::Cow, path::Path, sync::Arc};
+use std::{
+    borrow::Cow,
+    fs,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use oxc::{
     allocator::Allocator,
     ast_visit::utf8_to_utf16::Utf8ToUtf16,
     diagnostics::{GraphicalReportHandler, GraphicalTheme, NamedSource, OxcDiagnostic},
     minifier::CompressOptions,
-    parser::{ParseOptions, Parser, ParserReturn},
+    parser::{ParseOptions, Parser, ParserReturn, config::RuntimeParserConfig},
     span::{ModuleKind, SourceType, Span},
     transformer::{JsxOptions, JsxRuntime, TransformOptions},
 };
+use oxc_estree_tokens::{ESTreeTokenOptions, to_estree_tokens_pretty_json};
 use oxc_formatter::{
     ArrowParentheses, AttributePosition, BracketSameLine, BracketSpacing, Expand, FormatOptions,
     Formatter, IndentStyle, IndentWidth, LineEnding, LineWidth, QuoteProperties, QuoteStyle,
@@ -19,8 +25,9 @@ use oxc_formatter::{
 use rayon::prelude::*;
 
 use crate::{
-    BabelFile, CoverageResult, Driver, MiscFile, Test262File, TestResult, TypeScriptFile,
-    test262::TestFlag, typescript::constants::TS_IGNORE_SUPPRESSIBLE_ERRORS, workspace_root,
+    AcornJsxFile, BabelFile, CoverageResult, Driver, MiscFile, Test262File, TestResult,
+    TypeScriptFile, test262::TestFlag, typescript::constants::TS_IGNORE_SUPPRESSIBLE_ERRORS,
+    workspace_root,
 };
 
 // ================================
@@ -699,136 +706,288 @@ pub fn run_minifier_babel(files: &[BabelFile]) -> Vec<CoverageResult> {
 // ESTree
 // ================================
 
-use std::fs;
-
 pub fn run_estree_test262(files: &[Test262File]) -> Vec<CoverageResult> {
+    run_estree_test262_impl(
+        files,
+        |test_file| {
+            workspace_root()
+                .join("estree-conformance/tests")
+                .join(&test_file.path)
+                .with_extension("json")
+        },
+        RuntimeParserConfig::default(),
+        |parser_ret| {
+            let mut program = parser_ret.program;
+            let source_text = program.source_text;
+            Utf8ToUtf16::new(source_text).convert_program_with_ascending_order_checks(&mut program);
+            program.to_pretty_estree_js_json(false)
+        },
+    )
+}
+
+pub fn run_estree_test262_tokens(files: &[Test262File]) -> Vec<CoverageResult> {
+    run_estree_test262_impl(
+        files,
+        |test_file| {
+            workspace_root()
+                .join("estree-conformance/tests/test262-tokens")
+                .join(test_file.path.strip_prefix("test262/").unwrap_or(&test_file.path))
+                .with_extension("json")
+        },
+        RuntimeParserConfig::new(true),
+        |parser_ret| {
+            let ParserReturn { program, tokens, .. } = parser_ret;
+            let source_text = program.source_text;
+            let span_converter = Utf8ToUtf16::new(source_text);
+            to_estree_tokens_pretty_json(
+                &tokens,
+                &program,
+                source_text,
+                &span_converter,
+                ESTreeTokenOptions::new(false),
+            )
+        },
+    )
+}
+
+fn run_estree_test262_impl(
+    files: &[Test262File],
+    get_snapshot_path: impl Fn(&Test262File) -> PathBuf + Sync,
+    parser_config: RuntimeParserConfig,
+    get_json: impl for<'a> Fn(ParserReturn<'a>) -> String + Sync,
+) -> Vec<CoverageResult> {
     files
         .par_iter()
-        .filter(|f| {
-            let should_fail =
-                f.meta.negative.as_ref().is_some_and(|n| n.phase == crate::test262::Phase::Parse);
-            if should_fail {
-                return false;
-            }
-            // Skip hashbang tests
-            if f.path.starts_with("test262/test/language/comments/hashbang/") {
-                return false;
-            }
-            // Check if acorn json exists
-            let acorn_path = workspace_root()
-                .join("estree-conformance/tests")
-                .join(&f.path)
-                .with_extension("json");
-            acorn_path.exists()
+        .filter(|test_file| {
+            !test_file
+                .meta
+                .negative
+                .as_ref()
+                .is_some_and(|n| n.phase == crate::test262::Phase::Parse)
         })
-        .map(|f| {
-            let is_module = f.meta.flags.contains(&TestFlag::Module);
+        .filter_map(|test_file| {
+            let snapshot_path = get_snapshot_path(test_file);
+            let expected_json = fs::read_to_string(&snapshot_path).ok()?;
+            Some((test_file, expected_json))
+        })
+        .map(|(test_file, expected_json)| {
+            let is_module = test_file.meta.flags.contains(&TestFlag::Module);
             let source_type = SourceType::script().with_module(is_module);
+            let source_text = test_file.code.as_str();
+
             let allocator = Allocator::new();
-            let ret = Parser::new(&allocator, &f.code, source_type).parse();
+            let ret = Parser::new(&allocator, source_text, source_type)
+                .with_config(parser_config)
+                .parse();
 
             if ret.panicked || !ret.errors.is_empty() {
                 let error =
                     ret.errors.first().map_or_else(|| "Panicked".to_string(), ToString::to_string);
                 return CoverageResult {
-                    path: f.path.clone(),
+                    path: test_file.path.clone(),
                     should_fail: false,
                     result: TestResult::ParseError(error, ret.panicked),
                 };
             }
 
-            let mut program = ret.program;
-            Utf8ToUtf16::new(&f.code).convert_program_with_ascending_order_checks(&mut program);
-
-            let acorn_path = workspace_root()
-                .join("estree-conformance/tests")
-                .join(&f.path)
-                .with_extension("json");
-            let acorn_json = fs::read_to_string(&acorn_path).unwrap_or_default();
-            let oxc_json = program.to_pretty_estree_js_json(false);
-
-            let result = if oxc_json == acorn_json {
+            let actual_json = get_json(ret);
+            let result = if actual_json == expected_json {
                 TestResult::Passed
             } else {
-                TestResult::Mismatch("Mismatch", oxc_json, acorn_json)
+                TestResult::Mismatch("Mismatch", actual_json, expected_json)
             };
-
-            CoverageResult { path: f.path.clone(), should_fail: false, result }
+            CoverageResult { path: test_file.path.clone(), should_fail: false, result }
         })
         .collect()
 }
 
-pub fn run_estree_typescript(files: &[TypeScriptFile]) -> Vec<CoverageResult> {
-    // Skip paths for TypeScript estree tests
-    const SKIP_PATHS: &[&str] = &[
-        // Skip cases which are failing in parser conformance tests
-        "typescript/tests/cases/compiler/arrayFromAsync.ts",
-        "typescript/tests/cases/conformance/classes/propertyMemberDeclarations/staticPropertyNameConflicts.ts",
-        "typescript/tests/cases/conformance/es2019/importMeta/importMeta.ts",
-        "typescript/tests/cases/compiler/sourceMapValidationDecorators.ts",
-        "typescript/tests/cases/conformance/esDecorators/esDecorators-decoratorExpression.1.ts",
-        // Skip tests where TS-ESLint is incorrect
-        "typescript/tests/cases/conformance/es6/templates/templateStringMultiline3.ts",
-        // Skip tests with hashbangs (we have different handling)
-        "typescript/tests/cases/compiler/emitBundleWithShebang1.ts",
-        "typescript/tests/cases/compiler/emitBundleWithShebang2.ts",
-        "typescript/tests/cases/compiler/emitBundleWithShebangAndPrologueDirectives1.ts",
-        "typescript/tests/cases/compiler/emitBundleWithShebangAndPrologueDirectives2.ts",
-        "typescript/tests/cases/compiler/shebang.ts",
-        "typescript/tests/cases/compiler/shebangBeforeReferences.ts",
-    ];
+pub fn run_estree_acorn_jsx(files: &[AcornJsxFile]) -> Vec<CoverageResult> {
+    run_estree_acorn_jsx_impl(
+        files,
+        |test_file| workspace_root().join(&test_file.path).with_extension("json"),
+        RuntimeParserConfig::default(),
+        |parser_ret| {
+            let mut program = parser_ret.program;
+            let source_text = program.source_text;
+            Utf8ToUtf16::new(source_text).convert_program_with_ascending_order_checks(&mut program);
+            program.to_pretty_estree_js_json(false)
+        },
+    )
+}
 
+pub fn run_estree_acorn_jsx_tokens(files: &[AcornJsxFile]) -> Vec<CoverageResult> {
+    run_estree_acorn_jsx_impl(
+        files,
+        |test_file| workspace_root().join(test_file.path.with_extension("tokens.json")),
+        RuntimeParserConfig::new(true),
+        |parser_ret| {
+            let ParserReturn { program, tokens, .. } = parser_ret;
+            let source_text = program.source_text;
+            let span_converter = Utf8ToUtf16::new(source_text);
+            to_estree_tokens_pretty_json(
+                &tokens,
+                &program,
+                source_text,
+                &span_converter,
+                ESTreeTokenOptions::new(false),
+            )
+        },
+    )
+}
+
+fn run_estree_acorn_jsx_impl(
+    files: &[AcornJsxFile],
+    get_snapshot_path: impl Fn(&AcornJsxFile) -> PathBuf + Sync,
+    parser_config: RuntimeParserConfig,
+    get_json: impl for<'a> Fn(ParserReturn<'a>) -> String + Sync,
+) -> Vec<CoverageResult> {
     files
         .par_iter()
-        .filter(|f| {
-            if f.should_fail {
-                return false;
-            }
-            // Skip ignored paths
-            if f.path.to_str().is_some_and(|p| SKIP_PATHS.contains(&p)) {
-                return false;
-            }
-            // Check if estree file exists
-            let ext = f.path.extension().and_then(|e| e.to_str()).unwrap_or("");
-            let estree_path = workspace_root()
-                .join("estree-conformance/tests")
-                .join(&f.path)
-                .with_extension(format!("{ext}.md"));
-            estree_path.exists()
-        })
-        .map(|f| {
-            let ext = f.path.extension().and_then(|e| e.to_str()).unwrap_or("");
-            let estree_path = workspace_root()
-                .join("estree-conformance/tests")
-                .join(&f.path)
-                .with_extension(format!("{ext}.md"));
+        .map(|test_file| {
+            let source_type = SourceType::default().with_module(true).with_jsx(true);
+            let source_text = test_file.code.as_str();
 
-            let estree_content = fs::read_to_string(&estree_path).unwrap_or_default();
-            let estree_units: Vec<_> = estree_content
-                .split("__ESTREE_TEST__")
-                .skip(1)
-                .filter_map(|s| {
-                    let s = s.strip_suffix("\n```\n")?;
-                    s.strip_prefix(":AST:\n```json\n")
-                })
-                .collect();
+            let allocator = Allocator::new();
+            let ret = Parser::new(&allocator, source_text, source_type)
+                .with_config(parser_config)
+                .parse();
 
-            if estree_units.len() != f.units.len() {
+            if ret.panicked || !ret.errors.is_empty() {
+                let error =
+                    ret.errors.first().map_or_else(|| "Panicked".to_string(), ToString::to_string);
+                let result = if test_file.should_fail {
+                    TestResult::CorrectError(error, ret.panicked)
+                } else {
+                    TestResult::ParseError(error, ret.panicked)
+                };
                 return CoverageResult {
-                    path: f.path.clone(),
+                    path: test_file.path.clone(),
+                    should_fail: test_file.should_fail,
+                    result,
+                };
+            }
+
+            if test_file.should_fail {
+                return CoverageResult {
+                    path: test_file.path.clone(),
+                    should_fail: true,
+                    result: TestResult::IncorrectlyPassed,
+                };
+            }
+
+            let snapshot_path = get_snapshot_path(test_file);
+            let expected_json = match fs::read_to_string(&snapshot_path) {
+                Ok(json) => json,
+                Err(error) => {
+                    return CoverageResult {
+                        path: test_file.path.clone(),
+                        should_fail: false,
+                        result: TestResult::GenericError(
+                            "Error reading Acorn JSON",
+                            error.to_string(),
+                        ),
+                    };
+                }
+            };
+
+            let actual_json = get_json(ret);
+            let result = if actual_json == expected_json {
+                TestResult::Passed
+            } else {
+                TestResult::Mismatch("Mismatch", actual_json, expected_json)
+            };
+            CoverageResult { path: test_file.path.clone(), should_fail: false, result }
+        })
+        .collect()
+}
+
+// Skip paths for TypeScript ESTree tests
+static TS_SKIP_PATHS: &[&str] = &[
+    // Skip cases which are failing in parser conformance tests
+    "typescript/tests/cases/compiler/arrayFromAsync.ts",
+    "typescript/tests/cases/conformance/classes/propertyMemberDeclarations/staticPropertyNameConflicts.ts",
+    "typescript/tests/cases/conformance/es2019/importMeta/importMeta.ts",
+    "typescript/tests/cases/compiler/sourceMapValidationDecorators.ts",
+    "typescript/tests/cases/conformance/esDecorators/esDecorators-decoratorExpression.1.ts",
+    // Skip tests where TS-ESLint is incorrect
+    "typescript/tests/cases/conformance/es6/templates/templateStringMultiline3.ts",
+];
+
+pub fn run_estree_typescript(files: &[TypeScriptFile]) -> Vec<CoverageResult> {
+    run_estree_typescript_impl(files, "AST", RuntimeParserConfig::default(), |ret| {
+        let mut program = ret.program;
+        let source_text = program.source_text;
+        Utf8ToUtf16::new(source_text).convert_program_with_ascending_order_checks(&mut program);
+        program.to_pretty_estree_ts_json(false)
+    })
+}
+
+pub fn run_estree_typescript_tokens(files: &[TypeScriptFile]) -> Vec<CoverageResult> {
+    run_estree_typescript_impl(files, "TOKENS", RuntimeParserConfig::new(true), |ret| {
+        let ParserReturn { program, tokens, .. } = ret;
+        let source_text = program.source_text;
+        let span_converter = Utf8ToUtf16::new(source_text);
+        to_estree_tokens_pretty_json(
+            &tokens,
+            &program,
+            source_text,
+            &span_converter,
+            ESTreeTokenOptions::new(true),
+        )
+    })
+}
+
+fn run_estree_typescript_impl(
+    files: &[TypeScriptFile],
+    section_key: &'static str,
+    parser_config: RuntimeParserConfig,
+    get_json: impl for<'a> Fn(ParserReturn<'a>) -> String + Sync,
+) -> Vec<CoverageResult> {
+    files
+        .par_iter()
+        .filter_map(|test_file| {
+            if test_file.should_fail {
+                return None;
+            }
+            if test_file.path.to_str().is_some_and(|p| TS_SKIP_PATHS.contains(&p)) {
+                return None;
+            }
+
+            let ext = test_file.path.extension().and_then(|e| e.to_str()).unwrap_or("");
+            let estree_path = workspace_root()
+                .join("estree-conformance/tests")
+                .join(&test_file.path)
+                .with_extension(format!("{ext}.md"));
+            let estree_content = fs::read_to_string(&estree_path).ok()?;
+            Some((test_file, estree_content))
+        })
+        .map(|(test_file, estree_content)| {
+            let snapshot_units = parse_estree_json_blocks(&estree_content, section_key);
+
+            if snapshot_units.len() != test_file.units.len() {
+                return CoverageResult {
+                    path: test_file.path.clone(),
                     should_fail: false,
                     result: TestResult::GenericError(
-                        "Unexpected estree file",
-                        format!("{} != {}", estree_units.len(), f.units.len()),
+                        "Unexpected ESTree file",
+                        format!(
+                            "{section_key} {} != {}",
+                            snapshot_units.len(),
+                            test_file.units.len()
+                        ),
                     ),
                 };
             }
 
-            for (unit, expected) in f.units.iter().zip(estree_units.iter()) {
+            for (unit, &expected_json) in test_file.units.iter().zip(snapshot_units.iter()) {
+                let source_type = unit.source_type;
+                let source_text = unit.content.as_str();
+                let parse_options = ParseOptions { preserve_parens: false, ..Default::default() };
+
                 let allocator = Allocator::new();
-                let options = ParseOptions { preserve_parens: false, ..Default::default() };
-                let ret = Parser::new(&allocator, &unit.content, unit.source_type)
-                    .with_options(options)
+                let ret = Parser::new(&allocator, source_text, source_type)
+                    .with_options(parse_options)
+                    .with_config(parser_config)
                     .parse();
 
                 if ret.panicked || !ret.errors.is_empty() {
@@ -837,27 +996,46 @@ pub fn run_estree_typescript(files: &[TypeScriptFile]) -> Vec<CoverageResult> {
                         .first()
                         .map_or_else(|| "Panicked".to_string(), ToString::to_string);
                     return CoverageResult {
-                        path: f.path.clone(),
+                        path: test_file.path.clone(),
                         should_fail: false,
                         result: TestResult::ParseError(error, ret.panicked),
                     };
                 }
 
-                let mut program = ret.program;
-                Utf8ToUtf16::new(&unit.content)
-                    .convert_program_with_ascending_order_checks(&mut program);
-                let oxc_json = program.to_pretty_estree_ts_json(false);
-
-                if oxc_json != *expected {
+                let actual_json = get_json(ret);
+                if actual_json != expected_json {
                     return CoverageResult {
-                        path: f.path.clone(),
+                        path: test_file.path.clone(),
                         should_fail: false,
-                        result: TestResult::Mismatch("Mismatch", oxc_json, expected.to_string()),
+                        result: TestResult::Mismatch(
+                            "Mismatch",
+                            actual_json,
+                            expected_json.to_string(),
+                        ),
                     };
                 }
             }
 
-            CoverageResult { path: f.path.clone(), should_fail: false, result: TestResult::Passed }
+            CoverageResult {
+                path: test_file.path.clone(),
+                should_fail: false,
+                result: TestResult::Passed,
+            }
+        })
+        .collect()
+}
+
+fn parse_estree_json_blocks<'a>(content: &'a str, section_key: &str) -> Vec<&'a str> {
+    content
+        .split("__ESTREE_TEST__")
+        .skip(1)
+        .filter_map(|section| {
+            let (key, json) = section
+                .strip_prefix(':')
+                .and_then(|s| s.split_once(":\n```json\n"))
+                .and_then(|(key, rest)| rest.strip_suffix("\n```\n").map(|json| (key, json)))
+                .expect(r"each TS snapshot section must have the form '__ESTREE_TEST__:<key>:\n```json\n<JSON>\n```\n'");
+            if key == section_key { Some(json) } else { None }
         })
         .collect()
 }

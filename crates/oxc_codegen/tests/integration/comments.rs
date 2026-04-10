@@ -20,6 +20,16 @@ fn test_comment_at_top_of_file() {
 #[test]
 fn unit() {
     test_same("<div>{/* Hello */}</div>;\n");
+    // https://github.com/oxc-project/oxc/issues/17266
+    test("console.log(<div x={/*before*/ x} />)", "console.log(<div x={/*before*/ x} />);\n");
+    test(
+        "console.log(<div x={/*before*/ \"y\"} />)",
+        "console.log(<div x={/*before*/ \"y\"} />);\n",
+    );
+    test("console.log(<div x={/*before*/ true} />)", "console.log(<div x={/*before*/ true} />);\n");
+    test("console.log(<div {/*before*/ ...x} />)", "console.log(<div {/*before*/ ...x} />);\n");
+    test("console.log(<div>{/*before*/ x}</div>)", "console.log(<div>{/*before*/ x}</div>);\n");
+    test("console.log(<>{/*before*/ x}</>)", "console.log(<>{/*before*/ x}</>);\n");
     // https://lingui.dev/ref/macro#definemessage
     test("const message = /*i18n*/{};", "const message = (/*i18n*/ {});\n");
     test(
@@ -210,6 +220,16 @@ catch (err) /* c8 ignore next */ /* istanbul ignore next */ { handle(err); }",
             "try { something(); }
 catch (err) // v8 ignore next
 { handle(err); }",
+            // Coverage comment before ConditionalExpression alternate
+            // https://github.com/oxc-project/oxc/issues/20549
+            "const a = Math.random() ? 1 : /* istanbul ignore next */ 2;",
+            // Coverage comment between SwitchStatement cases
+            // https://github.com/oxc-project/oxc/issues/20549
+            "switch (Math.random()) {
+  case 0.5: break;
+  /* istanbul ignore next */
+  default: break;
+}",
         ];
 
         snapshot("coverage", &cases);

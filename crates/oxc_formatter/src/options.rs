@@ -69,16 +69,107 @@ pub struct FormatOptions {
     /// - `false` - Retain the default behavior of ternaries; keep question marks on the same line as the consequent.
     pub experimental_ternaries: bool,
 
+    /// Whether HTML whitespace sensitivity is set to "ignore".
+    /// When true, HTML-in-JS templates always use hard line breaks for wrapping.
+    pub html_whitespace_sensitivity_ignore: bool,
+
     /// Enable formatting for embedded languages (e.g., CSS, SQL, GraphQL) within template literals. Defaults to "auto".
     pub embedded_language_formatting: EmbeddedLanguageFormatting,
 
     /// Sort import statements. By default disabled.
-    pub experimental_sort_imports: Option<SortImportsOptions>,
+    pub sort_imports: Option<SortImportsOptions>,
 
     /// Enable Tailwind CSS class sorting in JSX class/className attributes.
     /// When enabled, class strings will be collected and passed to a callback for sorting.
     /// Defaults to None (disabled).
-    pub experimental_tailwindcss: Option<TailwindcssOptions>,
+    pub sort_tailwindcss: Option<SortTailwindcssOptions>,
+
+    /// Enable JSDoc comment formatting.
+    /// When enabled, JSDoc comments will be normalized and reformatted.
+    /// Defaults to None (disabled).
+    pub jsdoc: Option<JsdocOptions>,
+}
+
+/// How to format JSDoc comment blocks: single-line, multi-line, or preserve original.
+///
+/// Maps to upstream's `jsdocCommentLineStrategy`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum CommentLineStrategy {
+    /// Convert to single-line `/** content */` when possible.
+    #[default]
+    SingleLine,
+    /// Always use multi-line format.
+    Multiline,
+    /// Preserve original formatting (single-line stays single-line, multi-line stays multi-line).
+    Keep,
+}
+
+/// Strategy for wrapping description lines at print width.
+///
+/// Maps to upstream's `jsdocLineWrappingStyle`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum LineWrappingStyle {
+    /// Always re-wrap text to fit within print width.
+    #[default]
+    Greedy,
+    /// Preserve original line breaks if all lines fit within print width.
+    Balance,
+}
+
+/// Options for JSDoc comment formatting.
+#[derive(Debug, Clone)]
+pub struct JsdocOptions {
+    /// Capitalize the first letter of tag descriptions. Default: true.
+    /// Maps to upstream's `jsdocCapitalizeDescription`.
+    pub capitalize_descriptions: bool,
+    /// How to format comment blocks. Default: SingleLine.
+    /// Maps to upstream's `jsdocCommentLineStrategy`.
+    pub comment_line_strategy: CommentLineStrategy,
+    /// Add blank lines between different tag groups (e.g. between @param and @returns). Default: false.
+    /// Maps to upstream's `jsdocSeparateTagGroups`.
+    pub separate_tag_groups: bool,
+    /// Add a blank line between the last @param and @returns. Default: false.
+    /// Maps to upstream's `jsdocSeparateReturnsFromParam`.
+    pub separate_returns_from_param: bool,
+    /// Add spaces inside JSDoc type braces: `{string}` → `{ string }`. Default: false.
+    /// Maps to upstream's `jsdocBracketSpacing`.
+    pub bracket_spacing: bool,
+    /// Add a trailing dot to the end of descriptions. Default: false.
+    /// Maps to upstream's `jsdocDescriptionWithDot`.
+    pub description_with_dot: bool,
+    /// Append default values to @param descriptions (e.g. "Default is \`value\`"). Default: true.
+    /// Maps to upstream's `jsdocAddDefaultToDescription`.
+    pub add_default_to_description: bool,
+    /// Use fenced code blocks (```) instead of 4-space indentation for code without a language tag. Default: false.
+    /// Maps to upstream's `jsdocPreferCodeFences`.
+    pub prefer_code_fences: bool,
+    /// Strategy for wrapping description lines. Default: Greedy.
+    /// Maps to upstream's `jsdocLineWrappingStyle`.
+    pub line_wrapping_style: LineWrappingStyle,
+    /// Emit `@description` tag instead of inline description. Default: false.
+    /// Maps to upstream's `jsdocDescriptionTag`.
+    pub description_tag: bool,
+    /// Preserve indentation in unparsable @example code. Default: false.
+    /// Maps to upstream's `jsdocKeepUnParseAbleExampleIndent`.
+    pub keep_unparsable_example_indent: bool,
+}
+
+impl Default for JsdocOptions {
+    fn default() -> Self {
+        Self {
+            capitalize_descriptions: true,
+            comment_line_strategy: CommentLineStrategy::default(),
+            separate_tag_groups: false,
+            separate_returns_from_param: false,
+            bracket_spacing: false,
+            description_with_dot: false,
+            add_default_to_description: true,
+            prefer_code_fences: false,
+            line_wrapping_style: LineWrappingStyle::default(),
+            description_tag: false,
+            keep_unparsable_example_indent: false,
+        }
+    }
 }
 
 /// Options for Tailwind CSS class sorting.
@@ -86,7 +177,7 @@ pub struct FormatOptions {
 ///
 /// See <https://github.com/tailwindlabs/prettier-plugin-tailwindcss#options>
 #[derive(Debug, Default, Clone)]
-pub struct TailwindcssOptions {
+pub struct SortTailwindcssOptions {
     /// Path to your Tailwind CSS configuration file (v3).
     ///
     /// Note: Paths are resolved relative to the Oxfmt configuration file.
@@ -145,9 +236,11 @@ impl FormatOptions {
             expand: Expand::default(),
             experimental_operator_position: OperatorPosition::default(),
             experimental_ternaries: false,
+            html_whitespace_sensitivity_ignore: false,
             embedded_language_formatting: EmbeddedLanguageFormatting::default(),
-            experimental_sort_imports: None,
-            experimental_tailwindcss: None,
+            sort_imports: None,
+            sort_tailwindcss: None,
+            jsdoc: None,
         }
     }
 
@@ -174,8 +267,9 @@ impl fmt::Display for FormatOptions {
         writeln!(f, "Expand lists: {}", self.expand)?;
         writeln!(f, "Experimental operator position: {}", self.experimental_operator_position)?;
         writeln!(f, "Embedded language formatting: {}", self.embedded_language_formatting)?;
-        writeln!(f, "Experimental sort imports: {:?}", self.experimental_sort_imports)?;
-        writeln!(f, "Experimental tailwindcss: {:?}", self.experimental_tailwindcss)
+        writeln!(f, "Sort imports: {:?}", self.sort_imports)?;
+        writeln!(f, "Sort tailwindcss: {:?}", self.sort_tailwindcss)?;
+        writeln!(f, "JSDoc: {:?}", self.jsdoc)
     }
 }
 

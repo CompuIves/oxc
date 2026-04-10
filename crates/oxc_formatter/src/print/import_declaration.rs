@@ -1,6 +1,7 @@
 use oxc_allocator::Vec;
 use oxc_ast::ast::*;
 use oxc_span::GetSpan;
+use oxc_syntax::identifier::is_identifier_name_patched;
 
 use crate::{
     Format, FormatTrailingCommas, JsLabels, TrailingSeparator,
@@ -10,9 +11,7 @@ use crate::{
         Formatter, prelude::*, separated::FormatSeparatedIter, trivia::FormatLeadingComments,
     },
     print::semicolon::OptionalSemicolon,
-    utils::string::{
-        FormatLiteralStringToken, StringLiteralParentKind, is_identifier_name_patched,
-    },
+    utils::string::{FormatLiteralStringToken, StringLiteralParentKind},
     write,
 };
 
@@ -56,7 +55,7 @@ impl<'a> FormatWrite<'a> for AstNode<'a, ImportDeclaration<'a>> {
             write!(f, [OptionalSemicolon]);
         });
 
-        if f.options().experimental_sort_imports.is_some() {
+        if f.options().sort_imports.is_some() {
             write!(f, [labelled(LabelId::of(JsLabels::ImportDeclaration), decl)]);
         } else {
             write!(f, decl);
@@ -220,7 +219,9 @@ impl<'a> Format<'a> for AstNode<'a, Vec<'a, ImportAttribute<'a>>> {
             write!(f, "{");
 
             if self.len() > 1
-                || self.first().is_some_and(|attribute| attribute.key.as_atom().as_str() != "type")
+                || self
+                    .first()
+                    .is_some_and(|attribute| attribute.key.as_arena_str().as_str() != "type")
                 || f.comments().has_comment_before(self.parent().span().end)
             {
                 write!(

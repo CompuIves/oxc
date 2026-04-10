@@ -96,7 +96,8 @@ use oxc_ast::{NONE, ast::*};
 use oxc_ast_visit::{VisitMut, walk_mut::walk_expression};
 use oxc_data_structures::stack::{NonEmptyStack, SparseStack};
 use oxc_semantic::{ReferenceFlags, SymbolId};
-use oxc_span::{GetSpan, Ident, SPAN};
+use oxc_span::{GetSpan, SPAN};
+use oxc_str::Ident;
 use oxc_syntax::{
     scope::{ScopeFlags, ScopeId},
     symbol::SymbolFlags,
@@ -786,7 +787,7 @@ impl<'a> ArrowFunctionConverter<'a> {
         if let Some(assign_value) = assign_value {
             arguments.push(Argument::from(assign_value.take_in(ctx.ast)));
         }
-        let call = ctx.ast.expression_call(SPAN, callee, NONE, arguments, false);
+        let call = ctx.ast.expression_call(expr.span(), callee, NONE, arguments, false);
         Some(call)
     }
 
@@ -826,7 +827,7 @@ impl<'a> ArrowFunctionConverter<'a> {
         let property = ctx.ast.identifier_name(SPAN, "call");
         let callee = ctx.ast.member_expression_static(SPAN, object, property, false);
         let callee = Expression::from(callee);
-        Some(ctx.ast.expression_call(SPAN, callee, NONE, arguments, false))
+        Some(ctx.ast.expression_call(call.span, callee, NONE, arguments, false))
     }
 
     /// Transform an `AssignmentExpression` whose assignment target is a `super` member expression.

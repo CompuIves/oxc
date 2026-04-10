@@ -17,18 +17,11 @@ const group: TestGroup = {
   },
 
   prepare(require: NodeJS.Require, mock: MockFn) {
-    // Load the copy of `@typescript-eslint/parser` which is used by the test cases
-    const tsEslintParser = require("@typescript-eslint/parser") as TSEslintParser;
+    // Load the copy of TS-ESLint parser which is used by the test cases
+    const tsEslintParser = require("typescript-eslint").parser as TSEslintParser;
 
     // Mock `@typescript-eslint/rule-tester` to use conformance `RuleTester`
     mock("@typescript-eslint/rule-tester", createTsRuleTester(tsEslintParser));
-
-    // Mock `@typescript-eslint/parser` exported by `typescript-eslint`.
-    // This is imported by `no-indexof-equality` test file.
-    mock("@typescript-eslint/parser", tsEslintParser, [
-      "typescript-eslint",
-      "@typescript-eslint/eslint-plugin/use-at-your-own-risk/raw-plugin",
-    ]);
   },
 
   shouldSkipTest(ruleName: string, test: TestCase, code: string, err: Error): boolean {
@@ -63,7 +56,7 @@ const group: TestGroup = {
 
   ruleTesters: [{ specifier: "eslint", propName: "RuleTester" }],
 
-  parsers: [{ specifier: "@typescript-eslint/parser", lang: "ts" }],
+  parsers: [{ specifier: "typescript-eslint", propName: "parser", lang: "ts" }],
 };
 
 export default group;
@@ -78,17 +71,13 @@ export default group;
 function createTsRuleTester(tsEslintParser: TSEslintParser): { RuleTester: typeof RuleTester } {
   class TsRuleTester extends RuleTester {
     constructor(config?: { languageOptions?: LanguageOptions } | null) {
-      if (config == null) {
-        config = {};
-      } else {
-        config = { ...config };
-      }
-
-      const languageOptions = { ...config.languageOptions };
-      config.languageOptions = languageOptions;
-      if (config.languageOptions.parser == null) config.languageOptions.parser = tsEslintParser;
-
-      super(config);
+      super({
+        ...config,
+        languageOptions: {
+          parser: tsEslintParser,
+          ...config?.languageOptions,
+        },
+      });
     }
   }
 

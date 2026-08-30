@@ -122,11 +122,13 @@ declare_oxc_lint!(
     eslint,
     restriction,
     config = DefaultCaseConfig,
+    version = "0.4.0",
+    short_description = "Enforces that all `switch` statements include a `default` case, unless explicitly marked with a configured comment.",
 );
 
 impl Rule for DefaultCase {
     fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
-        serde_json::from_value::<DefaultRuleConfig<Self>>(value).map(DefaultRuleConfig::into_inner)
+        DefaultRuleConfig::<Self>::from_value(value).map(DefaultRuleConfig::into_inner)
     }
 
     fn run<'a>(&self, node: &AstNode<'a>, ctx: &LintContext<'a>) {

@@ -56,7 +56,9 @@ declare_oxc_lint!(
     /// is allowed). This is intentional, as props are case-sensitive in JSX.
     JsxNoDuplicateProps,
     react,
-    correctness
+    correctness,
+    version = "0.0.14",
+    short_description = "This rule prevents duplicate props in JSX elements.",
 );
 
 impl Rule for JsxNoDuplicateProps {

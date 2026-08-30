@@ -74,11 +74,13 @@ declare_oxc_lint!(
     jsx_a11y,
     correctness,
     config = MouseEventsHaveKeyEventsConfig,
+    version = "0.1.1",
+    short_description = "Enforce `onMouseOver`/`onMouseOut` are accompanied by `onFocus`/`onBlur`.",
 );
 
 impl Rule for MouseEventsHaveKeyEvents {
     fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
-        serde_json::from_value::<DefaultRuleConfig<Self>>(value).map(DefaultRuleConfig::into_inner)
+        DefaultRuleConfig::<Self>::from_value(value).map(DefaultRuleConfig::into_inner)
     }
 
     fn run<'a>(&self, node: &AstNode<'a>, ctx: &LintContext<'a>) {
@@ -123,10 +125,10 @@ impl Rule for MouseEventsHaveKeyEvents {
                 }
 
                 match has_jsx_prop(jsx_opening_el, "onBlur").and_then(get_prop_value) {
-                    Some(JSXAttributeValue::ExpressionContainer(container)) => {
-                        if container.expression.is_undefined() {
-                            ctx.diagnostic(miss_on_blur(jsx_attr.span(), handler));
-                        }
+                    Some(JSXAttributeValue::ExpressionContainer(container))
+                        if container.expression.is_undefined() =>
+                    {
+                        ctx.diagnostic(miss_on_blur(jsx_attr.span(), handler));
                     }
                     None => {
                         ctx.diagnostic(miss_on_blur(jsx_attr.span(), handler));

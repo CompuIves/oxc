@@ -4,6 +4,314 @@ All notable changes to this package will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0).
 
+## [0.65.0] - 2026-08-24
+
+### 🐛 Bug Fixes
+
+- bf37dd5 formatter: Preserve class decorators before export when the statement is suppressed (#26034) (leaysgur)
+
+## [0.64.0] - 2026-08-18
+
+### 🚀 Features
+
+- 2adb8fb formatter: Implement `operatorPosition` option (#25581) (leaysgur)
+
+### 🐛 Bug Fixes
+
+- 44231fb formatter: Fix comment and indent issues around unions (#25665) (leaysgur)
+- 2465e87 formatter: Keep comments in place when dropping `EmptyStatement` (#25730) (leaysgur)
+- 7e4f3b7 formatter: Print `JSDocUnknownType` (#25729) (leaysgur)
+- 5238d9e formatter: Keep nested awaited-paren member chain grouped in call arguments (#25646) (leaysgur)
+- 7f350d1 formatter: Keep unary comment and print only needed parens (#25526) (leaysgur)
+
+## [0.63.0] - 2026-08-10
+
+### 💥 BREAKING CHANGES
+
+- a33788e ast: [**BREAKING**] Group class heritage into `ClassHeritage` (#25360) (camc314)
+- 5c5cdcd ast: [**BREAKING**] Narrow `TSInterfaceHeritage::expression` to TSTypeName (#24360) (camc314)
+- 6be314f ast: [**BREAKING**] Remove duplicated `VariableDeclarator::kind` (#25319) (camc314)
+- 44fd320 ast: [**BREAKING**] Split TS external modules & Namespace Declarations (#25284) (camc314)
+
+### 🐛 Bug Fixes
+
+- b63eccc formatter: Keep comments after TS this_param (#25459) (leaysgur)
+- ab52a59 formatter: Format xxx-in-js inside JSDoc js fence (#25414) (leaysgur)
+- 1a2c64a formatter,oxfmt: Apply effective print width for JSDoc fence (#25413) (leaysgur)
+- ef1d04b formatter: Break mapped type brackets (#25297) (leaysgur)
+- 4e6f3f1 formatter: Break index signature brackets (#25296) (leaysgur)
+- c29b587 formatter_core: Measure decided-flat fill separator as flat during group re-measure (#25276) (leaysgur)
+
+### 📚 Documentation
+
+- 6eae5c9 formatter,oxfmt: Record embed-layer decisions in place (#25422) (leaysgur)
+
+## [0.62.0] - 2026-08-03
+
+### 💥 BREAKING CHANGES
+
+- 067da8c ast: [**BREAKING**] Store single parameter in `TSIndexSignature::parameter` (#25154) (camc314)
+- a0c7788 ast: [**BREAKING**] Change `TSIndexSignatureName::name` to `Ident` (#25150) (camc314)
+- 1bdedd1 ast: [**BREAKING**] Introduce `ExportDeclaration`, `ExportFromDeclaration` (#25095) (camc314)
+- c917f20 ast: [**BREAKING**] Introduce `ArrowFunctionBody` enum (#24987) (camc314)
+
+### 🚀 Features
+
+- 1b57f78 oxfmt: Support tsx-in-vue (#25063) (leaysgur)
+
+### 🐛 Bug Fixes
+
+- a9e76e9 oxfmt: Rework tsx-in-vue support (#25106) (leaysgur)
+- ca1ba71 formatter: Hug arrows with type-reference return annotations (#25044) (Pitiș Radu)
+- f56009a oxfmt: Correct prose about comment width in fits measurement (#25054) (leaysgur)
+
+### ⚡ Performance
+
+- b91d5a8 formatter_css,formatter_graphql,formatter_yaml,formatter_json: Pre alloc IR buffers (#25234) (leaysgur)
+
+### 📚 Documentation
+
+- eaa7c69 formatter_core: Extract FORMATTER_POLICY (#25233) (leaysgur)
+- 193e16f formatter/jsdoc: Correct `str_width` attribution (#25142) (leaysgur)
+
+## [0.61.0] - 2026-07-27
+
+### 🐛 Bug Fixes
+
+- e037709 formatter: Stop preserving indent for embedded template exprs (#24972) (leaysgur)
+- 143fd1f formatter: Align quoted `new` signature (#24883) (leaysgur)
+- d076b40 formatter: Check calee chain is_simple (#24871) (leaysgur)
+- 8eb9eca formatter/jsdoc: Respect `singleQuote` option in `@import` (#24787) (leaysgur)
+- 6f05ac4 formatter: Fix template literal formatting (#24786) (leaysgur)
+
+### ⚡ Performance
+
+- bb73b23 formatter_core: Bound the thread-local scratch cache (#24793) (leaysgur)
+- a5f7b15 formatter: Stage assignment-like left hand side on the heap (#24613) (leaysgur)
+- 94de05f formatter: Accumulate JSX child-list builders on the heap (#24585) (leaysgur)
+- c191f51 formatter_core: Stage IR buffers on the heap to reduce arena memory (#24582) (leaysgur)
+
+## [0.60.0] - 2026-07-20
+
+### 💥 BREAKING CHANGES
+
+- 54cc121 ast: [**BREAKING**] Split `MetaProperty` into `ImportMeta` and `NewTarget` (#24557) (camc314)
+
+### 🚀 Features
+
+- 3d22307 parser: Add `ParseOptions::enable_ident_hashes` (#24491) (Boshen)
+
+### 🐛 Bug Fixes
+
+- 6fe866a oxfmt: Keep tailwind classes glued to template expr with `preserveWhitespace` (#24609) (leaysgur)
+
+## [0.59.0] - 2026-07-13
+
+### 🚀 Features
+
+- df250df formatter: Support `quoteProps` for TS enum and methods (#24309) (leaysgur)
+
+### 🐛 Bug Fixes
+
+- 162bddf formatter: Add required parens for conditional type in type parameter constraint (#24450) (leaysgur)
+- 2d22a91 formatter: Determine type cast target from span instead of lexical scan (#24447) (leaysgur)
+- 25306e9 formatter: Do not add extra parens with type cast comment (#24444) (leaysgur)
+- bd6edfe formatter: Break arrow signature that exactly fills the line when cond body may hug (#24440) (leaysgur)
+- a99ef41 formatter: Keep quotes on method signature named new (#24432) (leaysgur)
+- b7c7e15 formatter: Add parens for import and private field in new callee chain (#24320) (leaysgur)
+- 0c8f6e4 formatter: Update detect_code_removal for #24309 (#24314) (leaysgur)
+- a85aad0 formatter: Fix member-chain and non-null parens (#24312) (leaysgur)
+- 1c29c73 formatter: Preserve `TSNonNullExpression` in chain expression (#24311) (leaysgur)
+- 8933c0e formatter: Keep comment inside of empty `switch` block (#24308) (leaysgur)
+- ec26af2 formatter: Preserve blank lines between JSX attrs (#24290) (leaysgur)
+- 70bd54d formatter: Keep arrow function body comment (#24287) (leaysgur)
+- 42ec8de formatter: Keep comments inside surviving parens and suppressed statement terminators (#24253) (leaysgur)
+- 1343779 formatter: Keep comment inline for empty statements (#24249) (leaysgur)
+- b996579 formatter: Print ; before trailing comments part 2 (#24246) (leaysgur)
+- 4f86e8c formatter: Print `;` before trailing comments (#24244) (leaysgur)
+- 01252e4 formatter: Add or remove parens for `let` declaration (#24215) (leaysgur)
+
+### ⚡ Performance
+
+- a2f255b formatter: Use `SmallVec` for `MemberChain` collections (#23776) (Marius Schulz)
+
+### 📚 Documentation
+
+- b52d0f5 formatter: Add TODO comment about unsound code (#24372) (overlookmotel)
+
+## [0.58.0] - 2026-07-06
+
+### 🚀 Features
+
+- 89ec3d9 formatter_core: Add literal line and root indention primitives (#24051) (leaysgur)
+
+### 🐛 Bug Fixes
+
+- 1fe6546 formatter: Omit unneeded `;` for type members with `no-semi` (#24212) (leaysgur)
+- 0ad7316 formatter: Print space for `ForStatement`.`update` only if exists (#24211) (leaysgur)
+- 3abbed5 formatter: Print `;` before jsdoc type-cast parens with no-semi (#24208) (leaysgur)
+- d3b9591 formatter: Add parens around `await/yield` with `<T>` (#24202) (leaysgur)
+
+## [0.57.0] - 2026-06-29
+
+### 🐛 Bug Fixes
+
+- 8c07cad all: Enable `disable_old_builder` Cargo feature for `oxc_ast` crate in tests (#23888) (overlookmotel)
+
+### 📚 Documentation
+
+- b4d0dc9 oxfmt,formatter,formatter_css,formatter_core: Update AGENTS.md (#23814) (leaysgur)
+
+## [0.56.0] - 2026-06-22
+
+### 💥 BREAKING CHANGES
+
+- 36009dd allocator: [**BREAKING**] `GetAllocator::allocator` take `&self` (#23676) (overlookmotel)
+
+### 🐛 Bug Fixes
+
+- 7cd1737 formatter: Normalize CRLF for suppressed text (#23701) (leaysgur)
+- a36e444 formatter: Member chain panic when tail is merged with comment in dev build (#23698) (leaysgur)
+- 600d306 formatter: Preserve parens with default export and type cast (#23697) (leaysgur)
+- 61290f2 formatter: Single-member intersection/union type with comment formatting (#21915) (Leonabcd123)
+- 5a1b0b4 formatter: Parenthesize a type assertion used as the base of `**` (#23633) (Jerry Zhao)
+- 91827e2 formatter: Use `Ordering::reverse()` with `order: desc` for idempotency (#23543) (leaysgur)
+
+### ⚡ Performance
+
+- 80f1697 formatter: Avoid arena copy for already-lowercase bigint literals (#23534) (Yunfei He)
+- 1a40b71 formatter: Avoid arena copy for borrowed numeric-literal text (#23512) (Yunfei He)
+- 12e4451 formatter: Avoid arena copy for borrowed string-literal text (#23465) (Yunfei He)
+
+## [0.54.0] - 2026-06-08
+
+### 🚀 Features
+
+- 27a6db8 formatter_json: Implement jsonc variant (#22912) (leaysgur)
+
+### 🐛 Bug Fixes
+
+- 01e0871 formatter,formatter_json: Handle PS/LS as line terminator (#22978) (leaysgur)
+
+## [0.53.0] - 2026-06-01
+
+### 🚀 Features
+
+- 9c71f2e ast, codegen, formatter: Add `WithClauseKeyword::as_str` helper and use it (#22791) (camc314)
+
+### 🐛 Bug Fixes
+
+- 23f0cc8 formatter: Don't move comments inside variable declaration in for in loop (#22776) (leaysgur)
+- f200c40 formatter: Don't move comments inside variable declaration in for of loop (#22773) (Leonabcd123)
+
+### 📚 Documentation
+
+- 845f393 oxfmt,formatter,formatter_json,formatter_core: Add/update AGENTS.md (#22873) (leaysgur)
+
+## [0.52.0] - 2026-05-26
+
+### 🐛 Bug Fixes
+
+- 5a26479 formatter: Preserve import phases (#22692) (Cameron)
+
+### ⚡ Performance
+
+- 78cf83f formatter: Pre-size output buffer using source text length (#22594) (Dunqing)
+
+## [0.51.0] - 2026-05-18
+
+### 🐛 Bug Fixes
+
+- 8ee946f formatter/sort_imports: Use label to classify lines (#22512) (leaysgur)
+- 8c1da44 formatter: Normalize destructuring keys in DCR (#22478) (camc314)
+
+## [0.50.0] - 2026-05-15
+
+### 🐛 Bug Fixes
+
+- e49ee26 formatter: Respect `singleQuote` for jsdoc `import()` type paths (#22353) (Colin Lienard)
+- 43b9978 formatter/sort_imports: Treat subpath imports as internal (#22440) (leaysgur)
+- 7c5cfa0 formatter: Handle jsx trailing comment with parens (#22370) (leaysgur)
+- ac5f120 formatter: Fix erroneous formatting inside a template literal with parentheses (#22262) (Jovi De Croock)
+- 3c53a95 formatter/sort_imports: Handle ignore comment as boundary (#22369) (leaysgur)
+- 055cc61 formatter: Expand JSX logical chain with leading line comment (#22346) (leaysgur)
+- 8046222 formatter: Preserve type alias comment break (#22261) (Jovi De Croock)
+
+## [0.49.0] - 2026-05-11
+
+### 🐛 Bug Fixes
+
+- e2a20b6 formatter: Add space after commas in import attributes (#22274) (Leonabcd123)
+
+### ⚡ Performance
+
+- f14e81e formatter/sort_imports: Skip sort for single import runs (#22204) (leaysgur)
+- 32255b1 formatter: Process `ImportDeclaration`s in a run (#22079) (overlookmotel)
+
+### 📚 Documentation
+
+- 4da6f4c formatter: Correct comment (#22217) (overlookmotel)
+- ef3507d formatter/sort_imports: Refresh docs (#22203) (leaysgur)
+
+## [0.48.0] - 2026-05-05
+
+### 🐛 Bug Fixes
+
+- ef0db6b formatter: Sequence expression in arrow function body collapses onto one line (#21183) (Justin Mecham)
+- 5d5d808 formatter: Preserve blank line after directive with trailing comment (#21153) (Justin Mecham)
+
+### ⚡ Performance
+
+- 2fd907d formatter: Sort imports during IR construction (#22065) (overlookmotel)
+
+## [0.47.0] - 2026-04-27
+
+### 💥 BREAKING CHANGES
+
+- 502e804 ast: [**BREAKING**] Reduce size of `TSTypePredicateName` (#21711) (overlookmotel)
+- 5651539 ast: [**BREAKING**] Reduce size of `JSXExpression` (#21710) (overlookmotel)
+- c44e280 ast: [**BREAKING**] Reduce size of `ArrayExpressionElement` (#21709) (overlookmotel)
+
+### 🐛 Bug Fixes
+
+- 477435b formatter/sort_imports: Keep leading blank line when decreasing group transitions (#21835) (leaysgur)
+- 5eb8e2b formatter/sort_imports: Preserve blank lines around ignored side-effect imports (#21692) (leaysgur)
+- 9f82ed4 formatter: Escape backticks in JSDoc inline code spans (#21577) (bab)
+
+### ⚡ Performance
+
+- 6a96c76 formatter: Avoid heap alloc for jsdoc delimiter (#21597) (leaysgur)
+
+## [0.46.0] - 2026-04-20
+
+### 💥 BREAKING CHANGES
+
+- 24fb7eb allocator: [**BREAKING**] Rename `Box` and `Vec` methods (#21395) (overlookmotel)
+
+### 🐛 Bug Fixes
+
+- a501a53 formatter: Handle comments after pipe in single-member union types (#21487) (John Costa)
+- 41bb2d5 formatter: Preserve more `intrinsic` parens (#21449) (leaysgur)
+- f894750 formatter: Preserve parens around `intrinsic` in type alias annotation (#21410) (Dunqing)
+
+## [0.45.0] - 2026-04-13
+
+### 💥 BREAKING CHANGES
+
+- 382958a span: [**BREAKING**] Remove re-exports of string types from `oxc_span` crate (#21246) (overlookmotel)
+
+### 🐛 Bug Fixes
+
+- 2871fc2 oxfmt: Non idempotent formatting on comments in TS (#20449) (Cat Chen)
+- 1a8c225 formatter: Preserve newline between self-closing JSX element and single-char text (#21149) (Justin Mecham)
+- 407b725 oxfmt: Indent dangling comments in empty enum with block indent (#21163) (Leonabcd123)
+- d13fd37 formatter: Remove extra outer parentheses on return with JSDoc type cast (#21109) (bab)
+- 4da53e5 formatter: Preserve trailing comma in TSX arrow functions with default type params (#21151) (Justin Mecham)
+
+### ⚡ Performance
+
+- 0ce619f formatter: Use `Allocator::alloc_concat_strs_array` instead of `StringBuilder::from_strs_array_in` (#21339) (overlookmotel)
+
 ## [0.44.0] - 2026-04-06
 
 ### 🐛 Bug Fixes

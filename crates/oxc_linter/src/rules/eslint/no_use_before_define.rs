@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     AstNode,
-    context::{ContextHost, LintContext},
+    context::LintContext,
     rule::{DefaultRuleConfig, Rule},
 };
 
@@ -67,6 +67,20 @@ impl Default for NoUseBeforeDefineConfig {
     }
 }
 
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+enum Nofunc {
+    Nofunc,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(untagged)]
+#[expect(unused)] // This is used in the rule configuration schema
+enum NoUseBeforeDefineConfigJson {
+    String(Nofunc),
+    Object(NoUseBeforeDefineConfig),
+}
+
 #[derive(Debug, Default, Clone)]
 pub struct NoUseBeforeDefine(NoUseBeforeDefineConfig);
 
@@ -96,12 +110,22 @@ declare_oxc_lint!(
     NoUseBeforeDefine,
     eslint,
     restriction,
-    config = NoUseBeforeDefineConfig,
+    config = NoUseBeforeDefineConfigJson,
+    version = "1.49.0",
+    short_description = "Disallows using variables before they are defined.",
 );
 
 impl Rule for NoUseBeforeDefine {
     fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::Error> {
-        serde_json::from_value::<DefaultRuleConfig<NoUseBeforeDefineConfig>>(value)
+        if let Some(serde_json::Value::String(s)) = value.as_array().and_then(|a| a.first())
+            && s == "nofunc"
+        {
+            return Ok(Self(NoUseBeforeDefineConfig {
+                functions: false,
+                ..NoUseBeforeDefineConfig::default()
+            }));
+        }
+        DefaultRuleConfig::<NoUseBeforeDefineConfig>::from_value(value)
             .map(DefaultRuleConfig::into_inner)
             .map(Self)
     }
@@ -160,10 +184,6 @@ impl Rule for NoUseBeforeDefine {
             identifier.span,
             Some(ctx.scoping().symbol_span(symbol_id)),
         ));
-    }
-
-    fn should_run(&self, ctx: &ContextHost) -> bool {
-        ctx.source_type().is_typescript()
     }
 }
 
@@ -291,7 +311,7 @@ fn is_defined_before_use(
     let defined_before_reference =
         ctx.scoping().symbol_span(symbol_id).end <= reference_node.kind().span().end;
     defined_before_reference
-        && !(reference.is_value() && is_in_initializer(symbol_id, reference, reference_node, ctx))
+        && !(reference.is_value() && is_in_initializer(symbol_id, reference_node, ctx))
 }
 
 fn unresolved_initializer_reference_declaration_span(
@@ -415,7 +435,9 @@ where
             | AstKind::ArrowFunctionExpression(_)
             | AstKind::CatchClause(_)
             | AstKind::ImportDeclaration(_)
-            | AstKind::ExportNamedDeclaration(_) => break,
+            | AstKind::ExportDeclaration(_)
+            | AstKind::ExportNamedDeclaration(_)
+            | AstKind::ExportFromDeclaration(_) => break,
             _ => {}
         }
     }
@@ -425,7 +447,6 @@ where
 
 fn is_in_initializer(
     symbol_id: SymbolId,
-    _reference: &Reference,
     reference_node: &AstNode<'_>,
     ctx: &LintContext<'_>,
 ) -> bool {
@@ -2534,6 +2555,17 @@ fn test_typescript_eslint() {
                 ",
             None,
         ),
+        ("a(); function a() { alert(arguments); }", Some(serde_json::json!(["nofunc"]))),
+        (
+            "
+            a();
+            function a() {
+              alert(arguments);
+            }
+                  ",
+            Some(serde_json::json!(["nofunc"])),
+        ),
+        (r#""use strict"; { a(); function a() {} }"#, Some(serde_json::json!(["nofunc"]))),
     ];
 
     let fail = vec![
@@ -3000,9 +3032,30 @@ fn test_typescript_eslint() {
                   ",
             None,
         ),
+        ("a(); var a=function() {};", Some(serde_json::json!(["nofunc"]))),
+        (
+            "
+            a();
+            var a = function () {};
+                  ",
+            Some(serde_json::json!(["nofunc"])),
+        ),
+        ("export { a }; const a = 1;", Some(serde_json::json!(["nofunc"]))),
     ];
 
     Tester::new(NoUseBeforeDefine::NAME, NoUseBeforeDefine::PLUGIN, pass, fail)
         .with_snapshot_suffix("typescript-eslint")
         .test_and_snapshot();
+}
+
+#[test]
+fn test_javascript() {
+    use crate::tester::Tester;
+
+    let pass = vec!["const a = 1;"];
+    let fail = vec!["const a = b; const b = 1;"];
+
+    Tester::new(NoUseBeforeDefine::NAME, NoUseBeforeDefine::PLUGIN, pass, fail)
+        .change_rule_path_extension("js")
+        .test();
 }

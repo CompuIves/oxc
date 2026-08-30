@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{path::Path, sync::Arc};
 
 use rustc_hash::{FxHashMap, FxHashSet};
 use serde_json::json;
@@ -6,26 +6,36 @@ use tokio::sync::{Mutex, RwLock};
 use tower_lsp_server::{
     jsonrpc::ErrorCode,
     ls_types::{
-        CodeActionContext, CodeActionOrCommand, Diagnostic,
-        DidChangeWatchedFilesRegistrationOptions, FileEvent, FileSystemWatcher, GlobPattern, OneOf,
-        Range, Registration, RelativePattern, TextEdit, Unregistration, Uri, WatchKind,
-        WorkspaceEdit,
+        CodeActionOrCommand, Diagnostic, DidChangeWatchedFilesRegistrationOptions, FileEvent,
+        FileSystemWatcher, GlobPattern, OneOf, Registration, RelativePattern, TextEdit,
+        Unregistration, Uri, WatchKind, WorkspaceEdit,
     },
 };
 use tracing::debug;
 
 use crate::{
-    TextDocument, ToolRestartChanges,
+    CodeActionParams, TextDocument, ToolRestartChanges,
     capabilities::DiagnosticMode,
     file_system::LSPFileSystem,
-    tool::{DiagnosticResult, Tool, ToolBuilder},
+    tool::{ClientMessage, DiagnosticResult, Tool, ToolBuilder},
 };
 
+pub struct WorkerToolChangeResult {
+    /// Diagnostic reports that need to be revalidated
+    pub diagnostics: Option<Vec<(Uri, Vec<Diagnostic>)>>,
+    /// New watchers that need to be registered
+    pub new_watchers: Vec<Registration>,
+    /// Watchers that need to be unregistered
+    pub removed_watchers: Vec<Unregistration>,
+    /// Optional messages to be sent to the client, e.g., for misconfiguration
+    pub client_messages: Vec<ClientMessage>,
+}
+
 /// A worker that manages the individual tool for a specific workspace
-/// and reports back the results to the [`Backend`](crate::backend::Backend).
+/// and returns back the results of the running tool.
 ///
 /// Each worker is responsible for a specific root URI and configures the tool's `cwd` to that root URI.
-/// The [`Backend`](crate::backend::Backend) is responsible to target the correct worker for a given file URI.
+/// The [`WorkerManager`](crate::worker_manager::WorkerManager) is responsible to target the correct worker for a given file URI.
 pub struct WorkspaceWorker {
     root_uri: Uri,
     tool: RwLock<Option<Box<dyn Tool>>>,
@@ -66,29 +76,29 @@ impl WorkspaceWorker {
 
     /// Start all programs (linter, formatter) for the worker.
     /// This should be called after the client has sent the workspace configuration.
-    pub async fn start_worker(&self, options: serde_json::Value) {
-        *self.tool.write().await = Some(self.builder.build_boxed(&self.root_uri, options.clone()));
+    ///
+    /// Returns messages to be sent to the client.
+    pub async fn start_worker(&self, options: serde_json::Value) -> Vec<ClientMessage> {
+        let result = self.builder.build(&self.root_uri, options.clone());
+        *self.tool.write().await = Some(result.tool);
 
         *self.options.lock().await = Some(options);
+
+        result.client_messages
     }
 
     /// Initialize file system watchers for the workspace.
     /// These watchers are used to watch for changes in the lint configuration files.
     /// The returned watchers will be registered to the client.
-    pub async fn init_watchers(&self) -> Vec<Registration> {
+    pub async fn init_watchers(&self) -> Option<Registration> {
         // clone the options to avoid locking the mutex
         let options_json = { self.options.lock().await.clone().unwrap_or_default() };
 
-        let tool_guard = self.tool.read().await;
-        let Some(tool) = tool_guard.as_ref() else {
-            return Vec::new();
-        };
-
-        let patterns = tool.get_watcher_patterns(options_json.clone());
+        let patterns = self.tool.read().await.as_ref()?.get_watcher_patterns(options_json);
         if patterns.is_empty() {
-            Vec::new()
+            None
         } else {
-            vec![registration_tool_watcher_id(tool.name(), &self.root_uri, patterns)]
+            Some(registration_watcher_id(&self.root_uri, patterns))
         }
     }
 
@@ -149,6 +159,9 @@ impl WorkspaceWorker {
     }
 
     /// Run different tools to collect diagnostics.
+    ///
+    /// # Errors
+    /// When calling `Tool::run_diagnostic` results into an error.
     pub async fn run_diagnostic(
         &self,
         document: &TextDocument<'_>,
@@ -158,6 +171,9 @@ impl WorkspaceWorker {
     }
 
     /// Run different tools to collect diagnostics on change.
+    ///
+    /// # Errors
+    /// When calling `Tool::run_diagnostic_on_change` results into an error.
     pub async fn run_diagnostic_on_change(
         &self,
         document: &TextDocument<'_>,
@@ -169,6 +185,9 @@ impl WorkspaceWorker {
     }
 
     /// Run different tools to collect diagnostics on save.
+    ///
+    /// # Errors
+    /// When calling `Tool::run_diagnostic_on_save` results into an error.
     pub async fn run_diagnostic_on_save(
         &self,
         document: &TextDocument<'_>,
@@ -183,6 +202,9 @@ impl WorkspaceWorker {
     /// - If the file is not formattable or is ignored, an empty vector is returned
     /// - If the file is formattable, but no changes are made, an empty vector is returned
     /// - If a tool error occurs, an Err is returned
+    ///
+    /// # Errors
+    /// When calling `Tool::run_format` results into an error.
     pub async fn format_file(&self, document: &TextDocument<'_>) -> Result<Vec<TextEdit>, String> {
         let tool_guard = self.tool.read().await;
         let Some(tool) = tool_guard.as_ref() else {
@@ -206,27 +228,21 @@ impl WorkspaceWorker {
             self.published_diagnostics.lock().await.drain().collect::<Vec<Uri>>();
         let mut watchers_to_unregister = Vec::new();
 
-        if let Some(tool) = self.tool.read().await.as_ref() {
-            self.builder.shutdown(&self.root_uri);
-
-            watchers_to_unregister
-                .push(unregistration_tool_watcher_id(tool.name(), &self.root_uri));
-        }
+        self.builder.shutdown(&self.root_uri);
+        watchers_to_unregister.push(unregistration_watcher_id(&self.root_uri));
 
         (uris_to_clear_diagnostics, watchers_to_unregister)
     }
 
-    /// Get code actions or commands for the given range.
+    /// Get code actions or commands for the given request.
     /// It calls all tools and collects their code actions or commands.
     pub async fn get_code_actions_or_commands(
         &self,
-        uri: &Uri,
-        range: &Range,
-        context: &CodeActionContext,
+        params: &CodeActionParams,
     ) -> Vec<CodeActionOrCommand> {
         let mut actions = Vec::new();
         if let Some(tool) = self.tool.read().await.as_ref() {
-            actions.extend(tool.get_code_actions_or_commands(uri, range, context));
+            actions.extend(tool.get_code_actions_or_commands(params));
         }
         actions
     }
@@ -239,27 +255,15 @@ impl WorkspaceWorker {
         file_event: &FileEvent,
         needs_diagnostic_refresh: &mut bool,
         file_system: Option<&LSPFileSystem>,
-    ) -> (
-        // Diagnostic reports that need to be revalidated
-        Option<Vec<(Uri, Vec<Diagnostic>)>>,
-        // New watchers that need to be registered
-        Vec<Registration>,
-        // Watchers that need to be unregistered
-        Vec<Unregistration>,
-    ) {
+    ) -> WorkerToolChangeResult {
         // Scope the first lock so it is dropped before the second lock
         let options = {
             let options_guard = self.options.lock().await;
             options_guard.clone().unwrap_or_default()
         };
 
-        self.handle_tool_changes(file_system, needs_diagnostic_refresh, |tool, builder| {
-            tool.handle_watched_file_change(
-                builder,
-                &file_event.uri,
-                &self.root_uri,
-                options.clone(),
-            )
+        self.handle_tool_changes(file_system, needs_diagnostic_refresh, move |tool, builder| {
+            tool.handle_watched_file_change(builder, &file_event.uri, &self.root_uri, options)
         })
         .await
     }
@@ -273,14 +277,7 @@ impl WorkspaceWorker {
         changed_options_json: serde_json::Value,
         needs_diagnostic_refresh: &mut bool,
         file_system: Option<&LSPFileSystem>,
-    ) -> (
-        // Diagnostic reports that need to be revalidated
-        Option<Vec<(Uri, Vec<Diagnostic>)>>,
-        // New watchers that need to be registered
-        Vec<Registration>,
-        // Watchers that need to be unregistered
-        Vec<Unregistration>,
-    ) {
+    ) -> WorkerToolChangeResult {
         // Scope the first lock so it is dropped before the second lock
         let old_options = {
             let options_guard = self.options.lock().await;
@@ -320,9 +317,9 @@ impl WorkspaceWorker {
         file_system: Option<&LSPFileSystem>,
         needs_diagnostic_refresh: &mut bool,
         change_handler: F,
-    ) -> (Option<Vec<(Uri, Vec<Diagnostic>)>>, Vec<Registration>, Vec<Unregistration>)
+    ) -> WorkerToolChangeResult
     where
-        F: Fn(&mut Box<dyn Tool>, &dyn ToolBuilder) -> ToolRestartChanges,
+        F: FnOnce(&mut Box<dyn Tool>, &dyn ToolBuilder) -> ToolRestartChanges,
     {
         let mut registrations = vec![];
         let mut unregistrations = vec![];
@@ -331,18 +328,19 @@ impl WorkspaceWorker {
         let mut tools = self.tool.write().await;
         let Some(tool) = tools.as_mut() else {
             // No tool to update, return early
-            return (None, registrations, unregistrations);
+            return WorkerToolChangeResult {
+                diagnostics: None,
+                new_watchers: registrations,
+                removed_watchers: unregistrations,
+                client_messages: Vec::new(), // TODO: Should we return a message to the client if the tool is not initialized?
+            };
         };
         let change = change_handler(tool, self.builder.as_ref());
 
         if let Some(patterns) = change.watch_patterns {
-            unregistrations.push(unregistration_tool_watcher_id(tool.name(), &self.root_uri));
+            unregistrations.push(unregistration_watcher_id(&self.root_uri));
             if !patterns.is_empty() {
-                registrations.push(registration_tool_watcher_id(
-                    tool.name(),
-                    &self.root_uri,
-                    patterns,
-                ));
+                registrations.push(registration_watcher_id(&self.root_uri, patterns));
             }
         }
         if let Some(replaced_tool) = change.tool {
@@ -350,7 +348,12 @@ impl WorkspaceWorker {
             *needs_diagnostic_refresh = true;
 
             let Some(file_system) = file_system else {
-                return (None, registrations, unregistrations);
+                return WorkerToolChangeResult {
+                    diagnostics: None,
+                    new_watchers: registrations,
+                    removed_watchers: unregistrations,
+                    client_messages: change.client_messages,
+                };
             };
 
             for uri in file_system.keys() {
@@ -370,7 +373,12 @@ impl WorkspaceWorker {
             }
         }
 
-        (diagnostics, registrations, unregistrations)
+        WorkerToolChangeResult {
+            diagnostics,
+            new_watchers: registrations,
+            removed_watchers: unregistrations,
+            client_messages: change.client_messages,
+        }
     }
 
     /// Execute a command for the workspace.
@@ -390,28 +398,35 @@ impl WorkspaceWorker {
     }
 }
 
-/// Create an unregistration for a file system watcher for the given tool
-fn unregistration_tool_watcher_id(tool: &str, root_uri: &Uri) -> Unregistration {
+/// Create an unregistration for a file system watcher
+fn unregistration_watcher_id(root_uri: &Uri) -> Unregistration {
     Unregistration {
-        id: format!("watcher-{tool}-{}", root_uri.as_str()),
+        id: format!("watcher-{}", root_uri.as_str()),
         method: "workspace/didChangeWatchedFiles".to_string(),
     }
 }
 
-/// Create a registration for a file system watcher for the given tool and patterns
-fn registration_tool_watcher_id(tool: &str, root_uri: &Uri, patterns: Vec<String>) -> Registration {
+/// Create a registration for a file system watcher for the given patterns
+fn registration_watcher_id(root_uri: &Uri, patterns: Vec<String>) -> Registration {
     Registration {
-        id: format!("watcher-{tool}-{}", root_uri.as_str()),
+        id: format!("watcher-{}", root_uri.as_str()),
         method: "workspace/didChangeWatchedFiles".to_string(),
         register_options: Some(json!(DidChangeWatchedFilesRegistrationOptions {
             watchers: patterns
                 .into_iter()
-                .map(|pattern| FileSystemWatcher {
-                    glob_pattern: GlobPattern::Relative(RelativePattern {
-                        base_uri: OneOf::Right(root_uri.clone()),
-                        pattern,
-                    }),
-                    kind: Some(WatchKind::all()), // created, deleted, changed
+                .map(|pattern| {
+                    let glob_pattern = if Path::new(&pattern).is_absolute() {
+                        GlobPattern::String(pattern)
+                    } else {
+                        GlobPattern::Relative(RelativePattern {
+                            base_uri: OneOf::Right(root_uri.clone()),
+                            pattern,
+                        })
+                    };
+                    FileSystemWatcher {
+                        glob_pattern,
+                        kind: Some(WatchKind::all()), // created, deleted, changed
+                    }
                 })
                 .collect::<Vec<_>>(),
         })),
@@ -425,11 +440,17 @@ mod tests {
     use std::sync::Arc;
     use tower_lsp_server::{
         jsonrpc::ErrorCode,
-        ls_types::{CodeActionContext, CodeActionOrCommand, FileChangeType, FileEvent, Range, Uri},
+        ls_types::{
+            CodeActionContext, CodeActionOrCommand, FileChangeType, FileEvent, MessageType, Range,
+            Uri,
+        },
     };
 
+    #[cfg(unix)]
+    use tower_lsp_server::ls_types::{DidChangeWatchedFilesRegistrationOptions, GlobPattern};
+
     use crate::{
-        LanguageId, TextDocument, ToolBuilder,
+        ClientMessage, CodeActionParams, LanguageId, TextDocument, ToolBuilder,
         capabilities::DiagnosticMode,
         file_system::LSPFileSystem,
         tests::{FAKE_COMMAND, FakeToolBuilder},
@@ -472,9 +493,10 @@ mod tests {
             DiagnosticMode::None,
         );
         worker.start_worker(serde_json::Value::Null).await;
-        let registrations = worker.init_watchers().await;
-        assert_eq!(registrations.len(), 1);
-        assert_eq!(registrations[0].id, "watcher-FakeTool-file:///root/");
+        let registration = worker.init_watchers().await;
+        assert!(registration.is_some());
+        let registration = registration.unwrap();
+        assert_eq!(registration.id, "watcher-file:///root/");
 
         // with no watchers
         let worker_no_watchers = WorkspaceWorker::new(
@@ -483,8 +505,28 @@ mod tests {
             DiagnosticMode::None,
         );
         worker_no_watchers.start_worker(serde_json::json!({"some_option": true})).await;
-        let registrations_no_watchers = worker_no_watchers.init_watchers().await;
-        assert_eq!(registrations_no_watchers.len(), 0);
+        let registration_no_watchers = worker_no_watchers.init_watchers().await;
+        assert!(registration_no_watchers.is_none());
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_registration_watcher_absolute_pattern() {
+        let root_uri = Uri::from_str("file:///root/").unwrap();
+        let registration =
+            super::registration_watcher_id(&root_uri, vec!["/etc/**/*.json".to_string()]);
+
+        let register_options = registration.register_options.unwrap();
+        let options: DidChangeWatchedFilesRegistrationOptions =
+            serde_json::from_value(register_options).unwrap();
+
+        assert_eq!(options.watchers.len(), 1);
+        match &options.watchers[0].glob_pattern {
+            GlobPattern::String(pattern) => assert_eq!(pattern, "/etc/**/*.json"),
+            GlobPattern::Relative(_) => {
+                panic!("Expected absolute glob to be encoded as GlobPattern::String")
+            }
+        }
     }
 
     #[tokio::test]
@@ -528,7 +570,7 @@ mod tests {
         );
         let mut needs_diagnostic_refresh = false;
 
-        let (diagnostics, registrations, unregistrations) = worker
+        let result = worker
             .did_change_watched_files(
                 &FileEvent {
                     uri: Uri::from_str("file:///root/unknown.file").unwrap(),
@@ -540,12 +582,12 @@ mod tests {
             .await;
 
         // Since FakeToolBuilder does not know about "unknown.file", no diagnostics or registrations are expected
-        assert!(diagnostics.is_none());
-        assert_eq!(registrations.len(), 0); // No new registrations expected
-        assert_eq!(unregistrations.len(), 0); // No unregistrations expected
+        assert!(result.diagnostics.is_none());
+        assert_eq!(result.new_watchers.len(), 0); // No new registrations expected
+        assert_eq!(result.removed_watchers.len(), 0); // No unregistrations expected
         assert!(!needs_diagnostic_refresh); // No need to refresh diagnostics
 
-        let (diagnostics, registrations, unregistrations) = worker
+        let result = worker
             .did_change_watched_files(
                 &FileEvent {
                     uri: Uri::from_str("file:///root/watcher.config").unwrap(),
@@ -557,14 +599,14 @@ mod tests {
             .await;
 
         // Since FakeToolBuilder knows about "watcher.config", registrations are expected
-        assert!(diagnostics.is_none());
-        assert_eq!(unregistrations.len(), 1); // One unregistration expected
-        assert_eq!(unregistrations[0].id, "watcher-FakeTool-file:///root/");
-        assert_eq!(registrations.len(), 1); // One new registration expected
-        assert_eq!(registrations[0].id, "watcher-FakeTool-file:///root/");
+        assert!(result.diagnostics.is_none());
+        assert_eq!(result.removed_watchers.len(), 1); // One unregistration expected
+        assert_eq!(result.removed_watchers[0].id, "watcher-file:///root/");
+        assert_eq!(result.new_watchers.len(), 1); // One new registration expected
+        assert_eq!(result.new_watchers[0].id, "watcher-file:///root/");
         assert!(!needs_diagnostic_refresh); // No need to refresh diagnostics
 
-        let (diagnostics, registrations, unregistrations) = worker
+        let result = worker
             .did_change_watched_files(
                 &FileEvent {
                     uri: Uri::from_str("file:///root/tool.config").unwrap(),
@@ -576,14 +618,14 @@ mod tests {
             .await;
 
         // Because we passed a file system that knows about "diagnostics.config", diagnostics are expected
-        assert!(diagnostics.is_some());
-        assert_eq!(diagnostics.unwrap().len(), 1); // One diagnostic report expected
-        assert_eq!(registrations.len(), 0); // No new registrations expected
-        assert_eq!(unregistrations.len(), 0); // No unregistrations expected
+        assert!(result.diagnostics.is_some());
+        assert_eq!(result.diagnostics.unwrap().len(), 1); // One diagnostic report expected
+        assert_eq!(result.new_watchers.len(), 0); // No new registrations expected
+        assert_eq!(result.removed_watchers.len(), 0); // No unregistrations expected
         assert!(needs_diagnostic_refresh); // Need to refresh diagnostics
 
         needs_diagnostic_refresh = false;
-        let (diagnostics, registrations, unregistrations) = worker
+        let result = worker
             .did_change_watched_files(
                 &FileEvent {
                     uri: Uri::from_str("file:///root/tool.config").unwrap(),
@@ -595,9 +637,9 @@ mod tests {
             .await;
 
         // No file system passed, so no diagnostics expected
-        assert!(diagnostics.is_none());
-        assert_eq!(registrations.len(), 0); // No new registrations expected
-        assert_eq!(unregistrations.len(), 0); // No unregistrations expected
+        assert!(result.diagnostics.is_none());
+        assert_eq!(result.new_watchers.len(), 0); // No new registrations expected
+        assert_eq!(result.removed_watchers.len(), 0); // No unregistrations expected
         assert!(needs_diagnostic_refresh); // Need to refresh diagnostics
     }
 
@@ -617,7 +659,7 @@ mod tests {
         );
         let mut needs_diagnostic_refresh = false;
 
-        let (diagnostics, registrations, unregistrations) = worker
+        let result = worker
             .did_change_configuration(
                 serde_json::json!({"some_option": false}),
                 &mut needs_diagnostic_refresh,
@@ -626,12 +668,12 @@ mod tests {
             .await;
 
         // Since FakeToolBuilder does not change anything based on configuration, no diagnostics or registrations are expected
-        assert!(diagnostics.is_none());
-        assert_eq!(registrations.len(), 0); // No new registrations expected
-        assert_eq!(unregistrations.len(), 0); // No unregistrations expected
+        assert!(result.diagnostics.is_none());
+        assert_eq!(result.new_watchers.len(), 0); // No new registrations expected
+        assert_eq!(result.removed_watchers.len(), 0); // No unregistrations expected
         assert!(!needs_diagnostic_refresh); // No need to refresh diagnostics
 
-        let (diagnostics, registrations, unregistrations) = worker
+        let result = worker
             .did_change_configuration(
                 serde_json::json!(2),
                 &mut needs_diagnostic_refresh,
@@ -640,14 +682,14 @@ mod tests {
             .await;
 
         // Since FakeToolBuilder changes watcher patterns based on configuration, registrations are expected
-        assert!(diagnostics.is_none());
-        assert_eq!(unregistrations.len(), 1); // One unregistration expected
-        assert_eq!(unregistrations[0].id, "watcher-FakeTool-file:///root/");
-        assert_eq!(registrations.len(), 1); // One new registration expected
-        assert_eq!(registrations[0].id, "watcher-FakeTool-file:///root/");
+        assert!(result.diagnostics.is_none());
+        assert_eq!(result.removed_watchers.len(), 1); // One unregistration expected
+        assert_eq!(result.removed_watchers[0].id, "watcher-file:///root/");
+        assert_eq!(result.new_watchers.len(), 1); // One new registration expected
+        assert_eq!(result.new_watchers[0].id, "watcher-file:///root/");
         assert!(!needs_diagnostic_refresh); // No need to refresh diagnostics
 
-        let (diagnostics, registrations, unregistrations) = worker
+        let result = worker
             .did_change_configuration(
                 serde_json::json!(3),
                 &mut needs_diagnostic_refresh,
@@ -656,11 +698,72 @@ mod tests {
             .await;
 
         // Since FakeToolBuilder changes diagnostics based on configuration, diagnostics are expected
-        assert!(diagnostics.is_some());
-        assert_eq!(diagnostics.unwrap().len(), 1); // One diagnostic report expected
-        assert_eq!(registrations.len(), 0); // No new registrations expected
-        assert_eq!(unregistrations.len(), 0); // No unregistrations expected
+        assert!(result.diagnostics.is_some());
+        assert_eq!(result.diagnostics.unwrap().len(), 1); // One diagnostic report expected
+        assert_eq!(result.new_watchers.len(), 0); // No new registrations expected
+        assert_eq!(result.removed_watchers.len(), 0); // No unregistrations expected
         assert!(needs_diagnostic_refresh); // Need to refresh diagnostics
+    }
+
+    #[tokio::test]
+    async fn test_client_message_on_configuration_change() {
+        let worker = WorkspaceWorker::new(
+            Uri::from_str("file:///root/").unwrap(),
+            create_builder(),
+            DiagnosticMode::None,
+        );
+        worker.start_worker(serde_json::Value::Null).await;
+
+        let mut needs_diagnostic_refresh = false;
+        let result = worker
+            .did_change_configuration(serde_json::json!(4), &mut needs_diagnostic_refresh, None)
+            .await;
+
+        assert!(result.diagnostics.is_none());
+        assert_eq!(result.new_watchers.len(), 0);
+        assert_eq!(result.removed_watchers.len(), 0);
+        assert!(!needs_diagnostic_refresh);
+        assert_eq!(
+            result.client_messages,
+            vec![ClientMessage {
+                message: "Fake misconfiguration message".to_string(),
+                r#type: MessageType::WARNING,
+            }]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_client_message_on_watched_file_change() {
+        let worker = WorkspaceWorker::new(
+            Uri::from_str("file:///root/").unwrap(),
+            create_builder(),
+            DiagnosticMode::None,
+        );
+        worker.start_worker(serde_json::Value::Null).await;
+
+        let mut needs_diagnostic_refresh = false;
+        let result = worker
+            .did_change_watched_files(
+                &FileEvent {
+                    uri: Uri::from_str("file:///root/misconfiguration.config").unwrap(),
+                    typ: FileChangeType::CHANGED,
+                },
+                &mut needs_diagnostic_refresh,
+                None,
+            )
+            .await;
+
+        assert!(result.diagnostics.is_none());
+        assert_eq!(result.new_watchers.len(), 0);
+        assert_eq!(result.removed_watchers.len(), 0);
+        assert!(!needs_diagnostic_refresh);
+        assert_eq!(
+            result.client_messages,
+            vec![ClientMessage {
+                message: "Fake misconfiguration message".to_string(),
+                r#type: MessageType::WARNING,
+            }]
+        );
     }
 
     #[tokio::test]
@@ -673,21 +776,23 @@ mod tests {
         worker.start_worker(serde_json::Value::Null).await;
 
         let actions = worker
-            .get_code_actions_or_commands(
-                &Uri::from_str("file:///root/file.js").unwrap(),
-                &Range::default(),
-                &CodeActionContext::default(),
-            )
+            .get_code_actions_or_commands(&CodeActionParams {
+                uri: Uri::from_str("file:///root/file.js").unwrap(),
+                range: Range::default(),
+                context: CodeActionContext::default(),
+                is_open_document: false,
+            })
             .await;
 
         assert_eq!(actions.len(), 0);
 
         let actions = worker
-            .get_code_actions_or_commands(
-                &Uri::from_str("file:///root/code_action.config").unwrap(),
-                &Range::default(),
-                &CodeActionContext::default(),
-            )
+            .get_code_actions_or_commands(&CodeActionParams {
+                uri: Uri::from_str("file:///root/code_action.config").unwrap(),
+                range: Range::default(),
+                context: CodeActionContext::default(),
+                is_open_document: false,
+            })
             .await;
 
         assert_eq!(actions.len(), 1);

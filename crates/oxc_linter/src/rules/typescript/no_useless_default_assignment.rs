@@ -28,6 +28,8 @@ declare_oxc_lint!(
     NoUselessDefaultAssignment(tsgolint),
     typescript,
     correctness,
+    version = "1.49.0",
+    short_description = "Disallow default assignments that can never be used.",
 );
 
 impl Rule for NoUselessDefaultAssignment {}

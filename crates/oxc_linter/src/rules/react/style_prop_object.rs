@@ -84,6 +84,8 @@ declare_oxc_lint!(
     react,
     suspicious,
     config = StylePropObjectConfig,
+    version = "0.11.0",
+    short_description = "Require that the value of the prop `style` be an object or a variable that is an object.",
 );
 
 fn is_invalid_type(ty: &TSType) -> bool {
@@ -147,7 +149,7 @@ fn is_invalid_style_attribute<'a>(attribute: &JSXAttribute<'a>, ctx: &LintContex
 
 impl Rule for StylePropObject {
     fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
-        serde_json::from_value::<DefaultRuleConfig<Self>>(value).map(DefaultRuleConfig::into_inner)
+        DefaultRuleConfig::<Self>::from_value(value).map(DefaultRuleConfig::into_inner)
     }
 
     fn run<'a>(&self, node: &AstNode<'a>, ctx: &LintContext<'a>) {

@@ -53,11 +53,13 @@ declare_oxc_lint!(
     eslint,
     nursery,
     config = NoUndef,
+    version = "0.0.8",
+    short_description = "Disallow the use of undeclared variables.",
 );
 
 impl Rule for NoUndef {
     fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
-        serde_json::from_value::<DefaultRuleConfig<Self>>(value).map(DefaultRuleConfig::into_inner)
+        DefaultRuleConfig::<Self>::from_value(value).map(DefaultRuleConfig::into_inner)
     }
 
     fn run_once(&self, ctx: &LintContext) {

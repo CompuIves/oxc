@@ -26,8 +26,13 @@ const testCommentsRule: Rule = {
     for (const comment of comments) {
       // Check getting `range` / `loc` properties twice results in same objects
       const { range, loc } = comment;
-      assert(range === comment.range);
-      assert(loc === comment.loc);
+      assert(comment.range === range);
+      assert(comment.loc === loc);
+
+      // Cloning comment with spread should include `loc` and it should be the same object
+      const clone = { ...comment };
+      assert(Object.hasOwn(clone, "loc"));
+      assert(clone.loc === loc);
 
       // Check `getRange` and `getLoc` return the same objects too
       assert(sourceCode.getRange(comment) === range);
@@ -59,16 +64,16 @@ const testCommentsRule: Rule = {
 
     context.report({
       message:
-        "commentsExistBetween(topLevelVariable2, topLevelFunction): " +
-        sourceCode.commentsExistBetween(topLevelVariable2, topLevelFunction),
+        "commentsExistBetween(topLevelVariable2, topLevelFunction): "
+        + sourceCode.commentsExistBetween(topLevelVariable2, topLevelFunction),
       node: topLevelVariable2,
     });
 
     // Test `commentsExistBetween` returns `false` when start node is after end node
     context.report({
       message:
-        "commentsExistBetween(topLevelFunction, topLevelVariable2): " +
-        sourceCode.commentsExistBetween(topLevelFunction, topLevelVariable2),
+        "commentsExistBetween(topLevelFunction, topLevelVariable2): "
+        + sourceCode.commentsExistBetween(topLevelFunction, topLevelVariable2),
       node: topLevelFunction,
     });
 
@@ -82,21 +87,21 @@ const testCommentsRule: Rule = {
 
         context.report({
           message:
-            `VariableDeclaration(${id.name}):\n` +
-            `getCommentsBefore: ${formatComments(sourceCode.getCommentsBefore(node))}\n` +
-            `getCommentsInside: ${formatComments(sourceCode.getCommentsInside(node))}\n` +
-            `getCommentsAfter: ${formatComments(sourceCode.getCommentsAfter(node))}\n` +
-            `commentsExistBetween(id, init): ${sourceCode.commentsExistBetween(id, init)}`,
+            `VariableDeclaration(${id.name}):\n`
+            + `getCommentsBefore: ${formatComments(sourceCode.getCommentsBefore(node))}\n`
+            + `getCommentsInside: ${formatComments(sourceCode.getCommentsInside(node))}\n`
+            + `getCommentsAfter: ${formatComments(sourceCode.getCommentsAfter(node))}\n`
+            + `commentsExistBetween(id, init): ${sourceCode.commentsExistBetween(id, init)}`,
           node,
         });
       },
       FunctionDeclaration(node) {
         context.report({
           message:
-            `FunctionDeclaration(${node.id?.name}):\n` +
-            `getCommentsBefore: ${formatComments(sourceCode.getCommentsBefore(node))}\n` +
-            `getCommentsInside: ${formatComments(sourceCode.getCommentsInside(node))}\n` +
-            `getCommentsAfter: ${formatComments(sourceCode.getCommentsAfter(node))}`,
+            `FunctionDeclaration(${node.id?.name}):\n`
+            + `getCommentsBefore: ${formatComments(sourceCode.getCommentsBefore(node))}\n`
+            + `getCommentsInside: ${formatComments(sourceCode.getCommentsInside(node))}\n`
+            + `getCommentsAfter: ${formatComments(sourceCode.getCommentsAfter(node))}`,
           node,
         });
       },

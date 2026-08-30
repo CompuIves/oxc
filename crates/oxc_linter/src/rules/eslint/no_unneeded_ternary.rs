@@ -77,11 +77,13 @@ declare_oxc_lint!(
     suspicious,
     fix_dangerous,
     config = NoUnneededTernary,
+    version = "0.15.12",
+    short_description = "Disallow ternary operators when simpler alternatives exist.",
 );
 
 impl Rule for NoUnneededTernary {
     fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
-        serde_json::from_value::<DefaultRuleConfig<Self>>(value).map(DefaultRuleConfig::into_inner)
+        DefaultRuleConfig::<Self>::from_value(value).map(DefaultRuleConfig::into_inner)
     }
 
     fn run<'a>(&self, node: &AstNode<'a>, ctx: &LintContext<'a>) {

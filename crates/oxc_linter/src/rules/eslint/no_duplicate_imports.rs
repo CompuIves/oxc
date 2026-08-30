@@ -122,6 +122,8 @@ declare_oxc_lint!(
     style,
     pending,
     config = NoDuplicateImports,
+    version = "0.13.2",
+    short_description = "Disallow duplicate module imports.",
 );
 
 #[derive(Debug, Clone, PartialEq)]
@@ -141,7 +143,7 @@ enum ModuleType {
 
 impl Rule for NoDuplicateImports {
     fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
-        serde_json::from_value::<DefaultRuleConfig<Self>>(value).map(DefaultRuleConfig::into_inner)
+        DefaultRuleConfig::<Self>::from_value(value).map(DefaultRuleConfig::into_inner)
     }
 
     fn run_once(&self, ctx: &LintContext) {
@@ -813,11 +815,6 @@ fn test() {
             r#"import "os";
             export * from "os";"#,
             Some(serde_json::json!([{ "includeExports": true }])),
-        ),
-        (
-            r#"import "fs";
-            import "fs""#,
-            None,
         ),
         (
             r#"import { type Merge } from "lodash-es";

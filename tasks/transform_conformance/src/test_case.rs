@@ -8,7 +8,7 @@ use cow_utils::CowUtils;
 use oxc::{
     allocator::Allocator,
     codegen::{Codegen, CodegenOptions, CommentOptions, IndentChar},
-    diagnostics::{NamedSource, OxcDiagnostic},
+    diagnostics::{Diagnostics, NamedSource, OxcDiagnostic},
     parser::{ParseOptions, Parser},
     span::{SourceType, VALID_EXTENSIONS},
     transformer::{BabelOptions, HelperLoaderMode, TransformOptions},
@@ -29,7 +29,7 @@ pub struct TestCase {
     options: BabelOptions,
     source_type: SourceType,
     transform_options: Result<TransformOptions, Vec<String>>,
-    pub errors: Vec<OxcDiagnostic>,
+    pub errors: Diagnostics,
     pub transformed_code: String,
 }
 
@@ -53,7 +53,7 @@ impl TestCase {
         options.cwd.replace(cwd.to_path_buf());
         let transform_options = TransformOptions::try_from(&options);
         let path = path.to_path_buf();
-        let errors = vec![];
+        let errors = Diagnostics::new();
 
         // in `exec` directory
         let kind = if path
@@ -210,7 +210,7 @@ impl TestCase {
         {
             let allocator = Allocator::default();
             let ret = Parser::new(&allocator, &source, self.source_type).parse();
-            if !ret.errors.is_empty() {
+            if !ret.diagnostics.is_empty() {
                 return true;
             }
         }
@@ -262,7 +262,7 @@ impl TestCase {
             );
             return Err(errors
                 .into_iter()
-                .map(|err| format!("{:?}", err.with_source_code(source.clone())))
+                .map(|err| err.render_with_source_code(source.clone()))
                 .collect::<Vec<_>>()
                 .join("\n"));
         }
@@ -408,8 +408,8 @@ impl TestCase {
                 .errors();
                 self.errors.extend(mismatch_errors);
             }
-        } else if let Some(actual_errors) = actual_errors {
-            self.errors.push(OxcDiagnostic::error(actual_errors));
+        } else {
+            record_conformance_failure(&mut self.errors, actual_errors, &output);
         }
     }
 
@@ -477,10 +477,39 @@ test("exec", () => {{
     }
 }
 
+fn record_conformance_failure(
+    errors: &mut Diagnostics,
+    actual_errors: Option<String>,
+    expected: &str,
+) {
+    let error = actual_errors.unwrap_or_else(|| {
+        format!("x Expected transform error, but transformation succeeded: {expected}")
+    });
+    errors.push(OxcDiagnostic::error(error));
+}
+
 fn get_babel_error(error: &str) -> String {
     match error {
         "transform-react-jsx: unknown variant `invalidOption`, expected `classic` or `automatic`" => "Runtime must be either \"classic\" or \"automatic\".",
         "Expected `>` but found `/`" => "Unexpected token, expected \",\"",
         _ => error
     }.to_string()
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn records_missing_expected_transform_error() {
+        let mut errors = Diagnostics::new();
+
+        record_conformance_failure(&mut errors, None, "expected error");
+
+        assert_eq!(errors.len(), 1);
+        assert_eq!(
+            errors[0].message,
+            "x Expected transform error, but transformation succeeded: expected error"
+        );
+    }
 }

@@ -9,12 +9,15 @@ use std::mem;
 
 use rustc_hash::FxHashMap;
 
-use oxc_allocator::{Allocator, Vec as ArenaVec};
+use oxc_allocator::{Allocator, ArenaVec};
 use oxc_ast::ast::RegExpFlags;
-use oxc_diagnostics::OxcDiagnostic;
 use oxc_span::{SourceType, Span};
 
-use crate::{UniquePromise, config::LexerConfig as Config, diagnostics};
+use crate::{
+    UniquePromise,
+    config::LexerConfig as Config,
+    diagnostics::{self, ParserDiagnostic},
+};
 
 mod byte_handlers;
 mod comment;
@@ -35,6 +38,7 @@ mod typescript;
 mod unicode;
 mod whitespace;
 
+#[cfg_attr(not(feature = "benchmarking"), expect(clippy::redundant_pub_crate))]
 pub(crate) use byte_handlers::{ByteHandler, ByteHandlers, byte_handler_tables};
 pub use kind::Kind;
 pub use number::{parse_big_int, parse_float, parse_int};
@@ -47,24 +51,17 @@ use trivia_builder::TriviaBuilder;
 pub struct LexerCheckpoint<'a> {
     source_position: SourcePosition<'a>,
     token: Token,
-    errors_snapshot: ErrorSnapshot,
+    errors_snapshot: ErrorSnapshot<'a>,
     tokens_len: usize,
-    pure_comment: Option<usize>,
+    pure_comments: Option<(usize, usize)>,
     has_no_side_effects_comment: bool,
 }
 
 #[derive(Debug, Clone)]
-enum ErrorSnapshot {
+enum ErrorSnapshot<'a> {
     Empty,
     Count(usize),
-    Full(Vec<OxcDiagnostic>),
-}
-
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub enum LexerContext {
-    Regular,
-    /// Lex the next token, returns `JsxString` or any other token
-    JsxAttributeValue,
+    Full(Vec<ParserDiagnostic<'a>>),
 }
 
 /// Action to take when finishing a token.
@@ -86,18 +83,16 @@ pub struct Lexer<'a, C: Config> {
 
     token: Token,
 
-    pub(crate) errors: Vec<OxcDiagnostic>,
+    pub(crate) errors: Vec<ParserDiagnostic<'a>>,
 
     /// Errors that are only emitted if the file is determined to be a Module.
     /// For `ModuleKind::Unambiguous`, HTML-like comments are allowed during lexing,
     /// but if ESM syntax is found later, these comments become invalid.
     /// If resolved to Module → emit these errors.
     /// If resolved to Script → discard these errors.
-    pub(crate) deferred_module_errors: Vec<OxcDiagnostic>,
+    pub(crate) deferred_module_errors: Vec<ParserDiagnostic<'a>>,
 
-    context: LexerContext,
-
-    pub(crate) trivia_builder: TriviaBuilder,
+    pub(crate) trivia_builder: TriviaBuilder<'a>,
 
     /// Data store for escaped strings, indexed by [Token::start] when [Token::escaped] is true
     pub escaped_strings: FxHashMap<u32, &'a str>,
@@ -142,9 +137,9 @@ impl<'a, C: Config> Lexer<'a, C> {
         //
         // However, we should choose a better heuristic based on real-world observation, and bring this usage down.
         let tokens = if config.tokens() {
-            ArenaVec::with_capacity_in(source_text.len() + 1, allocator)
+            ArenaVec::with_capacity_in(source_text.len() + 1, &allocator)
         } else {
-            ArenaVec::new_in(allocator)
+            ArenaVec::new_in(&allocator)
         };
 
         // The first token is at the start of file, so is allows on a new line
@@ -156,8 +151,7 @@ impl<'a, C: Config> Lexer<'a, C> {
             token,
             errors: vec![],
             deferred_module_errors: vec![],
-            context: LexerContext::Regular,
-            trivia_builder: TriviaBuilder::default(),
+            trivia_builder: TriviaBuilder::new_in(allocator),
             escaped_strings: FxHashMap::default(),
             escaped_templates: FxHashMap::default(),
             multi_line_comment_end_finder: None,
@@ -182,7 +176,7 @@ impl<'a, C: Config> Lexer<'a, C> {
     /// Get errors.
     /// Only used in benchmarks.
     #[cfg(feature = "benchmarking")]
-    pub fn errors(&self) -> &[OxcDiagnostic] {
+    pub fn errors(&self) -> &[ParserDiagnostic<'a>] {
         &self.errors
     }
 
@@ -204,7 +198,7 @@ impl<'a, C: Config> Lexer<'a, C> {
             token: self.token,
             errors_snapshot,
             tokens_len: self.tokens.len(),
-            pure_comment: self.trivia_builder.pure_comment,
+            pure_comments: self.trivia_builder.previous_token_pure_comments(),
             has_no_side_effects_comment: self.trivia_builder.has_no_side_effects_comment,
         }
     }
@@ -222,7 +216,7 @@ impl<'a, C: Config> Lexer<'a, C> {
             token: self.token,
             errors_snapshot,
             tokens_len: self.tokens.len(),
-            pure_comment: self.trivia_builder.pure_comment,
+            pure_comments: self.trivia_builder.previous_token_pure_comments(),
             has_no_side_effects_comment: self.trivia_builder.has_no_side_effects_comment,
         }
     }
@@ -237,7 +231,7 @@ impl<'a, C: Config> Lexer<'a, C> {
         self.tokens.truncate(checkpoint.tokens_len);
         self.source.set_position(checkpoint.source_position);
         self.token = checkpoint.token;
-        self.trivia_builder.pure_comment = checkpoint.pure_comment;
+        self.trivia_builder.set_pure_comments(checkpoint.pure_comments);
         self.trivia_builder.has_no_side_effects_comment = checkpoint.has_no_side_effects_comment;
     }
 
@@ -246,11 +240,6 @@ impl<'a, C: Config> Lexer<'a, C> {
         let token = self.next_token();
         self.rewind(checkpoint);
         token
-    }
-
-    /// Set context
-    pub fn set_context(&mut self, context: LexerContext) {
-        self.context = context;
     }
 
     /// Read first token in file.
@@ -272,6 +261,12 @@ impl<'a, C: Config> Lexer<'a, C> {
     /// Use `first_token` for first token, and this method for all further tokens.
     pub fn next_token(&mut self) -> Token {
         let kind = self.read_next_token();
+        self.finish_next(kind)
+    }
+
+    /// Read the next token after `=` in a JSX attribute.
+    pub(crate) fn next_jsx_attribute_value(&mut self) -> Token {
+        let kind = self.read_next_jsx_attribute_value();
         self.finish_next(kind)
     }
 
@@ -364,7 +359,7 @@ impl<'a, C: Config> Lexer<'a, C> {
     }
 
     pub(crate) fn take_tokens(&mut self) -> ArenaVec<'a, Token> {
-        mem::replace(&mut self.tokens, ArenaVec::new_in(self.allocator))
+        mem::replace(&mut self.tokens, ArenaVec::new_in(&self.allocator))
     }
 
     pub(crate) fn set_tokens(&mut self, tokens: ArenaVec<'a, Token>) {
@@ -383,7 +378,7 @@ impl<'a, C: Config> Lexer<'a, C> {
         } else {
             // Tokens are disabled. Just return an empty vec.
             debug_assert!(self.tokens.is_empty());
-            ArenaVec::new_in(self.allocator)
+            ArenaVec::new_in(&self.allocator)
         }
     }
 
@@ -394,7 +389,7 @@ impl<'a, C: Config> Lexer<'a, C> {
     }
 
     // ---------- Private Methods ---------- //
-    fn error(&mut self, error: OxcDiagnostic) {
+    fn error(&mut self, error: ParserDiagnostic<'a>) {
         self.errors.push(error);
     }
 
@@ -481,7 +476,7 @@ impl<'a, C: Config> Lexer<'a, C> {
     /// Whitespace and line terminators are skipped
     #[inline] // Make sure is inlined into `next_token`
     fn read_next_token(&mut self) -> Kind {
-        self.trivia_builder.pure_comment = None;
+        self.trivia_builder.clear_pure_comments();
         self.trivia_builder.has_no_side_effects_comment = false;
 
         let end_pos = self.source.end();
@@ -546,12 +541,85 @@ impl<'a, C: Config> Lexer<'a, C> {
 
         Kind::Eof
     }
+
+    #[inline]
+    fn read_next_jsx_attribute_value(&mut self) -> Kind {
+        self.trivia_builder.clear_pure_comments();
+        self.trivia_builder.has_no_side_effects_comment = false;
+
+        let end_pos = self.source.end();
+        loop {
+            let mut pos = self.source.position();
+            // SAFETY: `source.end()` is always equal to or after `source.position()`
+            let remaining_bytes = unsafe { end_pos.offset_from(pos) };
+            if remaining_bytes >= 2 {
+                // SAFETY: There are at least 2 bytes remaining in source.
+                let byte = unsafe { pos.read() };
+
+                let is_space = byte == b' ';
+                // SAFETY: There are at least 2 bytes remaining in source, so advancing 1 byte cannot be out of bounds
+                pos = unsafe { pos.add(usize::from(is_space)) };
+                self.source.set_position(pos);
+
+                // SAFETY: We checked above that there were at least 2 bytes to read,
+                // and we skipped a maximum of 1 byte, so there's still at least 1 byte left to read.
+                let byte = unsafe { pos.read() };
+
+                let offset = self.source.offset_of(pos);
+                self.token.set_start(offset);
+
+                if matches!(byte, b'"' | b'\'') {
+                    // SAFETY: `byte` is the current ASCII quote delimiter.
+                    return unsafe { self.read_jsx_string_literal(byte) };
+                }
+
+                // SAFETY: `byte` is byte value at current position in source.
+                let kind = unsafe { self.handle_byte(byte) };
+                if kind != Kind::Skip {
+                    return kind;
+                }
+            } else {
+                return self.read_next_jsx_attribute_value_at_end();
+            }
+        }
+    }
+
+    #[inline(never)]
+    #[cold]
+    fn read_next_jsx_attribute_value_at_end(&mut self) -> Kind {
+        let offset = self.offset();
+        self.token.set_start(offset);
+
+        if let Some(byte) = self.peek_byte() {
+            if matches!(byte, b'"' | b'\'') {
+                // SAFETY: `byte` is the current ASCII quote delimiter.
+                return unsafe { self.read_jsx_string_literal(byte) };
+            }
+
+            // SAFETY: `byte` is byte value at current position in source.
+            let kind = unsafe { self.handle_byte(byte) };
+            if kind != Kind::Skip {
+                return kind;
+            }
+            self.token.set_start(offset + 1);
+        }
+
+        Kind::Eof
+    }
 }
 
 /// Call a closure while hinting to compiler that this branch is rarely taken.
 ///
+/// Unlike [`cold_path`], which only guides branch layout, this `#[cold]` trampoline also moves
+/// the closure's code and stack usage out of the caller's frame (unless compiler chooses to
+/// inline it). Use `cold_path` for pure branch hints. Use `cold_branch` where keeping large
+/// stack objects (e.g. an `OxcDiagnostic` return buffer) out of the hot function's stack frame
+/// is the aim.
+///
 /// "Cold trampoline function", suggested in:
 /// <https://users.rust-lang.org/t/is-cold-the-only-reliable-way-to-hint-to-branch-predictor/106509/2>
+///
+/// [`cold_path`]: oxc_data_structures::branch_hints::cold_path
 #[cold]
 pub fn cold_branch<F: FnOnce() -> T, T>(f: F) -> T {
     f()

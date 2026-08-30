@@ -54,12 +54,14 @@ declare_oxc_lint!(
     NoGlobalAssign,
     eslint,
     correctness,
-    config = NoGlobalAssignConfig
+    config = NoGlobalAssignConfig,
+    version = "0.0.7",
+    short_description = "Disallow modifications to read-only global variables.",
 );
 
 impl Rule for NoGlobalAssign {
     fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
-        serde_json::from_value::<DefaultRuleConfig<Self>>(value).map(DefaultRuleConfig::into_inner)
+        DefaultRuleConfig::<Self>::from_value(value).map(DefaultRuleConfig::into_inner)
     }
 
     fn run_once(&self, ctx: &LintContext) {

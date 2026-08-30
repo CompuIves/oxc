@@ -58,11 +58,12 @@ const deserializerNames = [
  *
  * @param {Uint8Array} buffer - Buffer containing AST in raw form
  * @param {string} sourceText - Source for the file
+ * @param {number} sourceStartPos - Position of first byte of source text in buffer
  * @param {number} sourceByteLen - Length of source text in UTF-8 bytes
  * @param {Object} options - Parsing options
  * @returns {Object} - Object with property getters for `program`, `module`, `comments`, and `errors`
  */
-function deserialize(buffer, sourceText, sourceByteLen, options) {
+function deserialize(buffer, sourceText, sourceStartPos, sourceByteLen, options) {
   const isJs = isJsAst(buffer),
     range = !!options.range,
     parent = !!options.experimentalParent;
@@ -76,7 +77,7 @@ function deserialize(buffer, sourceText, sourceByteLen, options) {
     ).deserialize;
   }
 
-  const data = deserializeThis(buffer, sourceText, sourceByteLen);
+  const data = deserializeThis(buffer, sourceText, sourceStartPos, sourceByteLen);
 
   // Add a line comment for hashbang if JS.
   // Do not add comment if TS, to match `@typescript-eslint/parser`.
@@ -209,7 +210,6 @@ function deserializeToken(pos, int32, sourceText, isJs) {
   // `Kind` is byte at index 8 in `Token`.
   // `Kind` has 12 variants numbered from 0 to 11.
   // We have to mask the bottom byte (`& 0xFF`), so may as well mask off bits which can't be set in `Kind` at same time.
-  // This may allow V8 to generate more efficient code for `TOKEN_TYPES[kind]`.
   const kind = kindAndFlags & TOKEN_KIND_MASK;
 
   if (kind === REGEXP_KIND) {

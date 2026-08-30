@@ -72,6 +72,8 @@ declare_oxc_lint!(
     style,
     fix_suggestion,
     config = RelativeUrlStyleConfig,
+    version = "1.44.0",
+    short_description = "Enforce consistent relative URL style.",
 );
 
 const DOT_SLASH: &str = "./";
@@ -79,7 +81,7 @@ const TEST_URL_BASES: [&str; 2] = ["https://example.com/a/b/", "https://example.
 
 impl Rule for RelativeUrlStyle {
     fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
-        serde_json::from_value::<DefaultRuleConfig<Self>>(value).map(DefaultRuleConfig::into_inner)
+        DefaultRuleConfig::<Self>::from_value(value).map(DefaultRuleConfig::into_inner)
     }
 
     fn run<'a>(&self, node: &AstNode<'a>, ctx: &LintContext<'a>) {
@@ -114,8 +116,7 @@ impl Rule for RelativeUrlStyle {
                         if can_remove_dot_slash(raw, new_expr) {
                             ctx.diagnostic_with_fix(never_diagnostic(str_lit.span), |fixer| {
                                 let dot_slash_start = str_lit.span.start + 1;
-                                let dot_slash_span =
-                                    Span::new(dot_slash_start, dot_slash_start + 2);
+                                let dot_slash_span = Span::sized(dot_slash_start, 2);
                                 fixer
                                     .delete_range(dot_slash_span)
                                     .with_message("Remove leading `./`")
@@ -147,7 +148,7 @@ impl Rule for RelativeUrlStyle {
                 if first_quasi.value.raw.starts_with(DOT_SLASH) {
                     ctx.diagnostic_with_suggestion(never_diagnostic(template_lit.span), |fixer| {
                         let dot_slash_start = template_lit.span.start + 1;
-                        let dot_slash_span = Span::new(dot_slash_start, dot_slash_start + 2);
+                        let dot_slash_span = Span::sized(dot_slash_start, 2);
                         fixer.delete_range(dot_slash_span).with_message("Remove leading `./`")
                     });
                 }

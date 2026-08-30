@@ -619,6 +619,25 @@ fn test_fold_logical_op2() {
     fold("x = [(function(){alert(x)})()] && x", "x=((function(){alert(x)})(),x)");
 }
 
+// `cjs-module-lexer` scans `module.exports = { ... }` syntactically. esbuild
+// emits `0 && (module.exports = { ... })` as a parse-time hint when the real
+// exports happen through helpers the lexer can't trace; folding the hint
+// away breaks `import { X } from "<cjs-pkg>"` consumers.
+//
+// Hint emission site (esbuild v0.28.0):
+// https://github.com/evanw/esbuild/blob/v0.28.0/internal/linker/linker.go#L5127-L5138
+//
+// See also #4878 — the original guard, removed by the #8618 refactor.
+#[test]
+fn test_preserve_cjs_module_lexer_hint() {
+    test_same("0 && (module.exports = { version });");
+    test_same("0 && (module.exports = { a, b, c });");
+    // Compound assignments aren't real lexer hints — keep folding them.
+    fold("x = 0 && (module.exports ||= y)", "x = 0");
+    // Non-export-shape RHS still folds.
+    fold("x = 0 && foo()", "x = 0");
+}
+
 #[test]
 fn test_fold_nullish_coalesce() {
     // fold if left is null/undefined
@@ -652,7 +671,7 @@ fn test_fold_nullish_coalesce() {
     fold("a() ?? (1 ?? b())", "a() ?? 1");
     fold("(a() ?? 1) ?? b()", "a() ?? 1 ?? b()");
 
-    test_same("var y; x = (y ?? 1)()"); // can compress to "var y; x = y()" if y is not null or undefined
+    test_same("v = function(y) { x = (y ?? 1)() }");
     test_same("var y; x = (y.z ?? 1)()"); // "var y; x = (0, y.z)()" if y is not null or undefined
     test("var y; x = (null ?? y)()", "var y; x = y()");
     test("var y; x = (null ?? y.z)()", "var y; x = (0, y.z)()");
@@ -684,6 +703,76 @@ fn test_fold_opt_chain() {
     fold("x = null?.[foo]", "x = void 0");
     fold("x = undefined?.()", "x = void 0");
     fold("x = null?.()", "x = void 0");
+    fold("x = (foo(), null)?.y", "x = (foo(), void 0)");
+    fold("x = (foo(), null)?.()", "x = (foo(), void 0)");
+
+    // Nested: nullish base short-circuits the entire chain even when the
+    // optional is not on the outermost element.
+    fold("x = null?.foo.bar", "x = void 0");
+    fold("x = ((null))?.foo", "x = void 0");
+    fold("x = null?.foo()", "x = void 0");
+    fold("x = null?.foo.bar.baz()", "x = void 0");
+    fold("x = (foo(), null)?.bar.baz", "x = (foo(), void 0)");
+}
+
+#[test]
+fn test_fold_opt_chain_non_nullish_base() {
+    // https://github.com/oxc-project/oxc/issues/21923
+    // Drop `?.` when the base is statically non-nullish.
+    fold(r#"x = ("")?.foo"#, r#"x = ("").foo"#);
+    fold("x = (1)?.foo", "x = (1).foo");
+    fold("x = (1n)?.foo", "x = (1n).foo");
+    fold("x = ({})?.foo", "x = ({}).foo");
+    fold("x = ([])?.foo", "x = ([]).foo");
+    fold("x = (() => 0)?.foo", "x = (() => 0).foo");
+    fold("x = (function () {})?.foo", "x = (function () {}).foo");
+    fold("x = (class {})?.foo", "x = (class {}).foo");
+    fold("x = /a/?.flags", "x = /a/.flags");
+    // Computed and optional-call forms.
+    fold(r#"x = ({})?.["foo"]"#, "x = ({}).foo");
+    // Fold chains with the IIFE inliner: (() => 0)?.() -> (() => 0)() -> 0
+    fold("x = (() => 0)?.()", "x = 0");
+
+    // Side effects on the base must be preserved.
+    fold("x = (foo(), {})?.bar", "x = (foo(), {}).bar");
+
+    // The outer `?.foo` cannot be dropped while the base still contains an
+    // unresolved optional. `Number` may be shadowed by a primitive, in which
+    // case `Number?.POSITIVE_INFINITY.foo` would throw.
+    fold_same("x = Number?.POSITIVE_INFINITY?.foo");
+    fold_same("x = Number?.NEGATIVE_INFINITY?.foo");
+    test(
+        "const Number = 1; x = Number?.POSITIVE_INFINITY?.foo",
+        "const Number = 1; x = 1 .POSITIVE_INFINITY?.foo",
+    );
+    test(
+        "const Number = 1; x = Number?.POSITIVE_INFINITY?.[foo()]",
+        "const Number = 1; x = 1 .POSITIVE_INFINITY?.[foo()]",
+    );
+    test(
+        "const Number = 1; x = Number?.POSITIVE_INFINITY?.(foo())",
+        "const Number = 1; x = 1 .POSITIVE_INFINITY?.(foo())",
+    );
+
+    // Unknown bases are left alone.
+    fold_same("x = b?.foo");
+    fold_same("x = foo()?.bar");
+    fold_same("x = new Foo()?.bar");
+
+    // Nested chains: drop the inner `?.` when its base is non-nullish, even
+    // when the outermost element is non-optional.
+    fold("x = []?.foo.bar", "x = [].foo.bar");
+    fold(r#"x = ("")?.foo.bar"#, r#"x = ("").foo.bar"#);
+    fold("x = ({})?.foo()", "x = ({}).foo()");
+    fold(r#"x = /a/?.test("a")"#, r#"x = /a/.test("a")"#);
+
+    // Inner `?.` flips, outer `?.` keeps the chain wrapped.
+    fold("x = ({})?.foo?.bar", "x = ({}).foo?.bar");
+    fold("x = (() => 0)?.foo?.()", "x = (() => 0).foo?.()");
+
+    // Nested ChainExpressions are flattened by a separate pass before this
+    // fold sees the inner optional on a later compression iteration.
+    fold("x = (({})?.foo)?.bar", "x = ({}).foo?.bar");
 }
 
 #[test]
@@ -838,6 +927,9 @@ fn test_fold_bit_shifts() {
 #[test]
 fn test_string_add() {
     fold("x = 'a' + 'bc'", "x = 'abc'");
+    // Lone surrogates are stored escaped in the string value; folding would
+    // materialize the escape encoding as literal text.
+    fold_same("x = '\\ud800' + 'y'");
     fold("x = 'a' + 5", "x = 'a5'");
     fold("x = 5 + 'a'", "x = '5a'");
     fold("x = 'a' + 5n", "x = 'a5'");
@@ -848,6 +940,13 @@ fn test_string_add() {
     fold("x = (foo() + 'a') + 'b'", "x = foo()+'ab'"); // believe it!
     fold("x = foo() + 'a' + 'b' + 'cd' + bar()", "x = foo()+'abcd'+bar()");
     fold("x = foo() + 2 + 'b'", "x = foo()+2+\"b\""); // don't fold!
+
+    // Don't merge string literals across a non-`+` inner operator: the inner string operand
+    // is coerced numerically, so `(x - 'b') + 'c'` is `(x - NaN) + 'c'`, not `x + 'bc'`.
+    fold_same("x = x - 'b' + 'c'");
+    fold_same("x = x * 'b' + 'c'");
+    fold_same("x = x % 'b' + 'c'");
+    fold_same("x = (x & 'b') + 'c'");
 
     fold("x = foo() + 'a' + 2", "x = foo()+\"a2\"");
     fold("x = '' + null", "x = 'null'");
@@ -919,19 +1018,41 @@ fn test_fold_add() {
 }
 
 #[test]
+fn test_fold_numeric_expression_only_if_shorter() {
+    // https://github.com/oxc-project/oxc/issues/24863
+    fold_same("0.1 + 0.05");
+    fold_same("0.7 + 0.1");
+    fold_same("0.3 - 0.1");
+    fold("0.1 + (0.2 - 0.1) * 0.5", "0.1 + 0.05");
+    fold("0.7 + (0.9 - 0.7) * 0.5", "0.8");
+    fold_same("1e3 + 1e-10");
+    fold("1e12 + 1e12", "2e12");
+    fold("1e12 - 1e12", "0");
+
+    // Compare against the original expression, not the longer value of a nested operand.
+    fold_same("0 + (0.1 + 0.05)");
+
+    // Do not evaluate across an operand with side effects.
+    fold_same("f() + 0.05");
+}
+
+#[test]
 fn test_fold_sub() {
     fold("x = 10 - 20", "x = -10");
+    fold("x = '0x10 ' - 0", "x = 16");
 }
 
 #[test]
 fn test_fold_multiply() {
-    fold_same("x = 2.25 * 3");
+    fold("x = 2.25 * 3", "x = 6.75");
+    fold("x = '1 ' * 2", "x = 2");
     fold_same("z = x * y");
+    fold_same("x = f() * 2");
     fold_same("x = y * 5");
-    // test("x = null * undefined", "x = NaN");
-    // test("x = null * 1", "x = 0");
-    // test("x = (null - 1) * 2", "x = -2");
-    // test("x = (null + 1) * 2", "x = 2");
+    fold("x = null * undefined", "x = NaN");
+    fold("x = null * 1", "x = 0");
+    fold("x = (null - 1) * 2", "x = -2");
+    fold("x = (null + 1) * 2", "x = 2");
     // test("x = y + (z * 24 * 60 * 60 * 1000)", "x = y + z * 864E5");
     fold("x = y + (z & 24 & 60 & 60 & 1000)", "x = y + (z & 8)");
     fold("x = -1 * -1", "x = 1");
@@ -939,37 +1060,141 @@ fn test_fold_multiply() {
     fold("x = 255 * 255", "x = 65025");
     fold("x = -255 * 255", "x = -65025");
     fold("x = -255 * -255", "x = 65025");
-    fold_same("x = 256 * 255");
+    fold("x = 256 * 255", "x = 65280");
 }
 
 #[test]
 fn test_fold_division() {
     fold("x = Infinity / Infinity", "x = NaN");
     fold("x = Infinity / 0", "x = Infinity");
-    fold("x = 1 / 0", "x = Infinity");
+    // `1 / 0` is the canonical printed spelling of Infinity and is kept as-is.
+    fold_same("x = 1 / 0");
+    fold_same("x = -1 / 0");
+    // A negative-zero divisor is not canonical and can still be folded.
+    fold("x = 1 / -0", "x = -Infinity");
+    fold("x = -1 / -0", "x = Infinity");
     fold("x = 0 / 0", "x = NaN");
+    fold("x = 360 / 360", "x = 1");
+    fold("x = 10.5 / 0.75", "x = 14");
+    fold("x = -10.5 / 0.75", "x = -14");
+    fold("x = 0 / -1", "x = -0");
+    fold("x = -0 / 1", "x = -0");
+    fold("x = -5e-324 / 2", "x = -0");
+    fold("x = 9007199254740992 / 2", "x = 4503599627370496");
+
     fold_same("x = 2 / 4");
+    fold_same("x = 0.3 / 0.1");
+    fold_same("x = 1e-323 / 2");
+    fold_same("x = 1 / 1e-15");
+    fold_same("x = 9007199254740991 / 0.5");
+    fold_same("x = f() / 2");
+    fold_same("x = (void f()) / 1");
+    fold_same("x = ({ valueOf: f }) / 2");
+    fold_same("x = 4n / 2n");
+    fold_same("x = 4n / 2");
+    fold_same("x = 4n / 0n");
     fold_same("x = y / 2 / 4");
 }
 
 #[test]
 fn test_fold_remainder() {
-    fold_same("x = 3 % 2");
-    fold_same("x = 3 % -2");
-    fold_same("x = -1 % 3");
+    fold("x = 3 % 2", "x = 1");
+    fold("x = 3 % -2", "x = 1");
+    fold("x = -1 % 3", "x = -1");
+    fold("x = -1 % 1", "x = -0");
+    fold("x = 5.5 % 1.5", "x = 1");
     fold("x = 1 % 0", "x = NaN");
     fold("x = 0 % 0", "x = NaN");
+
+    fold_same("x = 18014398509481982 % 18014398509481984");
+    fold_same("x = 0.3 % 0.1");
+    fold_same("x = f() % 2");
+    fold_same("x = 1 % f()");
+    fold_same("x = 5n % 2n");
+    fold_same("x = 4n % 3n");
 }
 
 #[test]
 fn test_fold_exponential() {
-    fold_same("x = 2 ** 3");
+    fold("x = 2 ** 3", "x = 8");
+    fold("x = 10 ** 4", "x = 1e4");
+    fold("x = (-2) ** 3", "x = -8");
+
+    fold_same("x = 0.5 ** -2");
+    fold_same("x = 4 ** 0.5");
+    fold_same("x = (-5e-324) ** 3");
     fold_same("x = 2 ** -3");
+    fold_same("x = 2 ** 50");
     fold_same("x = 2 ** 55");
+    fold_same("x = 1e8 ** 2");
     fold_same("x = 3 ** -1");
+    fold_same("x = f() ** 2");
+    fold_same("x = 2 ** f()");
+    fold_same("x = ({ valueOf: f }) ** 2");
+    fold_same("x = 2n ** 3n");
+    fold_same("x = 2n ** 3");
+    fold_same("x = 2 ** 3n");
+    fold_same("x = (void f()) ** 0");
+    test_same("function f(Infinity) {\n\treturn Infinity ** 0;\n}");
     fold_same("x = (-1) ** 0.5");
     fold("x = (-0) ** 3", "x = -0");
-    fold_same("x = null ** 0");
+    fold("x = null ** 0", "x = 1");
+}
+
+/// `Number::exponentiate` is not IEEE 754 `pow`. It returns `NaN` whenever the
+/// exponent is `NaN`, and whenever the base has magnitude `1` and the exponent
+/// is infinite — both cases where `pow` is specified to return `1`.
+///
+/// <https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Operators/Exponentiation>
+#[test]
+fn test_fold_exponential_disagrees_with_ieee_pow() {
+    fold("x = 1 ** Infinity", "x = NaN");
+    fold("x = 1 ** -Infinity", "x = NaN");
+    fold("x = (-1) ** Infinity", "x = NaN");
+    fold("x = (-1) ** -Infinity", "x = NaN");
+    fold("x = true ** Infinity", "x = NaN");
+    fold("x = 1 ** NaN", "x = NaN");
+    fold("x = (-1) ** NaN", "x = NaN");
+
+    // The cases `pow` and `Number::exponentiate` agree on.
+    fold("x = 2 ** Infinity", "x = Infinity");
+    fold("x = 2 ** NaN", "x = NaN");
+    fold("x = NaN ** 0", "x = 1");
+    fold("x = Infinity ** 0", "x = 1");
+}
+
+#[test]
+fn test_fold_arithmetic_undefined_null_operands() {
+    // `undefined` has no literal form (it prints as `void 0`), so it never
+    // satisfied the two-numeric-literals extraction; these folds see through
+    // ToNumber(undefined) = NaN / ToNumber(null) = 0 instead. terser folds
+    // all of these.
+    fold("x = void 0 * 2", "x = NaN");
+    fold("x = void 0 - 1", "x = NaN");
+    fold("x = 2 / void 0", "x = NaN");
+    fold("x = void 0 % 2", "x = NaN");
+    fold("x = (void 0) ** 2", "x = NaN");
+    fold("x = null * 2", "x = 0");
+    fold("x = '2' * '3'", "x = 6");
+    fold("x = true * 5", "x = 5");
+    // A tracked constant resolves through the same evaluator path, so the
+    // implicit undefined of `let a;` folds without being textually inlined.
+    test("let a; NOOP(a * 2)", "let a; NOOP(NaN)");
+    // An operand with side effects must not fold even though ToNumber of
+    // the other side is known.
+    fold_same("x = f() * 0");
+    // Mixing BigInt and Number throws at runtime; ToNumber of a BigInt bails.
+    fold_same("x = 1n * 2");
+}
+
+#[test]
+fn test_fold_non_finite_result_with_shadowed_global() {
+    // A NaN result is materialized as a numeric literal that codegen prints
+    // as the identifier `NaN`; a local `let NaN` binding captures it and
+    // changes what the function returns. Same shape for `Infinity`. The fold
+    // must bail when the corresponding global name is shadowed.
+    test_same("function f() {\n\tlet NaN = 1;\n\treturn 0 / 0;\n}");
+    test_same("function f() {\n\tlet Infinity = 1;\n\treturn 1 / 0;\n}");
 }
 
 #[test]
@@ -1007,10 +1232,12 @@ fn test_fold_array_length() {
     // Not handled yet
     fold("x = [,,1].length", "x = 3");
 
+    // Foldable after constant spread elements are inlined
+    fold("[...[1, 2, 3]].length", "3");
+
     // Cannot fold
     fold("x = [foo(), 0].length", "x = [foo(),0].length");
     fold_same("x = y.length");
-    fold_same("[...[1, 2, 3]].length");
 }
 
 #[test]
@@ -1054,7 +1281,7 @@ fn test_fold_instance_of() {
 
     // An unknown value should never be folded.
     fold_same("x instanceof Foo");
-    test_same("var x; foo(x instanceof Object)");
+    test_same("v = function(x) { foo(x instanceof Object) }");
     fold_same("x instanceof Object");
     fold_same("0 instanceof Foo");
 }
@@ -1108,6 +1335,29 @@ fn test_associative_fold_constants_with_variables() {
     fold_same("alert(12 + x + 20)");
     fold("alert(x & 12 & 20)", "alert(x & 4)");
     fold("alert(12 & x & 20)", "alert(x & 4)");
+}
+
+// https://github.com/rolldown/rolldown/issues/10656
+#[test]
+fn test_does_not_duplicate_large_tracked_strings_when_folding_addition() {
+    test_same(
+        "const p = 'PAYLOADpayload0123456789PAYLOADpayload0123456789'; export const a = atob(p); export const b = 'y' + p;",
+    );
+    test_same(
+        "const p = 'PAYLOADpayload0123456789PAYLOADpayload0123456789'; export const a = atob(p); export const b = 'x' + ('y' + p);",
+    );
+
+    // A large string with one read is still inlineable and foldable.
+    test(
+        "const p = 'PAYLOADpayload0123456789PAYLOADpayload0123456789'; export const b = 'y' + p;",
+        "const p = 'PAYLOADpayload0123456789PAYLOADpayload0123456789'; export const b = 'yPAYLOADpayload0123456789PAYLOADpayload0123456789';",
+    );
+
+    // Small tracked strings remain cheap enough to inline and fold.
+    test(
+        "const p = 'abc'; export const a = atob(p); export const b = 'y' + p;",
+        "const p = 'abc'; export const a = atob('abc'); export const b = 'yabc';",
+    );
 }
 
 #[test]
@@ -1169,6 +1419,33 @@ fn test_fold_invalid_typeof_comparison() {
     fold("typeof foo != undefined", "!0");
     fold("typeof foo === 'string'", "typeof foo == 'string'");
     fold("typeof foo === 'number'", "typeof foo == 'number'");
+
+    // strict equality with an object is always false
+    fold("typeof foo === [1]", "!1");
+    fold("typeof foo !== [1]", "!0");
+    fold("typeof foo === ['object']", "!1");
+    // but loose equality with an object can be true via ToPrimitive:
+    // `typeof foo == ['object']` is true when foo is an object
+    fold_same("typeof foo == ['object']");
+    fold_same("typeof foo != ['object']");
+    fold_same("typeof foo == ['function']");
+    fold_same("typeof foo == [['object']]");
+    fold_same("typeof foo == { toString: () => 'object' }");
+    fold_same("typeof foo == [x]");
+    // folds when the object's string value is statically known
+    // to not be a typeof result
+    fold("typeof foo == [1]", "!1");
+    fold("typeof foo == ['x']", "!1");
+    fold("typeof foo == []", "!1");
+    fold("typeof foo == [1, 2]", "!1");
+    fold("typeof foo == {}", "!1");
+}
+
+#[test]
+fn test_fold_keep_side_effects_in_typeof_comparison() {
+    fold_same("typeof f() == 1");
+    fold("typeof f() === 'asd'", "typeof f() == 'asd'");
+    fold_same("typeof x === [f()]");
 }
 
 #[test]
@@ -1186,6 +1463,37 @@ fn test_inline_values_in_template_literal() {
     fold("`foo${'${}'}`", "'foo${}'");
     fold("`foo${'${}'}${i}`", "`foo\\${}${i}`");
     fold_same("foo`foo${1}bar`");
+}
+
+// Regression: when `fold_object_exp` drops or folds a spread, the dropped
+// subtree must be walked through `drop_expression` so identifier references
+// inside don't leak across passes. The discriminating signal is an
+// otherwise-inlineable symbol that stays uninlined because a stale
+// write-ref hangs around in `Scoping` (#22736).
+//
+// Test options keep unused declarations (`CompressOptionsUnused::Keep`), so
+// `let x` survives — but with no cached write references the inline pass
+// replaces `return x` with the constant value. Without the drop walk, the
+// dropped subtree's stale write-ref leaves the count at 1 and inline is
+// blocked.
+#[test]
+fn test_fold_object_spread_drop_walks_argument_refs() {
+    // Path 2: spread argument is a side-effect-free function expression,
+    // folded away entirely. The write to `x` inside the function body must
+    // be cleared from `Scoping`, otherwise the constant inline of `x`
+    // below is blocked by a stale write-reference.
+    test(
+        "function f() { let x = 'a'; ({...function(){ x = 'b' }}); return x; }",
+        "function f() { let x = 'a'; return 'a'; }",
+    );
+    // Path 3: non-computed `__proto__` from an inlined object literal is
+    // elided because it would set the prototype rather than become a
+    // regular property. The dropped property's value subtree must be
+    // walked for the same reason.
+    test(
+        "function f() { let x = 'a'; ({...{__proto__: function(){ x = 'b' }}}); return x; }",
+        "function f() { let x = 'a'; return 'a'; }",
+    );
 }
 
 mod bigint {
@@ -1350,4 +1658,20 @@ mod bigint {
         fold("({ ...{ __proto__() {} } })", "({ __proto__() {} })");
         fold("({ ...{ ['__proto__']: null } })", "({ ['__proto__']: null })");
     }
+}
+
+/// Rotating `(k1 op x) op right` into `x op (k1 op right)` drops `k1` and
+/// `right`, so it is only sound when neither has side effects. `[expr].length`
+/// evaluates to a constant while still running `expr`.
+#[test]
+fn test_fold_left_child_op_keeps_side_effects() {
+    fold_same("(3 ^ x) ^ [(y = 9), 1].length");
+    fold_same("(x ^ 3) ^ [(y = 9), 1].length");
+    fold_same("(3 | x) | [(y = 9), 1].length");
+    fold_same("(3 & x) & [(y = 9), 1].length");
+    fold_same("(3 ^ [(y = 9), 1].length) ^ x");
+    fold_same("([(y = 9), 1].length ^ x) ^ 3");
+    fold_same("(x ^ [(y = 9), 1].length) ^ 3");
+    // Still folds when nothing has side effects.
+    fold("(3 ^ x) ^ [1, 1].length", "x ^ 1");
 }

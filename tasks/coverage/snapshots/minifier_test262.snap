@@ -1,14 +1,8 @@
-commit: ff0d1611
+commit: be13516f
 
 minifier_test262 Summary:
-AST Parsed     : 44642/44642 (100.00%)
-Positive Passed: 44635/44642 (99.98%)
-Compress: tasks/coverage/test262/test/intl402/Temporal/PlainDate/prototype/toLocaleString/lone-options-accepted.js
-
-Compress: tasks/coverage/test262/test/intl402/Temporal/PlainMonthDay/prototype/toLocaleString/lone-options-accepted.js
-
-Compress: tasks/coverage/test262/test/intl402/Temporal/PlainYearMonth/prototype/toLocaleString/lone-options-accepted.js
-
+AST Parsed     : 45024/45024 (100.00%)
+Positive Passed: 45020/45024 (99.99%)
 Compress: tasks/coverage/test262/test/language/statements/class/elements/private-accessor-is-visible-in-computed-properties.js
 
 Compress: tasks/coverage/test262/test/language/statements/class/elements/private-field-is-visible-in-computed-properties.js

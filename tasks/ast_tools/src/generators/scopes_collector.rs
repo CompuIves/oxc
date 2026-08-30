@@ -1,4 +1,4 @@
-//! Generator for `ChildScopeCollector` visitor.
+//! Generator for the `ChildScopeCollector` visitors used by traverse and minifier.
 
 use std::iter;
 
@@ -8,9 +8,9 @@ use quote::quote;
 use oxc_index::IndexVec;
 
 use crate::{
-    Codegen, Generator, TRAVERSE_CRATE_PATH,
+    Codegen, Generator, MINIFIER_CRATE_PATH, TRAVERSE_CRATE_PATH,
     output::{Output, output_path},
-    schema::{Def, EnumDef, FieldDef, Schema, StructDef, TypeDef, TypeId},
+    schema::{Def, EnumDef, FieldDef, Schema, StructDef, StructOrEnum, TypeDef, TypeId},
     utils::{create_ident, create_ident_tokens},
 };
 
@@ -29,11 +29,18 @@ impl Generator for ScopesCollectorGenerator {
         ScopesCalculator::new(schema).calculate_all();
     }
 
-    fn generate(&self, schema: &Schema, _codegen: &Codegen) -> Output {
-        Output::Rust {
-            path: output_path(TRAVERSE_CRATE_PATH, "scopes_collector.rs"),
-            tokens: generate(schema),
-        }
+    fn generate_many(&self, schema: &Schema, _codegen: &Codegen) -> Vec<Output> {
+        let tokens = generate(schema);
+        vec![
+            Output::Rust {
+                path: output_path(TRAVERSE_CRATE_PATH, "scopes_collector.rs"),
+                tokens: tokens.clone(),
+            },
+            Output::Rust {
+                path: format!("{MINIFIER_CRATE_PATH}/src/traverse_context/scopes_collector.rs"),
+                tokens,
+            },
+        ]
     }
 }
 
@@ -226,8 +233,7 @@ fn generate(schema: &Schema) -> TokenStream {
     let scope_id_type_id = schema.type_names["ScopeId"];
 
     let visit_methods = schema
-        .types
-        .iter()
+        .structs_and_enums()
         .filter_map(|type_def| generate_visit_method_for_type(type_def, scope_id_type_id, schema));
 
     quote! {
@@ -293,16 +299,15 @@ impl VisitorOutputs for VisitOnly {
 /// Returns `None` if no visitor method is required
 /// (either the type is not visited, or the default `visit_*` method can be used).
 fn generate_visit_method_for_type(
-    type_def: &TypeDef,
+    type_def: StructOrEnum<'_>,
     scope_id_type_id: TypeId,
     schema: &Schema,
 ) -> Option<TokenStream> {
     match type_def {
-        TypeDef::Struct(struct_def) => {
+        StructOrEnum::Struct(struct_def) => {
             generate_visit_method_for_struct(struct_def, scope_id_type_id, schema)
         }
-        TypeDef::Enum(enum_def) => generate_visit_method_for_enum(enum_def, schema),
-        _ => None,
+        StructOrEnum::Enum(enum_def) => generate_visit_method_for_enum(enum_def, schema),
     }
 }
 

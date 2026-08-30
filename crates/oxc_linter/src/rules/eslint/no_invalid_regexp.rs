@@ -17,9 +17,7 @@ use crate::{
 // Use the same prefix with `oxc_regular_expression` crate
 fn duplicated_flag_diagnostic(span: Span, flag: &str) -> OxcDiagnostic {
     OxcDiagnostic::warn("Invalid regular expression: Duplicated flag")
-        .with_help(
-            format!("Remove the duplicated '{flag}' flag from the regular expression flags",),
-        )
+        .with_help(format!("Remove the duplicated '{flag}' flag from the regular expression flags"))
         .with_label(span.label(format!("flag '{flag}' already specified")))
 }
 
@@ -71,6 +69,8 @@ declare_oxc_lint!(
     eslint,
     correctness,
     config = NoInvalidRegexpConfig,
+    version = "0.9.4",
+    short_description = "Disallow invalid regular expression strings in RegExp constructors.",
 );
 
 #[derive(Debug, Clone, Deserialize, Default, JsonSchema)]
@@ -82,7 +82,7 @@ struct NoInvalidRegexpConfig {
 
 impl Rule for NoInvalidRegexp {
     fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
-        serde_json::from_value::<DefaultRuleConfig<Self>>(value).map(DefaultRuleConfig::into_inner)
+        DefaultRuleConfig::<Self>::from_value(value).map(DefaultRuleConfig::into_inner)
     }
 
     fn run<'a>(&self, node: &AstNode<'a>, ctx: &LintContext<'a>) {

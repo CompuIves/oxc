@@ -118,11 +118,13 @@ declare_oxc_lint!(
     eslint,
     pedantic,
     config = AccessorPairsConfig,
+    version = "1.33.0",
+    short_description = "Enforces getter/setter pairs in objects and classes.",
 );
 
 impl Rule for AccessorPairs {
     fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
-        serde_json::from_value::<DefaultRuleConfig<Self>>(value).map(DefaultRuleConfig::into_inner)
+        DefaultRuleConfig::<Self>::from_value(value).map(DefaultRuleConfig::into_inner)
     }
 
     fn run<'a>(&self, node: &AstNode<'a>, ctx: &LintContext<'a>) {
@@ -130,23 +132,17 @@ impl Rule for AccessorPairs {
             AstKind::ObjectExpression(obj) => {
                 self.check_object_expression(obj, ctx);
             }
-            AstKind::ClassBody(class_body) => {
-                if self.enforce_for_class_members {
-                    self.check_class_body(class_body, ctx);
-                }
+            AstKind::ClassBody(class_body) if self.enforce_for_class_members => {
+                self.check_class_body(class_body, ctx);
             }
             AstKind::CallExpression(call) => {
                 self.check_call_expression(call, node, ctx);
             }
-            AstKind::TSInterfaceBody(interface_body) => {
-                if self.enforce_for_ts_types {
-                    self.check_ts_signatures(&interface_body.body, ctx);
-                }
+            AstKind::TSInterfaceBody(interface_body) if self.enforce_for_ts_types => {
+                self.check_ts_signatures(&interface_body.body, ctx);
             }
-            AstKind::TSTypeLiteral(type_literal) => {
-                if self.enforce_for_ts_types {
-                    self.check_ts_type_literal(type_literal, ctx);
-                }
+            AstKind::TSTypeLiteral(type_literal) if self.enforce_for_ts_types => {
+                self.check_ts_type_literal(type_literal, ctx);
             }
             _ => {}
         }

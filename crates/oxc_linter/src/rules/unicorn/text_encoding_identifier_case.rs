@@ -77,12 +77,14 @@ declare_oxc_lint!(
     unicorn,
     style,
     fix,
-    config = TextEncodingIdentifierCase
+    config = TextEncodingIdentifierCase,
+    version = "0.0.15",
+    short_description = "Enforce consistent case for text encoding identifiers.",
 );
 
 impl Rule for TextEncodingIdentifierCase {
     fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
-        serde_json::from_value::<DefaultRuleConfig<Self>>(value).map(DefaultRuleConfig::into_inner)
+        DefaultRuleConfig::<Self>::from_value(value).map(DefaultRuleConfig::into_inner)
     }
 
     fn run<'a>(&self, node: &AstNode<'a>, ctx: &LintContext<'a>) {
@@ -206,18 +208,13 @@ fn test() {
         (r#"new TextDecoder("utf-8")"#, with_dash.clone()),
         (r#"<not-meta charset="utf-8" />"#, with_dash.clone()),
         (r#"<not-meta notCharset="utf-8" />"#, with_dash.clone()),
-        (r#"<meta charset="utf-8" />"#, with_dash.clone()),
         (r#"<meta charset="utf-8" />"#, no_dash.clone()),
         (r#"<META CHARSET="utf-8" />"#, with_dash.clone()),
         (r#"<META CHARSET="utf-8" />"#, no_dash.clone()),
-        (r#"<form acceptCharset="utf-8" />"#, with_dash.clone()),
         (r#"<form acceptCharset="utf-8" />"#, no_dash.clone()),
         (r#"<form accept-charset="utf-8" />"#, with_dash.clone()),
         (r#"<form accept-charset="utf-8" />"#, no_dash.clone()),
-        (r#"new TextDecoder("utf-8")"#, with_dash.clone()),
         (r#"new TextDecoder("utf-8")"#, no_dash.clone()),
-        (r#"<not-meta charset="utf-8" />"#, with_dash.clone()),
-        (r#"<not-meta notCharset="utf-8" />"#, with_dash.clone()),
         (r#"<not-meta charset="utf8" />"#, no_dash.clone()),
         (r#"<not-meta notCharset="utf8" />"#, no_dash.clone()),
     ];

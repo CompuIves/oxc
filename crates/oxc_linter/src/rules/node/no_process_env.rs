@@ -62,6 +62,8 @@ declare_oxc_lint!(
     node,
     restriction,
     config = NoProcessEnvConfig,
+    version = "1.23.0",
+    short_description = "Disallows use of `process.env`.",
 );
 
 fn is_process_global_object(object_expr: &oxc_ast::ast::Expression, ctx: &LintContext) -> bool {
@@ -73,7 +75,7 @@ fn is_process_global_object(object_expr: &oxc_ast::ast::Expression, ctx: &LintCo
 
 impl Rule for NoProcessEnv {
     fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
-        serde_json::from_value::<DefaultRuleConfig<Self>>(value).map(DefaultRuleConfig::into_inner)
+        DefaultRuleConfig::<Self>::from_value(value).map(DefaultRuleConfig::into_inner)
     }
 
     fn run<'a>(&self, node: &AstNode<'a>, ctx: &LintContext<'a>) {

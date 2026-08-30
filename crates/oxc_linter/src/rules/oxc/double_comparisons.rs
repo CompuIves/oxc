@@ -43,7 +43,9 @@ declare_oxc_lint!(
     DoubleComparisons,
     oxc,
     correctness,
-    fix
+    suggestion,
+    version = "0.0.22",
+    short_description = "This rule checks for double comparisons in logical expressions.",
 );
 
 impl Rule for DoubleComparisons {
@@ -52,21 +54,30 @@ impl Rule for DoubleComparisons {
             return;
         };
 
-        let (lkind, llhs, lrhs, rkind, rlhs, rrhs) = match (&logical_expr.left, &logical_expr.right)
-        {
-            (
-                Expression::BinaryExpression(left_bin_expr),
-                Expression::BinaryExpression(right_bin_expr),
-            ) => (
-                left_bin_expr.operator,
-                &left_bin_expr.left,
-                &left_bin_expr.right,
-                right_bin_expr.operator,
-                &right_bin_expr.left,
-                &right_bin_expr.right,
-            ),
+        let left_bin_expr = match &logical_expr.left {
+            Expression::BinaryExpression(left_bin_expr) => left_bin_expr,
+            Expression::LogicalExpression(left_logical_expr)
+                if left_logical_expr.operator == logical_expr.operator =>
+            {
+                let Expression::BinaryExpression(left_bin_expr) = &left_logical_expr.right else {
+                    return;
+                };
+                left_bin_expr
+            }
             _ => return,
         };
+        let Expression::BinaryExpression(right_bin_expr) = &logical_expr.right else {
+            return;
+        };
+
+        let (lkind, llhs, lrhs, rkind, rlhs, rrhs) = (
+            left_bin_expr.operator,
+            &left_bin_expr.left,
+            &left_bin_expr.right,
+            right_bin_expr.operator,
+            &right_bin_expr.left,
+            &right_bin_expr.right,
+        );
 
         // check that (LLHS === RLHS && LRHS === RRHS) || (LLHS === RRHS && LRHS === RLHS)
         let rhs_operator =
@@ -95,22 +106,20 @@ impl Rule for DoubleComparisons {
             _ => return,
         };
 
-        ctx.diagnostic_with_fix(
-            double_comparisons_diagnostic(logical_expr.span, new_op),
-            |fixer| {
-                let modified_code = {
-                    let mut codegen = fixer.codegen();
-                    codegen.print_expression(llhs);
-                    codegen.print_ascii_byte(b' ');
-                    codegen.print_str(new_op);
-                    codegen.print_ascii_byte(b' ');
-                    codegen.print_expression(lrhs);
-                    codegen.into_source_text()
-                };
+        let span = Span::new(left_bin_expr.span.start, right_bin_expr.span.end);
+        ctx.diagnostic_with_suggestion(double_comparisons_diagnostic(span, new_op), |fixer| {
+            let modified_code = {
+                let mut codegen = fixer.codegen();
+                codegen.print_expression(llhs);
+                codegen.print_ascii_byte(b' ');
+                codegen.print_str(new_op);
+                codegen.print_ascii_byte(b' ');
+                codegen.print_expression(lrhs);
+                codegen.into_source_text()
+            };
 
-                fixer.replace(logical_expr.span, modified_code)
-            },
-        );
+            fixer.replace(span, modified_code)
+        });
     }
 }
 
@@ -131,7 +140,6 @@ fn test() {
         "x > y && x >= y",
         "x >= y && x > y",
         "x >= y && x >= y",
-        "x >= y && x >= y",
         "x == y || fs < y",
         "x < y || ab == y",
         "x == y || qr > y",
@@ -140,6 +148,9 @@ fn test() {
         "x >= y && y <= x",
         "x < y || y > x",
         "x > y || y < x",
+        "a && x === y || x > y",
+        "a || x >= y",
+        "(a || x >= y) && b",
     ];
 
     let fail = vec![
@@ -159,6 +170,10 @@ fn test() {
         "y < x || x === y",
         "x === y || y > x",
         "y > x || x === y",
+        "a || x === y || x > y",
+        "(a || x === y || x > y) && b",
+        "a && x <= y && x >= y",
+        "a || x <= y && x >= y",
     ];
 
     let fix = vec![
@@ -168,6 +183,7 @@ fn test() {
         ("x > y || x == y", "x >= y"),
         ("x < y || x > y", "x != y"),
         ("x > y || x < y", "x != y"),
+        ("x > 0 || x < 0", "x != 0"),
         ("x <= y && x >= y", "x == y"),
         ("x >= y && x <= y", "x == y"),
         ("x === y || x < y", "x <= y"),
@@ -178,6 +194,10 @@ fn test() {
         ("y < x || x === y", "y <= x"),
         ("x === y || y > x", "x <= y"),
         ("y > x || x === y", "y >= x"),
+        ("a || x === y || x > y", "a || x >= y"),
+        ("(a || x === y || x > y) && b", "(a || x >= y) && b"),
+        ("a && x <= y && x >= y", "a && x == y"),
+        ("a || x <= y && x >= y", "a || x == y"),
     ];
 
     Tester::new(DoubleComparisons::NAME, DoubleComparisons::PLUGIN, pass, fail)

@@ -30,14 +30,14 @@ use oxc::{
 };
 use oxc_formatter::{
     ArrowParentheses, AttributePosition, BracketSameLine, BracketSpacing, CustomGroupDefinition,
-    Expand, FormatOptions, Formatter, GroupEntry, ImportModifier, ImportSelector, IndentStyle,
-    IndentWidth, LineEnding, LineWidth, QuoteProperties, QuoteStyle, Semicolons,
-    SortImportsOptions, SortOrder, TrailingCommas, default_groups, default_internal_patterns,
-    get_parse_options,
+    Expand, GroupEntry, ImportModifier, ImportSelector, JsFormatOptions, OperatorPosition,
+    QuoteProperties, QuoteStyle, Semicolons, SortImportsOptions, SortOrder, TrailingCommas,
+    default_groups, default_internal_patterns,
 };
+use oxc_formatter_core::{IndentStyle, IndentWidth, LineEnding, LineWidth};
 use oxc_linter::{
-    ConfigStore, ConfigStoreBuilder, ContextSubHost, ExternalPluginStore, LintOptions, Linter,
-    ModuleRecord, Oxlintrc,
+    ConfigStore, ConfigStoreBuilder, ContextSubHost, ContextSubHostOptions, ExternalPluginStore,
+    LintOptions, Linter, ModuleRecord, Oxlintrc,
 };
 use oxc_napi::{Comment, OxcError, convert_utf8_to_utf16};
 use oxc_transformer_plugins::{
@@ -222,10 +222,11 @@ impl Oxc {
             allow_return_outside_function: parser_options.allow_return_outside_function,
             preserve_parens: parser_options.preserve_parens,
             allow_v8_intrinsics: parser_options.allow_v8_intrinsics,
+            ..ParseOptions::default()
         };
-        let ParserReturn { program, errors, module_record, .. } =
+        let ParserReturn { program, diagnostics, module_record, .. } =
             Parser::new(allocator, source_text, source_type).with_options(parser_options).parse();
-        self.diagnostics.extend(errors);
+        self.diagnostics.extend(diagnostics);
         (program, module_record)
     }
 
@@ -236,16 +237,16 @@ impl Oxc {
         parser_options: &OxcParserOptions,
         control_flow_options: &OxcControlFlowOptions,
     ) -> oxc::semantic::Semantic<'a> {
-        let mut semantic_builder = SemanticBuilder::new();
+        let mut semantic_builder = SemanticBuilder::new_compiler().with_build_nodes(true);
         if run_options.transform {
             // Estimate transformer will triple scopes, symbols, references
-            semantic_builder = semantic_builder.with_excess_capacity(2.0);
+            semantic_builder = semantic_builder.with_excess_capacity(2.0).with_enum_eval(true);
         }
         let semantic_ret = semantic_builder
             .with_check_syntax_error(parser_options.semantic_errors)
             .with_cfg(run_options.cfg)
             .build(program);
-        self.diagnostics.extend(semantic_ret.errors);
+        self.diagnostics.extend(semantic_ret.diagnostics);
 
         self.control_flow_graph = semantic_ret.semantic.cfg().map_or_else(String::default, |cfg| {
             cfg.debug_dot(DebugDotContext::new(
@@ -270,10 +271,10 @@ impl Oxc {
             .map(|o| IsolatedDeclarationsOptions { strip_internal: o.strip_internal })
             .unwrap_or_default();
         let ret = IsolatedDeclarations::new(allocator, id_options).build(program);
-        if ret.errors.is_empty() {
+        if ret.diagnostics.is_empty() {
             self.codegen(path, &ret.program, None, run_options, codegen_options);
         } else {
-            self.diagnostics.extend(ret.errors);
+            self.diagnostics.extend(ret.diagnostics);
             self.codegen_text = String::new();
             self.codegen_sourcemap_text = None;
         }
@@ -304,9 +305,11 @@ impl Oxc {
             !transform_options.use_define_for_class_fields;
         options.decorator.legacy = transform_options.experimental_decorators;
         options.decorator.emit_decorator_metadata = transform_options.emit_decorator_metadata;
+        options.typescript.optimize_enums = transform_options.optimize_enums;
+        options.typescript.optimize_const_enums = transform_options.optimize_const_enums;
         let result =
             Transformer::new(allocator, path, &options).build_with_scoping(scoping, program);
-        self.diagnostics.extend(result.errors);
+        self.diagnostics.extend(result.diagnostics);
         result.scoping
     }
 
@@ -340,12 +343,15 @@ impl Oxc {
             options.mangle.map(|o| MangleOptions {
                 top_level: Some(o.top_level),
                 keep_names: MangleOptionsKeepNames { function: o.keep_names, class: o.keep_names },
-                debug: false,
+                ..MangleOptions::default()
             })
         } else {
             None
         };
-        Some(Minifier::new(MinifierOptions { mangle, compress }).minify(allocator, program))
+        Some(
+            Minifier::new(MinifierOptions { mangle, mangle_properties: None, compress })
+                .minify(allocator, program),
+        )
     }
 
     fn finalize_output<'a>(
@@ -358,7 +364,7 @@ impl Oxc {
         self.ir = format!("{:#?}", program.body);
         let mut comments = convert_utf8_to_utf16(source_text, program, module_record, &mut []);
 
-        self.ast_json = if source_type.is_javascript() {
+        if source_type.is_javascript() {
             // Add hashbang to start of comments
             if let Some(hashbang) = &program.hashbang {
                 comments.insert(
@@ -371,11 +377,10 @@ impl Oxc {
                     },
                 );
             }
+        }
 
-            program.to_pretty_estree_js_json_with_fixes(false)
-        } else {
-            program.to_pretty_estree_ts_json_with_fixes(false)
-        };
+        let include_ts_fields = !source_type.is_javascript();
+        self.ast_json = program.to_pretty_estree_json_with_fixes(include_ts_fields, false);
         self.comments = comments;
     }
 
@@ -391,7 +396,7 @@ impl Oxc {
         // Only lint if there are no syntax errors
         if run_options.lint && self.diagnostics.is_empty() {
             let mut external_plugin_store = ExternalPluginStore::default();
-            let semantic_ret = SemanticBuilder::new().with_cfg(true).build(program);
+            let semantic_ret = SemanticBuilder::new_linter().build(program);
             let semantic = semantic_ret.semantic;
             let lint_config = if let Some(config) = &linter_options.config {
                 let oxlintrc = Oxlintrc::from_string(config).unwrap_or_default();
@@ -415,15 +420,20 @@ impl Oxc {
             )
             .run(
                 path,
-                vec![ContextSubHost::new(semantic, Arc::clone(module_record), 0)],
+                vec![ContextSubHost::new(
+                    semantic,
+                    Arc::clone(module_record),
+                    0,
+                    ContextSubHostOptions::default(),
+                )],
                 allocator,
             );
             self.diagnostics.extend(linter_ret.into_iter().map(|e| e.error));
         }
     }
 
-    fn convert_formatter_options(options: &OxcFormatterOptions) -> FormatOptions {
-        let mut format_options = FormatOptions::default();
+    fn convert_formatter_options(options: &OxcFormatterOptions) -> JsFormatOptions {
+        let mut format_options = JsFormatOptions::default();
 
         if let Some(use_tabs) = options.use_tabs {
             format_options.indent_style =
@@ -508,6 +518,12 @@ impl Oxc {
             if let Ok(expand) = normalized.parse::<Expand>() {
                 format_options.expand = expand;
             }
+        }
+
+        if let Some(ref operator_position) = options.experimental_operator_position
+            && let Ok(position) = operator_position.parse::<OperatorPosition>()
+        {
+            format_options.operator_position = position;
         }
 
         if let Some(ref sort_imports_config) = options.sort_imports {
@@ -609,20 +625,28 @@ impl Oxc {
     ) {
         let allocator = Allocator::default();
         if run_options.formatter {
-            let ret = Parser::new(&allocator, source_text, source_type)
-                .with_options(get_parse_options())
-                .parse();
-
             let format_options = Self::convert_formatter_options(formatter_options);
-            let formatter = Formatter::new(&allocator, format_options);
-            let formatted = formatter.format(&ret.program);
-            if run_options.formatter {
-                self.formatter_ir_text = formatted.document().to_string();
-                self.formatter_formatted_text = match formatted.print() {
-                    Ok(printer) => printer.into_code(),
+
+            // `format()` is called twice: once to dump the IR, once for the printed code.
+            // `print()` consumes the `Formatted`, so the IR pass needs its own.
+            // Playground already re-parses for the formatter, so the extra parse is acceptable here.
+            self.formatter_ir_text = match oxc_formatter::format(
+                &allocator,
+                source_text,
+                source_type,
+                format_options.clone(),
+            ) {
+                Ok(formatted) => formatted.document().display(source_text).to_string(),
+                Err(err) => err.to_string(),
+            };
+            self.formatter_formatted_text =
+                match oxc_formatter::format(&allocator, source_text, source_type, format_options) {
+                    Ok(formatted) => match formatted.print() {
+                        Ok(printer) => printer.into_code(),
+                        Err(err) => err.to_string(),
+                    },
                     Err(err) => err.to_string(),
                 };
-            }
         }
     }
 
@@ -703,7 +727,7 @@ impl Oxc {
                     self.write_line("Bindings: {");
                     for (name, &symbol_id) in bindings {
                         let symbol_flags = self.scoping.symbol_flags(symbol_id);
-                        self.write_line(format!("  {name} ({symbol_id:?} {symbol_flags:?})",));
+                        self.write_line(format!("  {name} ({symbol_id:?} {symbol_flags:?})"));
                     }
                     self.write_line("}");
                 }

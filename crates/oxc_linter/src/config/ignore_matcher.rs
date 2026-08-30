@@ -18,7 +18,9 @@ impl LintIgnoreMatcher {
         base_root: &Path,
         mut nested: Vec<(Vec<String>, PathBuf)>,
     ) -> Self {
-        let base_gi = {
+        let base_gi = if base_patterns.is_empty() {
+            None
+        } else {
             let mut builder = GitignoreBuilder::new(base_root);
             for pat in base_patterns {
                 let _ = builder.add_line(None, pat);
@@ -27,11 +29,7 @@ impl LintIgnoreMatcher {
         };
 
         // Sort nested configs deepest-to-shallowest for correct precedence
-        nested.sort_unstable_by(|a, b| {
-            let a_len = a.1.components().count();
-            let b_len = b.1.components().count();
-            b_len.cmp(&a_len)
-        });
+        nested.sort_by_cached_key(|(_, root)| std::cmp::Reverse(root.components().count()));
         let nested = nested
             .into_iter()
             .map(|(patterns, root)| {
@@ -60,9 +58,10 @@ impl LintIgnoreMatcher {
                     .is_some_and(|gi| gi.matched_path_or_any_parents(path, false).is_ignore());
             }
         }
-        self.base
-            .as_ref()
-            .is_some_and(|base| base.matched_path_or_any_parents(path, false).is_ignore())
+        self.base.as_ref().is_some_and(|base| {
+            path.starts_with(base.path())
+                && base.matched_path_or_any_parents(path, false).is_ignore()
+        })
     }
 }
 
@@ -99,5 +98,16 @@ mod tests {
         // Path outside any nested config, only base applies
         assert!(matcher.should_ignore(Path::new("/repo/file.js")));
         assert!(!matcher.should_ignore(Path::new("/repo/file.ts")));
+    }
+
+    #[test]
+    fn test_lint_file_outside_root() {
+        let base_patterns = vec!["pattern".to_string()];
+        let base_root = Path::new("/repo1");
+
+        let matcher = LintIgnoreMatcher::new(&base_patterns, base_root, vec![]);
+
+        // Test that path outside root shouldn't be ignored.
+        assert!(!matcher.should_ignore(Path::new("/repo2/pattern/file.ts")));
     }
 }

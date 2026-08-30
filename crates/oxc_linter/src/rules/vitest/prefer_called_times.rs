@@ -57,6 +57,8 @@ declare_oxc_lint!(
     vitest,
     style,
     fix,
+    version = "1.35.0",
+    short_description = "This rule aims to enforce the use of `toBeCalledTimes(1)` or `toHaveBeenCalledTimes(1)` over `toBeCalledOnce()` or `toHaveBeenCalledOnce()`.",
 );
 
 impl Rule for PreferCalledTimes {
@@ -101,7 +103,7 @@ impl PreferCalledTimes {
             let param_text = Self::build_expect_argument(expect_argument, fixer);
 
             let modifier_text =
-                parsed_expect_call.modifiers().iter().fold(String::new(), |mut acc, modifier| {
+                parsed_expect_call.modifiers().fold(String::new(), |mut acc, modifier| {
                     use std::fmt::Write;
                     write!(&mut acc, ".{}", fixer.source_range(modifier.span)).unwrap();
                     acc

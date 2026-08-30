@@ -83,6 +83,8 @@ declare_oxc_lint!(
     correctness,
     pending,
     config = CheckTagNamesConfig,
+    version = "0.3.2",
+    short_description = "Reports invalid block tag names.",
 );
 
 #[derive(Debug, Default, Clone, Deserialize, JsonSchema)]
@@ -233,7 +235,7 @@ const OUTSIDE_AMBIENT_INVALID_TAGS_IF_TYPED: [&str; 27] = [
 
 impl Rule for CheckTagNames {
     fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
-        serde_json::from_value::<DefaultRuleConfig<Self>>(value).map(DefaultRuleConfig::into_inner)
+        DefaultRuleConfig::<Self>::from_value(value).map(DefaultRuleConfig::into_inner)
     }
 
     fn run_once(&self, ctx: &LintContext) {
@@ -1170,7 +1172,7 @@ fn test() {
         (
             "
                             /** @abstract */
-                            { declare let a; }
+                            declare namespace b { let a; }
                           ",
             Some(serde_json::json!([
               {
@@ -1181,9 +1183,9 @@ fn test() {
         ),
         (
             "
-                            function test() {
+                            declare namespace test {
                               /** @abstract */
-                              declare let a;
+                              let a;
                             }
                           ",
             Some(serde_json::json!([

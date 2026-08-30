@@ -39,14 +39,17 @@ pub struct SortImportsOptions {
     /// Per-boundary newline overrides.
     /// `newline_boundary_overrides[i]` = override for boundary between `groups[i]` and `groups[i+1]`.
     /// `None` means "use global `newlines_between`".
+    /// Either empty (no overrides anywhere) or exactly `groups.len() - 1` entries
+    /// ([`Self::validate`] checks this pairing).
     pub newline_boundary_overrides: Vec<Option<bool>>,
 }
 
 impl SortImportsOptions {
-    /// Validate option combinations.
+    /// Validate option combinations and cross-field references.
     ///
     /// # Errors
-    /// Returns an error message if incompatible options are set.
+    /// Returns an error message if incompatible options are set,
+    /// or `groups` references an undefined custom group name.
     pub fn validate(&self) -> Result<(), String> {
         if self.partition_by_newline && self.newline_boundary_overrides.iter().any(Option::is_some)
         {
@@ -57,6 +60,25 @@ impl SortImportsOptions {
                 "`partitionByNewline: true` and `newlinesBetween: true` cannot be used together"
                     .to_string(),
             );
+        }
+        // A dangling name would silently match nothing at runtime.
+        for entry in self.groups.iter().flatten() {
+            if let GroupEntry::Custom(name) = entry
+                && !self.custom_groups.iter().any(|g| g.group_name == *name)
+            {
+                return Err(format!("unknown group name `{name}` in `groups`"));
+            }
+        }
+        // A short/long vec would silently fall back to the global setting for tail boundaries.
+        if !self.newline_boundary_overrides.is_empty()
+            && self.newline_boundary_overrides.len() + 1 != self.groups.len()
+        {
+            return Err(format!(
+                "`newline_boundary_overrides` must be empty or hold exactly one entry per group boundary ({} groups need {}, got {})",
+                self.groups.len(),
+                self.groups.len().saturating_sub(1),
+                self.newline_boundary_overrides.len()
+            ));
         }
         Ok(())
     }
@@ -134,12 +156,16 @@ pub struct CustomGroupDefinition {
     pub modifiers: Vec<ImportModifier>,
 }
 
-/// Returns default prefixes for identifying internal imports: `["~/", "@/"]`.
+/// Returns default prefixes for identifying internal imports: `["~/", "@/", "#"]`.
 pub fn default_internal_patterns() -> Vec<String> {
-    ["~/", "@/"].iter().map(|s| (*s).to_string()).collect()
+    ["~/", "@/", "#"].iter().map(|s| (*s).to_string()).collect()
 }
 
 /// Returns default groups configuration for organizing imports.
+///
+/// # Panics
+///
+/// Never panics in practice; the predefined group names are hard-coded and known to be valid.
 pub fn default_groups() -> Vec<Vec<GroupEntry>> {
     // Helper to parse a predefined group name
     let p = |s: &str| GroupEntry::Predefined(GroupName::parse(s).unwrap());

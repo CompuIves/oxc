@@ -1,3 +1,6 @@
+use cow_utils::CowUtils;
+use lazy_regex::Regex;
+use smallvec::SmallVec;
 use std::borrow::Cow;
 
 use oxc_allocator::GetAddress;
@@ -49,6 +52,7 @@ pub enum JestFnKind {
     Expect,
     ExpectTypeOf,
     General(JestGeneralFnKind),
+    VitestFixture,
     Unknown,
 }
 
@@ -229,14 +233,12 @@ fn collect_ids_referenced_to_import<'a, 'c>(
 
                 if matches!(
                     import_decl.source.value.as_str(),
-                    "@jest/globals" | "vitest" | "vite-plus/test"
+                    "@jest/globals" | "vitest" | "vite-plus/test" | "@effect/vitest"
                 ) {
                     let original = find_original_name(import_decl, name);
-                    let ret = reference_ids
-                        .iter()
-                        .map(|&reference_id| (reference_id, original))
-                        .collect::<Vec<_>>();
-                    return Some(ret);
+                    return Some(
+                        reference_ids.iter().map(move |&reference_id| (reference_id, original)),
+                    );
                 }
             }
 
@@ -277,8 +279,8 @@ pub fn get_node_name<'a>(expr: &'a Expression<'a>) -> CompactStr {
     chain.join(".").into()
 }
 
-pub fn get_node_name_vec<'a>(expr: &'a Expression<'a>) -> Vec<Cow<'a, str>> {
-    let mut chain: Vec<Cow<'a, str>> = Vec::new();
+pub fn get_node_name_vec<'a>(expr: &'a Expression<'a>) -> SmallVec<[Cow<'a, str>; 4]> {
+    let mut chain: SmallVec<[Cow<'a, str>; 4]> = SmallVec::new();
 
     match expr {
         Expression::Identifier(ident) => chain.push(Cow::Borrowed(ident.name.as_str())),
@@ -316,6 +318,32 @@ pub fn is_equality_matcher(matcher: &KnownMemberExpressionProperty) -> bool {
         || matcher.is_name_equal("toStrictEqual")
 }
 
+/// Checks if node names returned by getNodeName matches any of the given star patterns
+pub fn matches_assert_function_name(name: &str, patterns: &[Regex]) -> bool {
+    patterns.iter().any(|pattern| pattern.is_match(name))
+}
+
+pub fn convert_pattern(pattern: &str) -> CompactStr {
+    // Pre-process pattern, e.g.
+    // request.*.expect -> request.[a-z\\d]*.expect
+    // request.**.expect -> request.[a-z\\d\\.]*.expect
+    // request.**.expect* -> request.[a-z\\d\\.]*.expect[a-z\\d]*
+    let pattern = pattern
+        .split('.')
+        .map(|p| {
+            if p == "**" {
+                CompactStr::from("[a-z\\d\\.]*")
+            } else {
+                p.cow_replace('*', "[a-z\\d]*").into()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\\.");
+
+    // 'a.b.c' -> /^a\.b\.c(\.|$)/iu
+    format!("(?ui)^{pattern}(\\.|$)").into()
+}
+
 #[cfg(test)]
 mod test {
     use std::{rc::Rc, sync::Arc};
@@ -325,7 +353,11 @@ mod test {
     use oxc_semantic::SemanticBuilder;
     use oxc_span::SourceType;
 
-    use crate::{ContextHost, ModuleRecord, context::ContextSubHost, options::LintOptions};
+    use crate::{
+        ContextHost, ModuleRecord,
+        context::{ContextSubHost, ContextSubHostOptions},
+        options::LintOptions,
+    };
 
     #[test]
     fn test_is_jest_file() {
@@ -335,10 +367,16 @@ mod test {
             let source_type = SourceType::default();
             let parser_ret = Parser::new(&allocator, "", source_type).parse();
             let program = allocator.alloc(parser_ret.program);
-            let semantic = SemanticBuilder::new().with_cfg(true).build(program).semantic;
+            let semantic = SemanticBuilder::new_linter().build(program).semantic;
             Rc::new(ContextHost::new(
                 path,
-                vec![ContextSubHost::new(semantic, Arc::new(ModuleRecord::default()), 0)],
+                vec![ContextSubHost::new(
+                    semantic,
+                    Arc::new(ModuleRecord::default()),
+                    0,
+                    ContextSubHostOptions::default(),
+                )],
+                &allocator,
                 LintOptions::default(),
                 Arc::default(),
             ))

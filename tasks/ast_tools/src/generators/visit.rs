@@ -254,7 +254,7 @@ fn generate_output(
         use std::cell::Cell;
 
         ///@@line_break
-        use oxc_allocator::Vec;
+        use oxc_allocator::ArenaVec;
         use oxc_syntax::scope::{ScopeFlags, ScopeId};
 
         ///@@line_break
@@ -536,10 +536,9 @@ impl VisitBuilder<'_> {
 
         // Generate walk functions
         let enum_ident = enum_def.ident();
-        let has_kind = enum_def.kind.has_kind;
-        let (enter_node, leave_node) = generate_enter_and_leave_node(&enum_ident, has_kind, false);
+        let (enter_node, leave_node) = generate_enter_and_leave_node(&enum_ident, false, false);
         let (enter_node_mut, leave_node_mut) =
-            generate_enter_and_leave_node(&enum_ident, has_kind, true);
+            generate_enter_and_leave_node(&enum_ident, false, true);
 
         let mut match_arm_count = 0usize;
         let (variant_match_arms, variant_match_arms_mut): (TokenStream, TokenStream) = enum_def
@@ -568,9 +567,8 @@ impl VisitBuilder<'_> {
             .unzip();
 
         let (inherits_match_arms, inherits_match_arms_mut): (TokenStream, TokenStream) = enum_def
-            .inherits_types(self.schema)
+            .inherits_enums(self.schema)
             .map(|inherits_type| {
-                let inherits_type = inherits_type.as_enum().unwrap();
                 let inner_visit_fn_ident = inherits_type.visit.visitor_ident();
                 let Some(inner_visit_fn_ident) = inner_visit_fn_ident else {
                     panic!(
@@ -1105,7 +1103,9 @@ impl Target {
 /// Generate code for `enter_node` and `leave_node`.
 ///
 /// If the type has no `AstKind`, returns a comment for enter, and empty token stream for exit.
-fn generate_enter_and_leave_node(
+///
+/// Also used by generator for `VisitJs` trait.
+pub fn generate_enter_and_leave_node(
     type_ident: &Ident,
     has_kind: bool,
     is_mut: bool,

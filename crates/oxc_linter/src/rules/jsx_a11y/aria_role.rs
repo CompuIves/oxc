@@ -99,11 +99,13 @@ declare_oxc_lint!(
     jsx_a11y,
     correctness,
     config = AriaRoleConfig,
+    version = "0.1.1",
+    short_description = "Enforce that elements with ARIA roles use a valid, non-abstract ARIA role.",
 );
 
 impl Rule for AriaRole {
     fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
-        serde_json::from_value::<DefaultRuleConfig<Self>>(value).map(DefaultRuleConfig::into_inner)
+        DefaultRuleConfig::<Self>::from_value(value).map(DefaultRuleConfig::into_inner)
     }
 
     fn run<'a>(&self, node: &AstNode<'a>, ctx: &LintContext<'a>) {
@@ -128,13 +130,12 @@ impl Rule for AriaRole {
                     }
                 }
                 Some(JSXAttributeValue::StringLiteral(str)) => {
-                    let words_str = String::from(str.value.as_str());
-                    let words = words_str.split_whitespace();
-                    if words_str.trim().is_empty() {
+                    let value = str.value.as_str();
+                    if value.trim().is_empty() {
                         ctx.diagnostic(aria_role_diagnostic(str.span, ""));
-                    } else if let Some(error_prop) = words.into_iter().find(|word| {
+                    } else if let Some(error_prop) = value.split_whitespace().find(|word| {
                         !VALID_ARIA_ROLES.contains(word)
-                            && !self.allowed_invalid_roles.contains(&(*word).to_string())
+                            && !self.allowed_invalid_roles.iter().any(|s| s == word)
                     }) {
                         ctx.diagnostic(aria_role_diagnostic(
                             str.span,

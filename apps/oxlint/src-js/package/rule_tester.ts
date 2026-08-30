@@ -13,7 +13,7 @@ import util from "node:util";
 import stableJsonStringify from "json-stable-stringify-without-jsonify";
 import { applyFixes } from "../bindings.js";
 import { ecmaFeaturesOverride, setEcmaVersion, ECMA_VERSION } from "../plugins/context.ts";
-import { registerPlugin, registeredRules } from "../plugins/load.ts";
+import { registerPlugin, registeredPluginNames, registeredRules } from "../plugins/load.ts";
 import { lintFileImpl, resetStateAfterError } from "../plugins/lint.ts";
 import { getLineColumnFromOffset, getNodeByRangeIndex } from "../plugins/location.ts";
 import { allOptions, setOptions, DEFAULT_OPTIONS_ID } from "../plugins/options.ts";
@@ -94,8 +94,8 @@ function getIt(only?: boolean): ItFn {
 function getItOnly(): ItFn {
   if (itOnly === null) {
     throw new Error(
-      "To use `only`, use `RuleTester` with a test framework that provides `it.only()` like Mocha, " +
-        "or provide a custom `it.only` function by assigning it to `RuleTester.itOnly`",
+      "To use `only`, use `RuleTester` with a test framework that provides `it.only()` like Mocha, "
+        + "or provide a custom `it.only` function by assigning it to `RuleTester.itOnly`",
     );
   }
   return itOnly;
@@ -118,7 +118,6 @@ interface Config {
    *
    * If `true`:
    * - Column offsets in diagnostics are incremented by 1.
-   * - Fixes which are adjacent to each other are considered overlapping, and only the first fix is applied.
    * - Defaults `sourceType` to "module" if not provided (otherwise default is "unambiguous").
    * - Disallows `sourceType: "unambiguous"`.
    * - Allows `null` as property value for `globals`.
@@ -651,8 +650,8 @@ function assertInvalidTestCasePasses(test: InvalidTestCase, plugin: Plugin, conf
         assertMessageMatches(diagnostic.message, error);
         assert(
           diagnostic.suggestions === null,
-          `Error at index ${errorIndex} has suggestions. Please convert the test error into an object ` +
-            "and specify `suggestions` property on it to test suggestions",
+          `Error at index ${errorIndex} has suggestions. Please convert the test error into an object `
+            + "and specify `suggestions` property on it to test suggestions",
         );
       } else {
         // `error` is an error object
@@ -674,9 +673,7 @@ function assertInvalidTestCasePasses(test: InvalidTestCase, plugin: Plugin, conf
 
   // Test output after fixes
   const { code } = test;
-  const eslintCompat = test.eslintCompat === true;
-
-  let fixedCode = runFixes(diagnostics, code, eslintCompat);
+  let fixedCode = runFixes(diagnostics, code);
   if (fixedCode === null) fixedCode = code;
 
   // Re-lint and re-fix for additional passes if `recursive` option used
@@ -687,7 +684,7 @@ function assertInvalidTestCasePasses(test: InvalidTestCase, plugin: Plugin, conf
   if (extraPassCount > 0 && fixedCode !== code) {
     for (let pass = 0; pass < extraPassCount; pass++) {
       const diagnostics = lint({ ...test, code: fixedCode }, plugin);
-      const newFixedCode = runFixes(diagnostics, fixedCode, eslintCompat);
+      const newFixedCode = runFixes(diagnostics, fixedCode);
       if (newFixedCode === null) break;
       fixedCode = newFixedCode;
     }
@@ -719,14 +716,14 @@ function assertInvalidTestCasePasses(test: InvalidTestCase, plugin: Plugin, conf
  * @returns Fixed code, or `null` if no fixes to apply
  * @throws {Error} If error when applying fixes
  */
-function runFixes(diagnostics: Diagnostic[], code: string, eslintCompat: boolean): string | null {
+function runFixes(diagnostics: Diagnostic[], code: string): string | null {
   const fixGroups: FixReport[][] = [];
   for (const diagnostic of diagnostics) {
     if (diagnostic.fixes !== null) fixGroups.push(diagnostic.fixes);
   }
   if (fixGroups.length === 0) return null;
 
-  const fixedCode = applyFixes(code, JSON.stringify(fixGroups), eslintCompat);
+  const fixedCode = applyFixes(code, JSON.stringify(fixGroups));
   if (fixedCode === null) throw new Error("Failed to apply fixes");
 
   return fixedCode;
@@ -818,12 +815,12 @@ function assertMessageIdIsCorrect(
   );
   if (unsubstitutedPlaceholders.length !== 0) {
     assert.fail(
-      `${prefix}The reported message has ` +
-        (unsubstitutedPlaceholders.length > 1
+      `${prefix}The reported message has `
+        + (unsubstitutedPlaceholders.length > 1
           ? `unsubstituted placeholders: ${unsubstitutedPlaceholders.map((name) => `'${name}'`).join(", ")}`
-          : `an unsubstituted placeholder '${unsubstitutedPlaceholders[0]}'`) +
-        `. Please provide the missing ${unsubstitutedPlaceholders.length > 1 ? "values" : "value"} ` +
-        "via the `data` property.",
+          : `an unsubstituted placeholder '${unsubstitutedPlaceholders[0]}'`)
+        + `. Please provide the missing ${unsubstitutedPlaceholders.length > 1 ? "values" : "value"} `
+        + "via the `data` property.",
     );
   }
 
@@ -881,9 +878,9 @@ function assertInvalidTestCaseLocationIsCorrect(
   //
   // In ESLint compat mode, deal with this incompatibility.
   const canVoidEndLocation =
-    test.eslintCompat === true &&
-    diagnostic.endLine === diagnostic.line &&
-    diagnostic.endColumn === diagnostic.column;
+    test.eslintCompat === true
+    && diagnostic.endLine === diagnostic.line
+    && diagnostic.endColumn === diagnostic.column;
 
   if (Object.hasOwn(error, "endLine")) {
     if (error.endLine === undefined && canVoidEndLocation) {
@@ -932,11 +929,9 @@ function assertSuggestionsAreCorrect(
   assert.strictEqual(
     actualSuggestions.length,
     expectedSuggestions.length,
-    `Error should have ${expectedSuggestions.length} suggestion${expectedSuggestions.length > 1 ? "s" : ""}. ` +
-      `Instead found ${actualSuggestions.length} suggestion${actualSuggestions.length > 1 ? "s" : ""}.`,
+    `Error should have ${expectedSuggestions.length} suggestion${expectedSuggestions.length > 1 ? "s" : ""}. `
+      + `Instead found ${actualSuggestions.length} suggestion${actualSuggestions.length > 1 ? "s" : ""}.`,
   );
-
-  const eslintCompat = test.eslintCompat === true;
 
   for (let i = 0; i < expectedSuggestions.length; i++) {
     const actual = actualSuggestions[i]!;
@@ -949,7 +944,7 @@ function assertSuggestionsAreCorrect(
     // Validate output
     assert(Object.hasOwn(expected, "output"), `${prefix}: \`output\` property is required`);
 
-    const suggestedCode = applyFixes(test.code, JSON.stringify([actual.fixes]), eslintCompat);
+    const suggestedCode = applyFixes(test.code, JSON.stringify([actual.fixes]));
     assert(suggestedCode !== null, `${prefix}: Failed to apply suggestion fix`);
 
     assert.strictEqual(
@@ -1313,6 +1308,7 @@ function lint(test: TestCase, plugin: Plugin): Diagnostic[] {
   } finally {
     // Reset state
     registeredRules.length = 0;
+    registeredPluginNames.clear();
     if (allOptions !== null) allOptions.length = 1;
 
     // Even if there hasn't been an error, do a full reset of state just to be sure.
@@ -1341,8 +1337,8 @@ function getParseOptions(test: TestCase): ParseOptions {
     // `unambiguous` is disallowed in ESLint compatibility mode
     if (test.eslintCompat === true && sourceType === "unambiguous") {
       throw new Error(
-        "'unambiguous' source type is not supported in ESLint compatibility mode.\n" +
-          "Disable ESLint compatibility mode by setting `eslintCompat` to `false` in the config / test case.",
+        "'unambiguous' source type is not supported in ESLint compatibility mode.\n"
+          + "Disable ESLint compatibility mode by setting `eslintCompat` to `false` in the config / test case.",
       );
     }
 
@@ -1566,7 +1562,7 @@ function getTestName(test: TestCase): string {
  * @throws {*} - Value thrown by the hook function
  */
 function runBeforeHook(test: TestCase): void {
-  // oxlint-disable-next-line typescript/unbound-method - bound in `runHook`
+  // oxlint-disable-next-line typescript/unbound-method
   if (Object.hasOwn(test, "before")) runHook(test, test.before, "before");
 }
 
@@ -1577,7 +1573,7 @@ function runBeforeHook(test: TestCase): void {
  * @throws {*} - Value thrown by the hook function
  */
 function runAfterHook(test: TestCase): void {
-  // oxlint-disable-next-line typescript/unbound-method - bound in `runHook`
+  // oxlint-disable-next-line typescript/unbound-method
   if (Object.hasOwn(test, "after")) runHook(test, test.after, "after");
 }
 
@@ -1659,8 +1655,8 @@ function assertInvalidTestCaseIsWellFormed(
     );
     assert(
       Array.isArray(errors),
-      `Invalid 'errors' property for invalid test of rule \`${ruleName}\`:` +
-        `expected a number or an array but got ${errors === null ? "null" : typeof errors}`,
+      `Invalid 'errors' property for invalid test of rule \`${ruleName}\`:`
+        + `expected a number or an array but got ${errors === null ? "null" : typeof errors}`,
     );
     assert(errors.length !== 0, "Invalid cases must have at least one error");
   }
@@ -1669,8 +1665,8 @@ function assertInvalidTestCaseIsWellFormed(
   if (Object.hasOwn(test, "output")) {
     assert(
       test.output === null || typeof test.output === "string",
-      "Test property `output`, if specified, must be a string or null. " +
-        "If no autofix is expected, then omit the `output` property or set it to null.",
+      "Test property `output`, if specified, must be a string or null. "
+        + "If no autofix is expected, then omit the `output` property or set it to null.",
     );
   }
 
@@ -1768,11 +1764,11 @@ function isSerializable(value: unknown, seenObjects: Set<object> = new Set()): b
  */
 function isSerializablePrimitiveOrPlainObject(value: unknown): boolean {
   return (
-    value === null ||
-    typeof value === "string" ||
-    typeof value === "boolean" ||
-    typeof value === "number" ||
-    (typeof value === "object" && (value.constructor === Object || Array.isArray(value)))
+    value === null
+    || typeof value === "string"
+    || typeof value === "boolean"
+    || typeof value === "number"
+    || (typeof value === "object" && (value.constructor === Object || Array.isArray(value)))
   );
 }
 

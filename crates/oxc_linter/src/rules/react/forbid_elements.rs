@@ -56,7 +56,7 @@ impl From<ForbidElementsConfig> for ForbidElements {
 
 /// A forbidden element, either as a plain element name or with a custom message.
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
-#[serde(untagged)]
+#[serde(untagged, deny_unknown_fields)]
 pub enum ForbidItem {
     ElementName(CompactStr),
     ElementWithMessage {
@@ -124,11 +124,13 @@ declare_oxc_lint!(
     react,
     restriction,
     config = ForbidElementsConfig,
+    version = "0.16.11",
+    short_description = "Allows you to configure a list of forbidden elements and to specify their desired replacements.",
 );
 
 impl Rule for ForbidElements {
     fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
-        serde_json::from_value::<DefaultRuleConfig<Self>>(value).map(DefaultRuleConfig::into_inner)
+        DefaultRuleConfig::<Self>::from_value(value).map(DefaultRuleConfig::into_inner)
     }
 
     fn run<'a>(&self, node: &AstNode<'a>, ctx: &LintContext<'a>) {

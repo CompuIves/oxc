@@ -63,7 +63,9 @@ declare_oxc_lint!(
     PreferToBeObject,
     vitest,
     style,
-    fix
+    fix,
+    version = "0.9.2",
+    short_description = "This rule enforces using `toBeObject()` to check if a value is of type `Object`.",
 );
 
 impl Rule for PreferToBeObject {
@@ -132,7 +134,6 @@ impl PreferToBeObject {
                     let code = {
                         let not_modifier = parsed_expect_call
                             .modifiers()
-                            .iter()
                             .any(|node| node.name().as_deref() == Some("not"));
                         let is_not_modifier =
                             (matcher.name().as_deref() == Some("toBeFalsy")) != not_modifier;

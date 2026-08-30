@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use futures::future::BoxFuture;
 use rustc_hash::FxBuildHasher;
 use tower_lsp_server::ls_types::Uri;
 use tower_lsp_server::{LspService, Server, ls_types::ServerInfo};
@@ -9,18 +10,28 @@ mod capabilities;
 mod file_system;
 mod language_id;
 mod options;
+mod position;
 #[cfg(test)]
 mod tests;
 mod tool;
+mod tool_params;
+pub mod utils;
 mod worker;
 mod worker_manager;
 
 pub use crate::capabilities::{Capabilities, DiagnosticMode};
 pub use crate::language_id::LanguageId;
-pub use crate::tool::{DiagnosticResult, Tool, ToolBuilder, ToolRestartChanges};
+pub use crate::position::offset_to_position;
+pub use crate::tool::{
+    ClientMessage, DiagnosticResult, Tool, ToolBuildResult, ToolBuilder, ToolRestartChanges,
+};
+pub use crate::tool_params::CodeActionParams;
+pub use crate::worker::WorkspaceWorker;
+pub use crate::worker_manager::WorkerManager;
 
 pub type ConcurrentHashMap<K, V> = papaya::HashMap<K, V, FxBuildHasher>;
 
+#[derive(Debug)]
 pub struct TextDocument<'a> {
     pub uri: &'a Uri,
     pub language_id: LanguageId,
@@ -33,8 +44,23 @@ impl<'a> TextDocument<'a> {
     }
 }
 
-/// Run the language server
-pub async fn run_server(server_name: String, server_version: String, tool: Arc<dyn ToolBuilder>) {
+/// Run the language server.
+///
+/// The future is type-erased to reduce binary size by preventing CLI and NAPI execution paths from
+/// each generating a copy of the LSP server state machine.
+pub fn run_server(
+    server_name: String,
+    server_version: String,
+    worker_manager: WorkerManager,
+) -> BoxFuture<'static, ()> {
+    Box::pin(run_server_impl(server_name, server_version, worker_manager))
+}
+
+async fn run_server_impl(
+    server_name: String,
+    server_version: String,
+    worker_manager: WorkerManager,
+) {
     let stdin = tokio::io::stdin();
     let stdout = tokio::io::stdout();
 
@@ -42,7 +68,7 @@ pub async fn run_server(server_name: String, server_version: String, tool: Arc<d
         crate::backend::Backend::new(
             client,
             ServerInfo { name: server_name, version: Some(server_version) },
-            tool,
+            worker_manager,
         )
     })
     .finish();

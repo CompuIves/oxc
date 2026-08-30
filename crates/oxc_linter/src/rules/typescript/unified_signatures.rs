@@ -31,7 +31,7 @@ fn unified_signatures_diagnostic<L: Into<LabeledSpan>, T: IntoIterator<Item = L>
 }
 
 #[derive(Debug, Default, Clone, Deserialize, Serialize, JsonSchema)]
-#[serde(default, rename_all = "camelCase")]
+#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
 pub struct UnifiedSignaturesOptions {
     /// Whether to ignore parameter name differences when comparing signatures. If `false`, signatures
     /// will not be considered unifiable if they have parameters in the same position with different
@@ -73,11 +73,13 @@ declare_oxc_lint!(
     typescript,
     style,
     config = UnifiedSignaturesOptions,
+    version = "1.48.0",
+    short_description = "Disallow overload signatures that can be unified into one.",
 );
 
 impl Rule for UnifiedSignatures {
     fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::Error> {
-        serde_json::from_value::<DefaultRuleConfig<Self>>(value).map(DefaultRuleConfig::into_inner)
+        DefaultRuleConfig::<Self>::from_value(value).map(DefaultRuleConfig::into_inner)
     }
 
     fn run<'a>(&self, node: &AstNode<'a>, ctx: &LintContext<'a>) {
@@ -362,8 +364,8 @@ fn get_statement_overload<'a>(
 
     let module_declaration = statement.as_module_declaration()?;
     match module_declaration {
-        oxc_ast::ast::ModuleDeclaration::ExportNamedDeclaration(export_named) => {
-            let Some(Declaration::FunctionDeclaration(function)) = &export_named.declaration else {
+        oxc_ast::ast::ModuleDeclaration::ExportDeclaration(export_decl) => {
+            let Declaration::FunctionDeclaration(function) = &export_decl.declaration else {
                 return None;
             };
             if function.r#type != FunctionType::TSDeclareFunction {
@@ -375,7 +377,7 @@ fn get_statement_overload<'a>(
                 key,
                 OverloadCandidate {
                     signature: SignatureDefinition::Function(function),
-                    comment_target_start: export_named.span.start,
+                    comment_target_start: export_decl.span.start,
                 },
             ))
         }

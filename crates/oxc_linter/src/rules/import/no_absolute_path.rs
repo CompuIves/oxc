@@ -61,7 +61,7 @@ impl Default for NoAbsolutePath {
 declare_oxc_lint!(
     /// ### What it does
     ///
-    /// This rule forbids the import of modules using absolute paths.
+    /// Forbid the import of modules using absolute paths.
     ///
     /// ### Why is this bad?
     ///
@@ -106,19 +106,21 @@ declare_oxc_lint!(
     suspicious,
     pending,
     config = NoAbsolutePath,
+    version = "0.15.13",
+    short_description = "Forbid the import of modules using absolute paths.",
 );
 
 impl Rule for NoAbsolutePath {
     fn from_configuration(value: Value) -> Result<Self, serde_json::error::Error> {
-        serde_json::from_value::<DefaultRuleConfig<Self>>(value).map(DefaultRuleConfig::into_inner)
+        DefaultRuleConfig::<Self>::from_value(value).map(DefaultRuleConfig::into_inner)
     }
 
     fn run<'a>(&self, node: &AstNode<'a>, ctx: &LintContext<'a>) {
         match node.kind() {
-            AstKind::ImportDeclaration(import_decl) if self.esmodule => {
-                if check_path_is_absolute(import_decl.source.value.as_str()) {
-                    ctx.diagnostic(no_absolute_path_diagnostic(import_decl.source.span));
-                }
+            AstKind::ImportDeclaration(import_decl)
+                if self.esmodule && check_path_is_absolute(import_decl.source.value.as_str()) =>
+            {
+                ctx.diagnostic(no_absolute_path_diagnostic(import_decl.source.span));
             }
             AstKind::CallExpression(call_expr) => {
                 let Expression::Identifier(ident) = &call_expr.callee else {
@@ -129,11 +131,12 @@ impl Rule for NoAbsolutePath {
                 if matches!(func_name, "require" | "define") && count > 0 {
                     match &call_expr.arguments[0] {
                         Argument::StringLiteral(str_literal)
-                            if count == 1 && func_name == "require" && self.commonjs =>
+                            if count == 1
+                                && func_name == "require"
+                                && self.commonjs
+                                && check_path_is_absolute(str_literal.value.as_str()) =>
                         {
-                            if check_path_is_absolute(str_literal.value.as_str()) {
-                                ctx.diagnostic(no_absolute_path_diagnostic(str_literal.span));
-                            }
+                            ctx.diagnostic(no_absolute_path_diagnostic(str_literal.span));
                         }
                         Argument::ArrayExpression(arr_expr) if count == 2 && self.amd => {
                             for el in &arr_expr.elements {

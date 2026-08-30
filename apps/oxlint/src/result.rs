@@ -8,11 +8,13 @@ pub enum CliRunResult {
     InvalidOptionTsConfig,
     InvalidOptionTypeCheckWithoutTypeAware,
     InvalidOptionTypeCheckOnlyWithFix,
+    InvalidOptionTypeCheckOnlyWithSuppressionUpdate,
     InvalidOptionSeverityWithoutFilter,
     InvalidOptionSeverityWithoutPluginName,
     InvalidOptionSeverityWithoutRuleName,
     LintSucceeded,
     LintFoundErrors,
+    LintUnprunedSuppressions,
     LintMaxWarningsExceeded,
     LintNoWarningsAllowed,
     LintNoFilesFound,
@@ -39,9 +41,11 @@ impl Termination for CliRunResult {
             | Self::InvalidOptionTsConfig
             | Self::InvalidOptionTypeCheckWithoutTypeAware
             | Self::InvalidOptionTypeCheckOnlyWithFix
+            | Self::InvalidOptionTypeCheckOnlyWithSuppressionUpdate
             | Self::InvalidOptionSeverityWithoutFilter
             | Self::InvalidOptionSeverityWithoutPluginName
             | Self::InvalidOptionSeverityWithoutRuleName
+            | Self::LintUnprunedSuppressions
             | Self::TsGoLintError => ExitCode::FAILURE,
         }
     }

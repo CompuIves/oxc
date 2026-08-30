@@ -12,6 +12,10 @@ use crate::output_formatter::InternalFormatter;
 pub struct GithubOutputFormatter;
 
 impl InternalFormatter for GithubOutputFormatter {
+    fn lint_command_info(&self, lint_command_info: &super::LintCommandInfo) -> Option<String> {
+        Some(lint_command_info.format_execution_summary())
+    }
+
     fn get_diagnostic_reporter(&self) -> Box<dyn DiagnosticReporter> {
         Box::new(GithubReporter)
     }
@@ -39,15 +43,31 @@ fn format_github(diagnostic: &Error) -> String {
     let Info { start, end, filename, message, severity, rule_id } = Info::new(diagnostic);
     let severity = match severity {
         Severity::Error => "error",
-        Severity::Warning | miette::Severity::Advice => "warning",
+        Severity::Warning | Severity::Advice => "warning",
     };
     let title = rule_id.map_or(Cow::Borrowed("oxlint"), Cow::Owned);
-    let filename = escape_property(&filename);
-    let message = escape_data(&message);
-    format!(
-        "::{severity} file={filename},line={},endLine={},col={},endColumn={},title={title}::{message}\n",
-        start.line, end.line, start.column, end.column
-    )
+
+    if filename.is_empty() {
+        let severity = match diagnostic.severity() {
+            Some(Severity::Error) | None => "error",
+            Some(Severity::Warning | Severity::Advice) => "warning",
+        };
+        let message = diagnostic.to_string();
+        let message = escape_data(&message);
+        format!("::{severity} title={title}::{message}\n")
+    } else {
+        // The parameters before `::` only feed the annotations panel, not the log
+        // stream, so repeat `file:line:col` in the message text. Same layout as Ruff:
+        // https://github.com/astral-sh/ruff/blob/main/crates/ruff_db/src/diagnostic/render/github.rs
+        let escaped_filename = escape_property(&filename);
+        let filename_data = escape_data(&filename);
+        let message = escape_data(&message);
+        let (line, col) = (start.line, start.column);
+        let (end_line, end_col) = (end.line, end.column);
+        format!(
+            "::{severity} file={escaped_filename},line={line},endLine={end_line},col={col},endColumn={end_col},title={title}::{filename_data}:{line}:{col}: {message}\n"
+        )
+    }
 }
 
 fn escape_data(value: &str) -> String {
@@ -86,13 +106,49 @@ fn escape_property(value: &str) -> String {
 
 #[cfg(test)]
 mod test {
+    use std::time::Duration;
+
     use oxc_diagnostics::{
         DiagnosticService, NamedSource, OxcDiagnostic,
         reporter::{DiagnosticReporter, DiagnosticResult},
     };
     use oxc_span::Span;
 
-    use super::GithubReporter;
+    use super::{GithubOutputFormatter, GithubReporter};
+    use crate::output_formatter::{InternalFormatter, LintCommandInfo};
+
+    #[test]
+    fn lint_command_info() {
+        let formatter = GithubOutputFormatter;
+        let result = formatter.lint_command_info(&LintCommandInfo {
+            number_of_files: 5,
+            number_of_rules: Some(10),
+            threads_count: 12,
+            start_time: Duration::new(1, 0),
+            oxlint_suppression_file_action: oxc_linter::OxlintSuppressionFileAction::None,
+            rule_timings: None,
+        });
+
+        assert_eq!(
+            result.unwrap(),
+            "Finished in 1.0s on 5 files with 10 rules using 12 threads.\n"
+        );
+    }
+
+    #[test]
+    fn lint_command_info_unknown_rules() {
+        let formatter = GithubOutputFormatter;
+        let result = formatter.lint_command_info(&LintCommandInfo {
+            number_of_files: 5,
+            number_of_rules: None,
+            threads_count: 12,
+            start_time: Duration::new(1, 0),
+            oxlint_suppression_file_action: oxc_linter::OxlintSuppressionFileAction::None,
+            rule_timings: None,
+        });
+
+        assert_eq!(result.unwrap(), "Finished in 1.0s on 5 files using 12 threads.\n");
+    }
 
     #[test]
     fn reporter_finish() {
@@ -124,8 +180,53 @@ mod test {
         assert!(result.is_some());
         assert_eq!(
             result.unwrap(),
-            "::warning file=file%3A//test.ts,line=1,endLine=1,col=1,endColumn=9,title=oxlint::error message\n"
+            "::warning file=file%3A//test.ts,line=1,endLine=1,col=1,endColumn=9,title=oxlint::file://test.ts:1:1: error message\n"
         );
+    }
+
+    #[test]
+    fn reporter_error_escapes_filename_differently_in_property_and_message() {
+        let mut reporter = GithubReporter;
+        let error = OxcDiagnostic::warn("error message")
+            .with_label(Span::new(0, 8))
+            .with_source_code(NamedSource::new("we,ird%name.ts", "debugger;"));
+
+        let result = reporter.render_error(error);
+
+        // `,` must be escaped in the `file=` property but stay literal in the
+        // message text. `%` must be escaped in both.
+        assert_eq!(
+            result.unwrap(),
+            "::warning file=we%2Cird%25name.ts,line=1,endLine=1,col=1,endColumn=9,title=oxlint::we,ird%25name.ts:1:1: error message\n"
+        );
+    }
+
+    #[test]
+    fn reporter_error_without_labels_omits_file_and_location() {
+        let mut reporter = GithubReporter;
+        let error = OxcDiagnostic::warn("warning message")
+            .with_error_code("scope", "rule")
+            .with_help("help message")
+            .with_note("note message");
+
+        let result = reporter.render_error(error.into());
+
+        assert!(result.is_some());
+        assert_eq!(result.as_ref().unwrap(), "::warning title=scope(rule)::warning message\n");
+    }
+
+    #[test]
+    fn reporter_fileless_error_uses_error_annotation() {
+        let mut reporter = GithubReporter;
+        let error = OxcDiagnostic::error("error message")
+            .with_error_code("scope", "rule")
+            .with_help("help message")
+            .with_note("note message");
+
+        let result = reporter.render_error(error.into());
+
+        assert!(result.is_some());
+        assert_eq!(result.as_ref().unwrap(), "::error title=scope(rule)::error message\n");
     }
 
     #[test]
@@ -144,7 +245,7 @@ mod test {
         let output = String::from_utf8(output).unwrap();
 
         assert!(output.starts_with("::warning file=file%3A//test.ts,line=1,endLine=1,col=1,"));
-        assert!(output.contains("title=oxlint::error message"));
+        assert!(output.contains("title=oxlint::file://test.ts:1:1: error message"));
         assert!(!output.contains("File is too long to fit on the screen"));
         assert!(!output.contains("file=,line=0,endLine=0,col=0,endColumn=0"));
     }

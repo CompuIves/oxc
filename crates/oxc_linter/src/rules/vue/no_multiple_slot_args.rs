@@ -9,7 +9,10 @@ use oxc_diagnostics::OxcDiagnostic;
 use oxc_macros::declare_oxc_lint;
 use oxc_span::{GetSpan, Span};
 
-use crate::{AstNode, context::LintContext, frameworks::FrameworkOptions, rule::Rule};
+use crate::{
+    AstNode, ast_util::variable_declaration_kind, context::LintContext,
+    frameworks::FrameworkOptions, rule::Rule,
+};
 
 fn multiple_arguments_diagnostic(span: Span) -> OxcDiagnostic {
     OxcDiagnostic::warn("Unexpected multiple arguments.")
@@ -68,7 +71,9 @@ declare_oxc_lint!(
     NoMultipleSlotArgs,
     vue,
     restriction,
-    pending  // TODO: Remove second argument, Spread argument is possible not supported
+    pending,  // TODO: Remove second argument, Spread argument is possible not supported
+    version = "1.15.0",
+    short_description = "Disallow passing multiple arguments to scoped slots.",
 );
 
 impl Rule for NoMultipleSlotArgs {
@@ -163,7 +168,7 @@ fn get_identifier_resolved_reference<'a>(
     };
 
     // `const` variable can not be overridden
-    if declarator.kind == VariableDeclarationKind::Const {
+    if variable_declaration_kind(declarator, ctx) == VariableDeclarationKind::Const {
         return declarator.init.as_ref();
     }
 

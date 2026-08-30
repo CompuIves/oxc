@@ -50,7 +50,9 @@ declare_oxc_lint!(
     /// ```
     NoThisBeforeSuper,
     eslint,
-    correctness
+    correctness,
+    version = "0.2.6",
+    short_description = "Require calling `super()` before using `this` or `super`.",
 );
 
 #[derive(Default, Copy, Clone, Debug)]
@@ -62,7 +64,8 @@ enum DefinitelyCallsThisBeforeSuper {
 }
 
 /// Node types that should be in the file in order to run this analysis. Otherwise, the AST
-/// will be skipped for linting.
+/// will be skipped for linting. A violation can only occur in the constructor of a class
+/// with a superclass, so a `Class` node must be present alongside `this`/`super`.
 const NEEDED_NODE_TYPES: &AstTypesBitset =
     &AstTypesBitset::from_types(&[AstType::ThisExpression, AstType::Super]);
 
@@ -77,10 +80,10 @@ impl Rule for NoThisBeforeSuper {
             FxHashMap::<BlockNodeId, Vec<NodeId>>::default();
         for node in ctx.nodes() {
             match node.kind() {
-                AstKind::Function(_) | AstKind::ArrowFunctionExpression(_) => {
-                    if Self::is_wanted_node(node, ctx).unwrap_or_default() {
-                        wanted_nodes.push(node);
-                    }
+                AstKind::Function(_) | AstKind::ArrowFunctionExpression(_)
+                    if Self::is_wanted_node(node, ctx).unwrap_or_default() =>
+                {
+                    wanted_nodes.push(node);
                 }
                 AstKind::Super(_) => {
                     let basic_block_id = ctx.nodes().cfg_id(node.id());
@@ -142,7 +145,8 @@ impl Rule for NoThisBeforeSuper {
     }
 
     fn should_run(&self, ctx: &crate::context::ContextHost) -> bool {
-        ctx.semantic().nodes().contains_any(NEEDED_NODE_TYPES)
+        let nodes = ctx.semantic().nodes();
+        nodes.contains(AstType::Class) && nodes.contains_any(NEEDED_NODE_TYPES)
     }
 }
 
@@ -156,7 +160,7 @@ impl NoThisBeforeSuper {
             let parent_3 = ctx.nodes().parent_node(parent_2.id());
 
             let class = parent_3.kind().as_class()?;
-            let super_class = class.super_class.as_ref()?;
+            let super_class = class.heritage_expression()?;
             return Some(!matches!(super_class, Expression::NullLiteral(_)));
         }
 

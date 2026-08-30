@@ -1,13 +1,13 @@
-use std::{env, path::PathBuf};
+use std::{env, path::Path, sync::Arc};
 
 use serde_json::Value;
 
 use oxc_napi::OxcError;
 
 use crate::core::{
-    ExternalFormatter, FormatFileStrategy, FormatResult, JsFormatEmbeddedCb, JsFormatEmbeddedDocCb,
-    JsFormatFileCb, JsInitExternalFormatterCb, JsSortTailwindClassesCb, SourceFormatter,
-    resolve_options_from_value,
+    ExternalServices, FormatResult, JsFormatEmbeddedCb, JsFormatEmbeddedDocCb, JsFormatFileCb,
+    JsSortTailwindClassesCb, ResolveOutcome, SourceFormatter, classify_file_kind, resolve_for_api,
+    utils,
 };
 
 pub struct ApiFormatResult {
@@ -15,7 +15,10 @@ pub struct ApiFormatResult {
     pub errors: Vec<OxcError>,
 }
 
-/// `format()` implementation for NAPI API.
+/// `format()` implementation for the NAPI direct-document API.
+///
+/// This path formats the caller-supplied document and options directly.
+/// It does not discover source files or search for project config or ignore files.
 ///
 /// # Panics
 /// Panics if the current working directory cannot be determined.
@@ -23,7 +26,6 @@ pub fn run(
     filename: &str,
     source_text: String,
     options: Option<Value>,
-    init_external_formatter_cb: JsInitExternalFormatterCb,
     format_file_cb: JsFormatFileCb,
     format_embedded_cb: JsFormatEmbeddedCb,
     format_embedded_doc_cb: JsFormatEmbeddedDocCb,
@@ -35,59 +37,47 @@ pub fn run(
     let cwd = env::current_dir().expect("Failed to get current working directory");
     let num_of_threads = 1;
 
-    let external_formatter = ExternalFormatter::new(
-        init_external_formatter_cb,
+    let external_services = ExternalServices::new(
         format_file_cb,
         format_embedded_cb,
         format_embedded_doc_cb,
         sort_tailwind_classes_cb,
     );
 
-    // Use `block_in_place()` to avoid nested async runtime access
-    match tokio::task::block_in_place(|| external_formatter.init(num_of_threads)) {
-        // TODO: Plugins support
-        Ok(_) => {}
-        Err(err) => {
-            external_formatter.cleanup();
-            return ApiFormatResult {
-                code: source_text,
-                errors: vec![OxcError::new(format!("Failed to setup external formatter: {err}"))],
-            };
-        }
-    }
-
-    // Determine format strategy from file path
-    let Ok(strategy) = FormatFileStrategy::try_from(PathBuf::from(filename))
-        .map(|s| s.resolve_relative_path(&cwd))
-    else {
-        external_formatter.cleanup();
+    let filepath = utils::normalize_relative_path(&cwd, Path::new(filename));
+    let Some(kind) = classify_file_kind(Arc::from(filepath)) else {
+        external_services.cleanup();
         return ApiFormatResult {
             code: source_text,
             errors: vec![OxcError::new(format!("Unsupported file type: {filename}"))],
         };
     };
-
-    // Resolve format options directly from the provided options
-    let resolved_options =
-        match resolve_options_from_value(options.unwrap_or_default(), &strategy, Some(&cwd)) {
-            Ok(options) => options,
-            Err(err) => {
-                external_formatter.cleanup();
-                return ApiFormatResult {
-                    code: source_text,
-                    errors: vec![OxcError::new(format!("Failed to parse configuration: {err}"))],
-                };
-            }
-        };
+    let strategy = match resolve_for_api(options.unwrap_or_default(), kind, &cwd) {
+        Ok(ResolveOutcome::Format(strategy)) => strategy,
+        Ok(ResolveOutcome::MissingPlugin(plugin)) => {
+            external_services.cleanup();
+            return ApiFormatResult {
+                code: source_text,
+                errors: vec![OxcError::new(format!(
+                    "Cannot format `.{plugin}`: `{plugin}` plugin is not enabled in resolved config: {filename}"
+                ))],
+            };
+        }
+        Err(err) => {
+            external_services.cleanup();
+            return ApiFormatResult {
+                code: source_text,
+                errors: vec![OxcError::new(format!("Failed to parse configuration: {err}"))],
+            };
+        }
+    };
 
     // Create formatter and format
     let formatter = SourceFormatter::new(num_of_threads)
-        .with_external_formatter(Some(external_formatter.clone()));
+        .with_external_services(Some(external_services.clone()));
 
     // Use `block_in_place()` to avoid nested async runtime access
-    let result = match tokio::task::block_in_place(|| {
-        formatter.format(&strategy, &source_text, resolved_options)
-    }) {
+    let result = match tokio::task::block_in_place(|| formatter.format(&source_text, strategy)) {
         FormatResult::Success { code, .. } => ApiFormatResult { code, errors: vec![] },
         FormatResult::Error(diagnostics) => {
             let errors = OxcError::from_diagnostics(filename, &source_text, diagnostics);
@@ -97,7 +87,7 @@ pub fn run(
 
     // Explicitly drop ThreadsafeFunctions before returning to prevent
     // use-after-free during V8 cleanup (Node.js issue with TSFN cleanup timing)
-    external_formatter.cleanup();
+    external_services.cleanup();
 
     result
 }

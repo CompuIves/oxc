@@ -1,14 +1,15 @@
 use oxc_ast::{
     AstKind,
-    ast::{Argument, Expression, Function, ThisExpression},
+    ast::{Argument, Expression},
 };
-use oxc_ast_visit::Visit;
 use oxc_diagnostics::OxcDiagnostic;
 use oxc_macros::declare_oxc_lint;
-use oxc_semantic::ScopeFlags;
 use oxc_span::Span;
 
-use crate::{AstNode, ast_util::is_method_call, context::LintContext, rule::Rule};
+use crate::{
+    AstNode, ast_util::is_method_call, context::LintContext, rule::Rule,
+    utils::function_body_contains_this,
+};
 
 fn no_extra_bind_diagnostic(span: Span) -> OxcDiagnostic {
     OxcDiagnostic::warn("The function binding is unnecessary.")
@@ -56,7 +57,9 @@ declare_oxc_lint!(
     NoExtraBind,
     eslint,
     suspicious,
-    pending
+    pending,
+    version = "1.1.0",
+    short_description = "Disallow unnecessary calls to `.bind()`.",
 );
 
 impl Rule for NoExtraBind {
@@ -88,10 +91,8 @@ impl Rule for NoExtraBind {
                 let Some(body) = &func_expr.body else {
                     return;
                 };
-                let mut finder = ThisFinder { found: false };
-                finder.visit_function_body(body);
                 // don't use this expression
-                if !finder.found {
+                if !function_body_contains_this(body) {
                     ctx.diagnostic(no_extra_bind_diagnostic(span));
                 }
             }
@@ -101,18 +102,6 @@ impl Rule for NoExtraBind {
             _ => {}
         }
     }
-}
-
-struct ThisFinder {
-    found: bool,
-}
-
-impl<'a> Visit<'a> for ThisFinder {
-    fn visit_this_expression(&mut self, _expr: &ThisExpression) {
-        self.found = true;
-    }
-
-    fn visit_function(&mut self, _func: &Function<'a>, _flags: ScopeFlags) {}
 }
 
 #[test]

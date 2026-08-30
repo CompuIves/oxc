@@ -1,17 +1,18 @@
 use std::borrow::Cow;
 
+use lazy_regex::Regex;
+use rustc_hash::{FxBuildHasher, FxHashSet};
+
 use oxc_ast::{
     AstKind,
-    ast::{ArrowFunctionExpression, Function},
+    ast::{ArrowFunctionExpression, CallExpression, Function},
 };
-use oxc_cfg::{
-    ControlFlowGraph, EdgeType, ErrorEdgeKind, InstructionKind,
-    graph::{algo, visit::Control},
-};
+use oxc_ast_visit::{VisitJs, walk_js};
+use oxc_cfg::{ControlFlowGraph, EdgeType, ErrorEdgeKind, InstructionKind, graph::visit::EdgeRef};
 use oxc_macros::declare_oxc_lint;
-use oxc_semantic::{AstNodes, NodeId};
-use oxc_span::GetSpan;
-use oxc_syntax::operator::AssignmentOperator;
+use oxc_semantic::{AstNodes, NodeId, SymbolId};
+use oxc_span::{GetSpan, Span};
+use oxc_syntax::operator::{AssignmentOperator, LogicalOperator};
 
 use crate::{
     AstNode,
@@ -23,7 +24,12 @@ use crate::{
 mod diagnostics {
     use oxc_diagnostics::OxcDiagnostic;
     use oxc_span::Span;
-    const SCOPE: &str = "eslint-plugin-react-hooks";
+    const SCOPE: &str = "react-hooks";
+
+    pub(super) struct ConditionalContext {
+        pub span: Span,
+        pub label: &'static str,
+    }
 
     pub(super) fn function_error(
         react_hook_span: Span,
@@ -44,22 +50,47 @@ mod diagnostics {
         .with_error_code_scope(SCOPE)
     }
 
-    pub(super) fn conditional_hook(span: Span, hook_name: &str) -> OxcDiagnostic {
-        OxcDiagnostic::warn(format!(
+    pub(super) fn conditional_hook(
+        span: Span,
+        hook_name: &str,
+        conditional_context: Option<ConditionalContext>,
+    ) -> OxcDiagnostic {
+        let diagnostic = OxcDiagnostic::warn(format!(
             "React Hook {hook_name:?} is called conditionally. React Hooks must be \
             called in the exact same order in every component render."
         ))
-        .with_label(span)
-        .with_error_code_scope(SCOPE)
+        .with_help(
+            "Move the Hook call before the condition, or call it unconditionally and branch inside the Hook/effect instead.",
+        )
+        .with_error_code_scope(SCOPE);
+
+        if let Some(context) = conditional_context {
+            diagnostic.with_labels([
+                span.primary_label("This Hook call is not reachable on every render path."),
+                context.span.label(context.label),
+            ])
+        } else {
+            diagnostic
+                .with_label(span.label("This Hook call is not reachable on every render path."))
+        }
     }
 
-    pub(super) fn loop_hook(span: Span, hook_name: &str) -> OxcDiagnostic {
+    pub(super) fn loop_hook(
+        hook_span: Span,
+        loop_keyword_span: Option<Span>,
+        hook_name: &str,
+    ) -> OxcDiagnostic {
+        let mut labels = vec![hook_span.primary_label("Hook is called here")];
+        if let Some(loop_keyword_span) = loop_keyword_span {
+            labels.push(loop_keyword_span.label("This loop may execute the Hook more than once."));
+        }
+
         OxcDiagnostic::warn(format!(
             "React Hook {hook_name:?} may be executed more than once. Possibly \
             because it is called in a loop. React Hooks must be called in the \
             exact same order in every component render."
         ))
-        .with_label(span)
+        .with_labels(labels)
         .with_error_code_scope(SCOPE)
     }
 
@@ -69,25 +100,56 @@ mod diagnostics {
             must be called in a React function component or a custom React \
             Hook function."
         ))
-        .with_label(span)
+        .with_label(span.label("This Hook call is outside a component or custom Hook."))
         .with_error_code_scope(SCOPE)
     }
 
-    pub(super) fn async_component(span: Span, func_name: &str) -> OxcDiagnostic {
+    pub(super) fn async_component(
+        hook_span: Span,
+        async_keyword_span: Option<Span>,
+        hook_name: &str,
+    ) -> OxcDiagnostic {
+        let mut labels = vec![hook_span.primary_label("Hook is called here")];
+        if let Some(async_keyword_span) = async_keyword_span {
+            labels.push(async_keyword_span.label("This function is async."));
+        }
+
         OxcDiagnostic::warn(format!(
-            "React Hook {func_name:?} cannot be called in an async function. "
+            "React Hook {hook_name:?} cannot be called in an async function. "
         ))
-        .with_label(span)
+        .with_labels(labels)
         .with_error_code_scope(SCOPE)
     }
 
-    pub(super) fn class_component(span: Span, hook_name: &str) -> OxcDiagnostic {
+    pub(super) fn try_catch_use(span: Span, hook_name: &str) -> OxcDiagnostic {
+        OxcDiagnostic::warn(format!(
+            "React Hook {hook_name:?} cannot be called in a try/catch block."
+        ))
+        .with_label(span.label("This Hook call is inside a try/catch block."))
+        .with_error_code_scope(SCOPE)
+    }
+
+    pub(super) fn class_component(
+        hook_span: Span,
+        class_component_span: Option<Span>,
+        hook_name: &str,
+    ) -> OxcDiagnostic {
+        debug_assert!(
+            class_component_span.is_some(),
+            "Hooks in class components should have a containing class span"
+        );
+
+        let mut labels = vec![hook_span.primary_label("Hook is called here")];
+        if let Some(class_component_span) = class_component_span {
+            labels.push(class_component_span.label("Class component is defined here."));
+        }
+
         OxcDiagnostic::warn(format!(
             "React Hook {hook_name:?} cannot be called in a class component. React Hooks \
             must be called in a React function component or a custom React \
             Hook function."
         ))
-        .with_label(span)
+        .with_labels(labels)
         .with_error_code_scope(SCOPE)
     }
 
@@ -97,7 +159,33 @@ mod diagnostics {
             must be called in a React function component or a custom React \
             Hook function."
         ))
-        .with_label(span)
+        .with_label(span.label("This Hook call is inside a nested callback."))
+        .with_error_code_scope(SCOPE)
+    }
+
+    pub(super) fn use_effect_event_reference(
+        span: Span,
+        name: &str,
+        called: bool,
+    ) -> OxcDiagnostic {
+        let mut message = format!(
+            r#"`{name}` is a function created with React Hook "useEffectEvent", and can only be called from Effects and Effect Events in the same component."#
+        );
+
+        if !called {
+            message.push_str(" It cannot be assigned to a variable or passed down.");
+        }
+
+        OxcDiagnostic::warn(message)
+            .with_label(span.label("Effect Event escapes its component or custom Hook."))
+            .with_error_code_scope(SCOPE)
+    }
+
+    pub(super) fn use_effect_event_inline_escape(span: Span) -> OxcDiagnostic {
+        OxcDiagnostic::warn(
+            r#"React Hook "useEffectEvent" can only be called at the top level of your component. It cannot be passed down."#,
+        )
+        .with_label(span.label("Effect Event is passed directly instead of being assigned locally."))
         .with_error_code_scope(SCOPE)
     }
 }
@@ -165,7 +253,9 @@ declare_oxc_lint!(
     ///
     RulesOfHooks,
     react,
-    pedantic
+    pedantic,
+    version = "0.3.3",
+    short_description = "Enforces the Rules of Hooks, ensuring that React Hooks are only called in valid contexts and in the correct order.",
 );
 
 impl Rule for RulesOfHooks {
@@ -197,12 +287,20 @@ impl Rule for RulesOfHooks {
             return ctx.diagnostic(diagnostics::top_level_hook(span, hook_name));
         };
 
+        if is_react_function_call(call, "useEffectEvent") {
+            check_use_effect_event_usage(node, call, ctx);
+        }
+
         // Check if our parent function is part of a class.
         if matches!(
             nodes.parent_kind(parent_func.id()),
             AstKind::MethodDefinition(_) | AstKind::StaticBlock(_) | AstKind::PropertyDefinition(_)
         ) {
-            return ctx.diagnostic(diagnostics::class_component(span, hook_name));
+            return ctx.diagnostic(diagnostics::class_component(
+                span,
+                class_component_span(ctx, parent_func.id()),
+                hook_name,
+            ));
         }
 
         match parent_func.kind() {
@@ -266,16 +364,32 @@ impl Rule for RulesOfHooks {
                 }
             }
             // Hooks can't be called from async function.
-            AstKind::Function(Function { id: Some(_), r#async: true, .. }) => {
-                return ctx.diagnostic(diagnostics::async_component(span, hook_name));
-            }
-            // Hooks can't be called from async arrow function.
-            AstKind::ArrowFunctionExpression(ArrowFunctionExpression {
-                span,
+            AstKind::Function(Function {
+                id: Some(_), span: async_span, r#async: true, ..
+            })
+            | AstKind::ArrowFunctionExpression(ArrowFunctionExpression {
+                span: async_span,
                 r#async: true,
                 ..
             }) => {
-                return ctx.diagnostic(diagnostics::async_component(*span, "Anonymous"));
+                if is_directly_inside_component_or_hook(nodes, parent_func.id()) {
+                    return ctx.diagnostic(diagnostics::async_component(
+                        span,
+                        async_keyword_span(ctx, *async_span),
+                        hook_name,
+                    ));
+                }
+
+                if get_declaration_identifier(nodes, parent_func.id())
+                    .is_some_and(|name| !is_react_component_or_hook_name(&name))
+                {
+                    return ctx.diagnostic(diagnostics::function_error(
+                        call.callee.span(),
+                        *async_span,
+                        hook_name,
+                        "Anonymous",
+                    ));
+                }
             }
             _ => {}
         }
@@ -284,6 +398,9 @@ impl Rule for RulesOfHooks {
         // `use(...)` can be called within a loop.
         // So we don't need the following checks.
         if is_use {
+            if is_inside_try_catch(nodes, node.id(), parent_func.id()) {
+                ctx.diagnostic(diagnostics::try_catch_use(span, hook_name));
+            }
             return;
         }
 
@@ -295,24 +412,198 @@ impl Rule for RulesOfHooks {
             return;
         }
 
+        if is_inside_try_catch(nodes, node.id(), parent_func.id()) {
+            if cfg.is_cyclic(node_cfg_id) {
+                return ctx.diagnostic(diagnostics::loop_hook(
+                    span,
+                    loop_keyword_span(ctx, ctx.nodes(), node.id(), parent_func.id()),
+                    hook_name,
+                ));
+            }
+
+            return ctx.diagnostic(diagnostics::conditional_hook(
+                span,
+                hook_name,
+                conditional_context(ctx, node.id(), span, parent_func.id()),
+            ));
+        }
+
         if !cfg.is_reachable(func_cfg_id, node_cfg_id) {
-            // There should always be a control flow path between a parent and child node.
-            // If there is none it means we always do an early exit before reaching our hook call.
-            // In some cases it might mean that we are operating on an invalid `cfg` but in either
-            // case, It is somebody else's problem so we just return.
             return;
         }
 
         // Is this node cyclic?
         if cfg.is_cyclic(node_cfg_id) {
-            return ctx.diagnostic(diagnostics::loop_hook(span, hook_name));
+            return ctx.diagnostic(diagnostics::loop_hook(
+                span,
+                loop_keyword_span(ctx, ctx.nodes(), node.id(), parent_func.id()),
+                hook_name,
+            ));
         }
 
         if has_conditional_path_accept_throw(ctx.nodes(), cfg, parent_func, node) {
             #[expect(clippy::needless_return)]
-            return ctx.diagnostic(diagnostics::conditional_hook(span, hook_name));
+            return ctx.diagnostic(diagnostics::conditional_hook(
+                span,
+                hook_name,
+                conditional_context(ctx, node.id(), span, parent_func.id()),
+            ));
         }
     }
+}
+
+fn class_component_span(ctx: &LintContext<'_>, node_id: NodeId) -> Option<Span> {
+    ctx.nodes().ancestors(node_id).find_map(|node| match node.kind() {
+        AstKind::Class(class) => {
+            if let Some(id) = &class.id {
+                Some(id.span)
+            } else {
+                let search_start = class
+                    .decorators
+                    .last()
+                    .map_or(class.span.start, |decorator| decorator.span.end);
+                let offset =
+                    ctx.find_next_token_within(search_start, class.body.span.start, "class")?;
+                let start = search_start + offset;
+                Some(Span::sized(
+                    start,
+                    u32::try_from("class".len()).expect("keyword length should fit in u32"),
+                ))
+            }
+        }
+        _ => None,
+    })
+}
+
+#[expect(clippy::cast_possible_truncation)]
+fn async_keyword_span(ctx: &LintContext<'_>, span: Span) -> Option<Span> {
+    let start = span.start + ctx.find_next_token_within(span.start, span.end, "async")?;
+    Some(Span::sized(start, "async".len() as u32))
+}
+
+#[expect(clippy::cast_possible_truncation)]
+fn loop_keyword_span(
+    ctx: &LintContext<'_>,
+    nodes: &AstNodes<'_>,
+    hook_node_id: NodeId,
+    function_node_id: NodeId,
+) -> Option<Span> {
+    for ancestor in nodes.ancestors(hook_node_id) {
+        if ancestor.id() == function_node_id {
+            break;
+        }
+
+        let (span, keyword) = match ancestor.kind() {
+            AstKind::DoWhileStatement(stmt) => (stmt.span, "do"),
+            AstKind::WhileStatement(stmt) => (stmt.span, "while"),
+            AstKind::ForStatement(stmt) => (stmt.span, "for"),
+            AstKind::ForInStatement(stmt) => (stmt.span, "for"),
+            AstKind::ForOfStatement(stmt) => (stmt.span, "for"),
+            _ => continue,
+        };
+
+        let start = span.start + ctx.find_next_token_within(span.start, span.end, keyword)?;
+        return Some(Span::sized(start, keyword.len() as u32));
+    }
+
+    None
+}
+
+/// Find the nearest conditional construct that can skip this Hook call.
+///
+/// Hooks inside condition/test expressions are evaluated before that branch is
+/// chosen, so keep walking until we find an ancestor that makes the Hook itself
+/// unreachable on some render path.
+#[expect(clippy::cast_possible_truncation)]
+fn conditional_context(
+    ctx: &LintContext<'_>,
+    hook_node_id: NodeId,
+    hook_span: Span,
+    function_node_id: NodeId,
+) -> Option<diagnostics::ConditionalContext> {
+    let nodes = ctx.nodes();
+    for ancestor in nodes.ancestors(hook_node_id) {
+        if ancestor.id() == function_node_id {
+            break;
+        }
+
+        let context = match ancestor.kind() {
+            AstKind::IfStatement(stmt) => {
+                let test_span = stmt.test.span();
+                if test_span.contains_inclusive(hook_span) {
+                    continue;
+                }
+
+                let label = if stmt
+                    .alternate
+                    .as_ref()
+                    .is_some_and(|alternate| alternate.span().contains_inclusive(hook_span))
+                {
+                    "When this condition is true, this Hook is skipped."
+                } else {
+                    "When this condition is false, this Hook is skipped."
+                };
+
+                diagnostics::ConditionalContext { span: test_span, label }
+            }
+            AstKind::ConditionalExpression(expr) => {
+                let test_span = expr.test.span();
+                if test_span.contains_inclusive(hook_span) {
+                    continue;
+                }
+
+                diagnostics::ConditionalContext {
+                    span: test_span,
+                    label: "Only one side of this conditional expression calls the Hook.",
+                }
+            }
+            AstKind::LogicalExpression(expr) => {
+                if expr.left.span().contains_inclusive(hook_span) {
+                    continue;
+                }
+
+                diagnostics::ConditionalContext {
+                    span: expr.left.span(),
+                    label: match expr.operator {
+                        LogicalOperator::And => {
+                            "This short-circuits when falsy, skipping the Hook call."
+                        }
+                        LogicalOperator::Or => {
+                            "This short-circuits when truthy, skipping the Hook call."
+                        }
+                        LogicalOperator::Coalesce => {
+                            "This short-circuits when not nullish, skipping the Hook call."
+                        }
+                    },
+                }
+            }
+            AstKind::SwitchCase(case) => {
+                let case_span = if let Some(test) = &case.test {
+                    test.span()
+                } else {
+                    let header_end =
+                        case.consequent.first().map_or(case.span.end, |stmt| stmt.span().start);
+                    let default_start = case.span.start
+                        + ctx.find_next_token_within(case.span.start, header_end, "default")?;
+                    Span::sized(default_start, "default".len() as u32)
+                };
+
+                if case_span.contains_inclusive(hook_span) {
+                    continue;
+                }
+
+                diagnostics::ConditionalContext {
+                    span: case_span,
+                    label: "Only this switch case calls the Hook.",
+                }
+            }
+            _ => continue,
+        };
+
+        return Some(context);
+    }
+
+    None
 }
 
 fn has_conditional_path_accept_throw(
@@ -324,74 +615,262 @@ fn has_conditional_path_accept_throw(
     let from_graph_id = nodes.cfg_id(from.id());
     let to_graph_id = nodes.cfg_id(to.id());
     let graph = cfg.graph();
-    if graph
-        .edges(to_graph_id)
-        .any(|it| matches!(it.weight(), EdgeType::Error(ErrorEdgeKind::Explicit)))
-    {
-        // TODO: We are simplifying here, There is a real need for a trait like `MayThrow` that
-        // would provide a method `may_throw`, since not everything may throw and break the control flow.
-        return true;
-        // let paths = algo::all_simple_paths::<Vec<_>, _>(graph, from_graph_id, to_graph_id, 0, None);
-        // if paths
-        //     .flatten()
-        //     .flat_map(|id| cfg.basic_block(id).instructions())
-        //     .filter_map(|it| match it {
-        //         Instruction { kind: InstructionKind::Statement, node_id: Some(node_id) } => {
-        //             let r = Some(nodes.get_node(*node_id));
-        //             dbg!(&r);
-        //             r
-        //         }
-        //         _ => None,
-        //     })
-        //     .filter(|it| it.node_id() != to.node_id())
-        //     .any(|it| {
-        //         // TODO: it.may_throw()
-        //         matches!(
-        //             it.kind(),
-        //             AstKind::ExpressionStatement(ExpressionStatement {
-        //                 expression: Expression::CallExpression(_),
-        //                 ..
-        //             })
-        //         )
-        //     })
-        // {
-        //     // return true;
-        // }
-    }
-    // All nodes should be able to reach the hook node, Otherwise we have a conditional/branching flow.
-    algo::dijkstra(graph, from_graph_id, Some(to_graph_id), |e| match e.weight() {
-        EdgeType::NewFunction | EdgeType::Error(ErrorEdgeKind::Implicit) => 1,
-        EdgeType::Error(ErrorEdgeKind::Explicit)
-        | EdgeType::Join
-        | EdgeType::Finalize
-        | EdgeType::Jump
-        | EdgeType::Unreachable
-        | EdgeType::Backedge
-        | EdgeType::Normal => 0,
-    })
-    .into_iter()
-    .filter(|(_, val)| *val == 0)
-    .any(|(f, _)| {
-        !cfg.is_reachable_filtered(f, to_graph_id, |it| {
-            if cfg
-                .basic_block(it)
-                .instructions()
-                .iter()
-                .any(|i| matches!(i.kind, InstructionKind::Throw))
+    let block_count = graph.node_count();
+    let mut stack = Vec::with_capacity(block_count);
+    stack.push((from_graph_id, false));
+    let mut visited =
+        FxHashSet::with_capacity_and_hasher(block_count.saturating_mul(2), FxBuildHasher);
+
+    while let Some((block_id, passed_hook)) = stack.pop() {
+        if !visited.insert((block_id, passed_hook)) {
+            continue;
+        }
+
+        let entered_after_hook = passed_hook;
+        let passed_hook = passed_hook || block_id == to_graph_id;
+        let block = cfg.basic_block(block_id);
+
+        if !passed_hook
+            && block.instructions().iter().any(|instruction| {
+                matches!(
+                    instruction.kind,
+                    InstructionKind::ImplicitReturn | InstructionKind::Return(_)
+                )
+            })
+        {
+            return true;
+        }
+
+        if block
+            .instructions()
+            .iter()
+            .any(|instruction| matches!(instruction.kind, InstructionKind::Unreachable))
+        {
+            continue;
+        }
+
+        // Oxc's CFG is statement-granular, so a possible throw before the Hook can share the
+        // same basic block as the Hook. Keep that explicit error edge on the pre-Hook path.
+        let has_pre_hook_throw = block_id == to_graph_id
+            && block.instructions().iter().any(|instruction| {
+                statement_has_throw_before_hook(nodes, instruction.node_id, to.span())
+            });
+
+        for edge in graph.edges(block_id) {
+            let edge_passed_hook = if block_id == to_graph_id
+                && !entered_after_hook
+                && has_pre_hook_throw
+                && matches!(edge.weight(), EdgeType::Error(ErrorEdgeKind::Explicit))
             {
-                Control::Break(true)
+                false
             } else {
-                Control::Continue
+                passed_hook
+            };
+
+            match edge.weight() {
+                EdgeType::NewFunction
+                | EdgeType::Error(ErrorEdgeKind::Implicit)
+                | EdgeType::Unreachable => {}
+                EdgeType::Error(ErrorEdgeKind::Explicit)
+                | EdgeType::Join
+                | EdgeType::Finalize
+                | EdgeType::Jump
+                | EdgeType::Backedge
+                | EdgeType::Normal => stack.push((edge.target(), edge_passed_hook)),
             }
-        })
+        }
+    }
+
+    false
+}
+
+fn statement_has_throw_before_hook(
+    nodes: &AstNodes<'_>,
+    statement_node_id: Option<NodeId>,
+    hook_span: Span,
+) -> bool {
+    statement_node_id.is_some_and(|node_id| {
+        let mut visitor = MayThrowBeforeHook { hook_span, found: false };
+        visitor.visit_ast_kind(nodes.get_node(node_id).kind());
+        visitor.found
     })
+}
+
+struct MayThrowBeforeHook {
+    hook_span: Span,
+    found: bool,
+}
+
+impl<'a> MayThrowBeforeHook {
+    fn visit_ast_kind(&mut self, kind: AstKind<'a>) {
+        match kind {
+            AstKind::VariableDeclaration(node) => self.visit_variable_declaration(node),
+            AstKind::ExpressionStatement(node) => self.visit_expression_statement(node),
+            AstKind::IfStatement(node) => self.visit_if_statement(node),
+            AstKind::DoWhileStatement(node) => self.visit_do_while_statement(node),
+            AstKind::WhileStatement(node) => self.visit_while_statement(node),
+            AstKind::ForStatement(node) => self.visit_for_statement(node),
+            AstKind::ForInStatement(node) => self.visit_for_in_statement(node),
+            AstKind::ForOfStatement(node) => self.visit_for_of_statement(node),
+            AstKind::ReturnStatement(node) => self.visit_return_statement(node),
+            AstKind::WithStatement(node) => self.visit_with_statement(node),
+            AstKind::SwitchStatement(node) => self.visit_switch_statement(node),
+            AstKind::LabeledStatement(node) => self.visit_labeled_statement(node),
+            AstKind::ThrowStatement(node) => self.visit_throw_statement(node),
+            AstKind::TryStatement(node) => self.visit_try_statement(node),
+            _ => self.enter_node(kind),
+        }
+    }
+}
+
+impl<'a> VisitJs<'a> for MayThrowBeforeHook {
+    fn enter_node(&mut self, kind: AstKind<'a>) {
+        if self.found {
+            return;
+        }
+
+        let span = kind.span();
+        if span.end > self.hook_span.start {
+            return;
+        }
+
+        self.found = matches!(
+            kind,
+            AstKind::AwaitExpression(_)
+                | AstKind::CallExpression(_)
+                | AstKind::ComputedMemberExpression(_)
+                | AstKind::ImportExpression(_)
+                | AstKind::NewExpression(_)
+                | AstKind::PrivateFieldExpression(_)
+                | AstKind::StaticMemberExpression(_)
+                | AstKind::TaggedTemplateExpression(_)
+                | AstKind::ThrowStatement(_)
+        );
+    }
+
+    fn visit_function(&mut self, _func: &Function<'a>, _flags: oxc_syntax::scope::ScopeFlags) {}
+
+    fn visit_arrow_function_expression(&mut self, _expr: &ArrowFunctionExpression<'a>) {}
+
+    fn visit_call_expression(&mut self, expr: &oxc_ast::ast::CallExpression<'a>) {
+        self.enter_node(AstKind::CallExpression(expr));
+        if !self.found {
+            walk_js::walk_call_expression(self, expr);
+        }
+    }
+
+    fn visit_new_expression(&mut self, expr: &oxc_ast::ast::NewExpression<'a>) {
+        self.enter_node(AstKind::NewExpression(expr));
+        if !self.found {
+            walk_js::walk_new_expression(self, expr);
+        }
+    }
 }
 
 fn parent_func<'a>(nodes: &'a AstNodes<'a>, node: &AstNode) -> Option<&'a AstNode<'a>> {
     nodes.ancestors(node.id()).find(|node| node.kind().is_function_like())
 }
 
-/// Checks if the `node_id` is a callback argument (including JSX render props),
+fn is_inside_try_catch(
+    nodes: &AstNodes<'_>,
+    hook_node_id: NodeId,
+    function_node_id: NodeId,
+) -> bool {
+    nodes
+        .ancestors(hook_node_id)
+        .take_while(|node| node.id() != function_node_id)
+        .any(|node| matches!(node.kind(), AstKind::TryStatement(_) | AstKind::CatchClause(_)))
+}
+
+fn check_use_effect_event_usage(
+    node: &AstNode<'_>,
+    call: &CallExpression<'_>,
+    ctx: &LintContext<'_>,
+) {
+    match ctx.nodes().parent_kind(node.id()) {
+        AstKind::VariableDeclarator(decl) => {
+            if !is_somewhere_inside_component_or_hook(ctx.nodes(), node.id()) {
+                return;
+            }
+            if let Some(ident) = decl.id.get_binding_identifier() {
+                let additional_effect_hooks = additional_effect_hooks(ctx);
+                report_invalid_use_effect_event_references(
+                    ident.symbol_id(),
+                    additional_effect_hooks.as_ref(),
+                    ctx,
+                );
+            }
+        }
+        // As with other Hooks, a top-level expression statement is permitted.
+        AstKind::ExpressionStatement(_) => {}
+        _ => ctx.diagnostic(diagnostics::use_effect_event_inline_escape(call.span)),
+    }
+}
+
+fn additional_effect_hooks(ctx: &LintContext<'_>) -> Option<Regex> {
+    let pattern =
+        ctx.settings().json.as_ref()?.get("react-hooks")?.get("additionalEffectHooks")?.as_str()?;
+    Regex::new(pattern).ok()
+}
+
+fn report_invalid_use_effect_event_references(
+    symbol_id: SymbolId,
+    additional_effect_hooks: Option<&Regex>,
+    ctx: &LintContext<'_>,
+) {
+    for reference in ctx.semantic().symbol_references(symbol_id) {
+        if is_inside_effect_or_effect_event_call(
+            ctx.nodes(),
+            reference.node_id(),
+            additional_effect_hooks,
+        ) {
+            continue;
+        }
+
+        let span = ctx.semantic().reference_span(reference);
+        ctx.diagnostic(diagnostics::use_effect_event_reference(
+            span,
+            ctx.semantic().reference_name(reference),
+            is_reference_call_callee(ctx.nodes(), reference.node_id(), span),
+        ));
+    }
+}
+
+fn is_inside_effect_or_effect_event_call(
+    nodes: &AstNodes<'_>,
+    node_id: NodeId,
+    additional_effect_hooks: Option<&Regex>,
+) -> bool {
+    nodes.ancestors(node_id).any(|ancestor| match ancestor.kind() {
+        AstKind::CallExpression(call) => {
+            is_effect_or_effect_event_call(call, additional_effect_hooks)
+        }
+        _ => false,
+    })
+}
+
+fn is_effect_or_effect_event_call(
+    call: &CallExpression<'_>,
+    additional_effect_hooks: Option<&Regex>,
+) -> bool {
+    is_react_function_call(call, "useEffect")
+        || is_react_function_call(call, "useLayoutEffect")
+        || is_react_function_call(call, "useInsertionEffect")
+        || is_react_function_call(call, "useEffectEvent")
+        || additional_effect_hooks.is_some_and(|regex| {
+            call.callee_name()
+                .is_some_and(|name| is_react_function_call(call, name) && regex.is_match(name))
+        })
+}
+
+fn is_reference_call_callee(nodes: &AstNodes<'_>, node_id: NodeId, span: Span) -> bool {
+    nodes.ancestors(node_id).any(|ancestor| match ancestor.kind() {
+        AstKind::CallExpression(call) => call.callee.span() == span,
+        _ => false,
+    })
+}
+
+/// Checks if the `node_id` is a callback argument (including constructor and JSX render props),
 /// And that function isn't a `React.memo` or `React.forwardRef`.
 /// Returns `true` if this node is a function argument/render prop and that isn't a React special function.
 /// Otherwise it would return `false`.
@@ -403,8 +882,8 @@ fn is_non_react_func_arg(nodes: &AstNodes, node_id: NodeId) -> bool {
         AstKind::CallExpression(call) => {
             !(is_react_function_call(call, "forwardRef") || is_react_function_call(call, "memo"))
         }
-        // Callback passed as JSX expression: <Foo>{() => { ... }}</Foo> or <Foo render={() => { ... }} />
-        AstKind::JSXExpressionContainer(_) => true,
+        // Callback passed as an argument to a constructor or JSX render prop.
+        AstKind::NewExpression(_) | AstKind::JSXExpressionContainer(_) => true,
         _ => false,
     }
 }
@@ -429,6 +908,20 @@ fn is_somewhere_inside_component_or_hook(nodes: &AstNodes, node_id: NodeId) -> b
             ident.is_some_and(|name| is_react_component_or_hook_name(&name))
                 || is_memo_or_forward_ref_callback(nodes, id)
         })
+}
+
+fn is_directly_inside_component_or_hook(nodes: &AstNodes, node_id: NodeId) -> bool {
+    let node = nodes.get_node(node_id);
+    let directly_named = match node.kind() {
+        AstKind::Function(func) => {
+            func.name().is_some_and(|name| is_react_component_or_hook_name(name.as_str()))
+        }
+        AstKind::ArrowFunctionExpression(_) => get_declaration_identifier(nodes, node_id)
+            .is_some_and(|name| is_react_component_or_hook_name(&name)),
+        _ => unreachable!(),
+    };
+
+    directly_named || is_memo_or_forward_ref_callback(nodes, node_id)
 }
 
 fn get_declaration_identifier<'a>(
@@ -1081,8 +1574,167 @@ fn test() {
     r"const MyComponent = makeComponent(() => { useHook(); });",
     r"const MyComponent2 = makeComponent(function () { useHook(); });",
     r"const MyComponent4 = makeComponent(function InnerComponent() { useHook(); });",
-    r"const Foo = hoc((props) => { if (props.cond) { const [_a, _b] = useState(false); } });"
+    r"const Foo = hoc((props) => { if (props.cond) { const [_a, _b] = useState(false); } });",
+    "
+        async (_, use) => {
+          await use();
+        };
+    ",
+    "
+        function Foo() {
+          try {
+            f();
+          } catch {}
+          useState();
+        }
+    ",
+        r"
+            function MyComponent({ theme }) {
+              const onClick = useEffectEvent(() => {
+                showNotification(theme);
+              });
+              useEffect(() => {
+                onClick();
+              });
+              React.useEffect(() => {
+                onClick();
+              });
+            }
+        ",
+        r"
+            function MyComponent({ theme }) {
+              const onClick = useEffectEvent(() => {
+                showNotification(theme);
+              });
+              const onClick2 = useEffectEvent(() => {
+                debounce(onClick);
+                debounce(() => onClick());
+                debounce(() => { onClick() });
+                deboucne(() => debounce(onClick));
+              });
+              useEffect(() => {
+                let id = setInterval(() => onClick(), 100);
+                return () => clearInterval(onClick);
+              }, []);
+              React.useEffect(() => {
+                let id = setInterval(() => onClick(), 100);
+                return () => clearInterval(onClick);
+              }, []);
+              return null;
+            }
+        ",
+        r"
+            function MyComponent({ theme }) {
+              useEffect(() => {
+                onClick();
+              });
+              const onClick = useEffectEvent(() => {
+                showNotification(theme);
+              });
+            }
+        ",
+        r"
+            function MyComponent({ theme }) {
+              const onEvent = useEffectEvent((text) => {
+                console.log(text);
+              });
+              useEffect(() => {
+                onEvent('Hello world');
+              });
+              React.useEffect(() => {
+                onEvent('Hello world');
+              });
+            }
+        ",
+        r"
+            function MyComponent({ theme }) {
+              const onClick = useEffectEvent(() => {
+                showNotification(theme);
+              });
+              useLayoutEffect(() => {
+                onClick();
+              });
+              React.useLayoutEffect(() => {
+                onClick();
+              });
+            }
+        ",
+        r"
+            function MyComponent({ theme }) {
+              const onClick = useEffectEvent(() => {
+                showNotification(theme);
+              });
+              useInsertionEffect(() => {
+                onClick();
+              });
+              React.useInsertionEffect(() => {
+                onClick();
+              });
+            }
+        ",
+        r"
+            function MyComponent({ theme }) {
+              const onClick = useEffectEvent(() => {
+                showNotification(theme);
+              });
+              const onClick2 = useEffectEvent(() => {
+                debounce(onClick);
+                debounce(() => onClick());
+                debounce(() => { onClick() });
+                deboucne(() => debounce(onClick));
+              });
+              useLayoutEffect(() => {
+                let id = setInterval(() => onClick(), 100);
+                return () => clearInterval(onClick);
+              }, []);
+              React.useLayoutEffect(() => {
+                let id = setInterval(() => onClick(), 100);
+                return () => clearInterval(onClick);
+              }, []);
+              useInsertionEffect(() => {
+                let id = setInterval(() => onClick(), 100);
+                return () => clearInterval(onClick);
+              }, []);
+              React.useInsertionEffect(() => {
+                let id = setInterval(() => onClick(), 100);
+                return () => clearInterval(onClick);
+              }, []);
+              return null;
+            }
+        ",
+        // This matches eslint-plugin-react-hooks: callbacks in non-components are not reported.
+        r"
+            function notAComponent() {
+                return new Promise.then(() => {
+                    useState();
+                });
+            }
+        ",
     ];
+
+    let pass_additional_effect_hooks = vec![(
+        r"
+            function MyComponent({ theme }) {
+              const onClick = useEffectEvent(() => {
+                showNotification(theme);
+              });
+              useMyEffect(() => {
+                onClick();
+              });
+              useServerEffect(() => {
+                onClick();
+              });
+            }
+        ",
+        None,
+        Some(serde_json::json!({
+            "settings": {
+                "react-hooks": {
+                    "additionalEffectHooks": "(useMyEffect|useServerEffect)"
+                }
+            }
+        })),
+    )];
 
     let fail = vec![
         // Invalid because it's dangerous and might not warn otherwise.
@@ -1125,6 +1777,27 @@ fn test() {
             return <Foo />
           }
           return <Content />;
+        }
+        ",
+        "
+        function Component() {
+          switch (foo) {
+            case 1:
+              useCaseHook();
+              break;
+            default:
+              break;
+          }
+        }
+        ",
+        "
+        function Component() {
+          switch (foo) {
+            case 1:
+              break;
+            default:
+              useDefaultHook();
+          }
         }
         ",
         // Invalid because hooks can only be called inside of a component.
@@ -1515,6 +2188,80 @@ fn test() {
                     } catch {}
                 }
         ",
+        // https://github.com/oxc-project/oxc/issues/25631
+        "
+                function TestChild() {
+                    let captured = null;
+                    try {
+                        captured = useTooltipContext();
+                        return null;
+                    } catch (error) {
+                        return null;
+                    }
+                }
+        ",
+        "
+                function ComponentWithHookInsideLoop() {
+                    try {
+                        while (cond) {
+                            useState();
+                        }
+                    } catch {}
+                }
+        ",
+        "
+                function Foo() {
+                    try {
+                        const value = 1;
+                        useState(value);
+                    } catch {}
+                }
+        ",
+        "
+                function useHook() {
+                    try {
+                        const value = f();
+                        useState(value);
+                    } catch {}
+                }
+        ",
+        "
+                function useHook() {
+                    try {
+                        f(), useState();
+                    } catch {}
+                }
+        ",
+        "
+                function useHook() {
+                    try {
+                        throw err;
+                        useState();
+                    } catch {}
+                }
+        ",
+        "
+                function App({p1, p2}) {
+                    try {
+                        use(p1);
+                    } catch (error) {
+                        console.error(error);
+                    }
+                    use(p2);
+                    return <div>App</div>;
+                }
+        ",
+        "
+                function App({p1, p2}) {
+                    try {
+                        doSomething();
+                    } catch {
+                        use(p1);
+                    }
+                    use(p2);
+                    return <div>App</div>;
+                }
+        ",
         // Invalid because it's dangerous and might not warn otherwise.
         // This *must* be invalid.
         // errors: [
@@ -1737,16 +2484,14 @@ fn test() {
                 }
             }
         ",
-        // TODO: This should error but doesn't.
-        // Original rule also fails to raise this error.
-        // errors: [genericError('useState')],
-        // "
-        //     function notAComponent() {
-        //         return new Promise.then(() => {
-        //             useState();
-        //         });
-        //     }
-        // " ,
+        // Invalid because hooks cannot be called inside constructor callbacks.
+        r"
+            function Component() {
+                return new Promise.then(() => {
+                    useState();
+                });
+            }
+        ",
         // https://github.com/oxc-project/oxc/issues/6651
         r"const MyComponent3 = makeComponent(function foo () { useHook(); });",
         // https://github.com/oxc-project/oxc/issues/17961
@@ -1773,7 +2518,144 @@ fn test() {
             }
         ",
         r"const Foo3 = hoc(function NamedComp(props) { if (props.cond) { const [_a, _b] = useState(false); } });",
+        r"
+            function MyComponent({ theme }) {
+              const onClick = useEffectEvent(() => {
+                showNotification(theme);
+              });
+              useCustomHook(() => {
+                onClick();
+              });
+            }
+        ",
+        r"
+            function MyComponent({ theme }) {
+                const onClick = useEffectEvent(() => {
+                    showNotification(theme);
+                });
+                return <Child onClick={onClick}></Child>;
+            }
+        ",
+        r"
+            function MyComponent({ theme }) {
+                return <Child onClick={useEffectEvent(() => {
+                    showNotification(theme);
+                })} />;
+            }
+        ",
+        r"
+            function MyComponent({theme}) {
+                const onClick = useEffectEvent(() => {
+                    showNotification(theme)
+                });
+                return <Child onClick={onClick} />
+            }
+
+            function MyOtherComponent({theme}) {
+                const onClick = useEffectEvent(() => {
+                    showNotification(theme)
+                });
+                return <Child onClick={() => onClick()} />
+            }
+
+            function MyLastComponent({theme}) {
+                const onClick = useEffectEvent(() => {
+                    showNotification(theme)
+                });
+                useEffect(() => {
+                    onClick();
+                    onClick;
+                })
+                return <Child />
+            }
+        ",
+        r"
+            const MyComponent = ({ theme }) => {
+              const onClick = useEffectEvent(() => {
+                showNotification(theme);
+              });
+              return <Child onClick={onClick}></Child>;
+            }
+        ",
+        r"
+            function MyComponent({ theme }) {
+              const onClick = useEffectEvent(() => {
+                showNotification(theme);
+              });
+              let foo = onClick;
+              return <Bar onClick={foo} />
+            }
+        ",
+        r"
+            function MyComponent({ theme }) {
+              const onClick = useEffectEvent(() => {
+                showNotification(theme);
+              });
+              useEffect(() => {
+                setTimeout(onClick, 100);
+              });
+              return <Child onClick={onClick} />
+            }
+        ",
+        r"
+            function MyComponent({ theme }) {
+              const onClick = useEffectEvent(() => {
+                showNotification(theme);
+              });
+              const onClick2 = () => { onClick() };
+              const onClick3 = useCallback(() => onClick(), []);
+              const onClick4 = onClick;
+              return <>
+                <Child onClick={onClick}></Child>
+                <Child onClick={onClick2}></Child>
+                <Child onClick={onClick3}></Child>
+              </>;
+            }
+        ",
+        r"
+            function useCustomHook() {
+                const onEvent = useEffectEvent(() => {});
+                return { onEvent };
+            }
+        ",
+        r"function notAComponent() {
+  const onEvent = useEffectEvent(() => {});
+  return onEvent;
+}",
     ];
 
-    Tester::new(RulesOfHooks::NAME, RulesOfHooks::PLUGIN, pass, fail).test_and_snapshot();
+    let fail_additional_effect_hooks = vec![(
+        r"
+            function MyComponent({ theme }) {
+              const onClick = useEffectEvent(() => {
+                showNotification(theme);
+              });
+              useWrongHook(() => {
+                onClick();
+              });
+            }
+        ",
+        None,
+        Some(serde_json::json!({
+            "settings": {
+                "react-hooks": {
+                    "additionalEffectHooks": "useMyEffect"
+                }
+            }
+        })),
+    )];
+
+    Tester::new(
+        RulesOfHooks::NAME,
+        RulesOfHooks::PLUGIN,
+        pass.iter()
+            .map(|&code| (code, None, None))
+            .chain(pass_additional_effect_hooks)
+            .collect::<Vec<_>>(),
+        fail.iter()
+            .map(|&code| (code, None, None))
+            .chain(fail_additional_effect_hooks)
+            .collect::<Vec<_>>(),
+    )
+    .test_and_snapshot();
 }

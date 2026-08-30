@@ -1,13 +1,14 @@
 use oxc_ast::ast::*;
+use oxc_formatter_core::Format;
 use oxc_span::GetSpan;
 
 use crate::{
     ast_nodes::{AstNode, AstNodeIterator, AstNodes},
     format_args,
     formatter::{
-        Format, Formatter,
+        JsFormatter,
         prelude::*,
-        trivia::{FormatLeadingComments, FormatTrailingComments},
+        trivia::{FormatLeadingComments, FormatTrailingComments, format_trailing_comments},
     },
     options::{FormatTrailingCommas, TrailingSeparator},
     utils::call_expression::{is_angular_test_wrapper, is_test_call_expression},
@@ -16,6 +17,12 @@ use crate::{
 
 use super::FormatWrite;
 
+/// NOTE: In the AST, `this_param` is a sibling field of `FormalParameters`,
+/// but the `FormalParameters` span covers the whole parens INCLUDING `this`.
+///
+/// Span windows assuming source-ordered, non-overlapping fields are inverted here:
+/// the generated `following_span_start` for `this_param` (= params span start) points before it,
+/// so the generated trailing-comment pass never captures anything (see [`Parameter::This`]).
 pub fn get_this_param<'a>(parent: &AstNodes<'a>) -> Option<&'a AstNode<'a, TSThisParameter<'a>>> {
     match parent {
         AstNodes::Function(func) => func.this_param(),
@@ -27,7 +34,7 @@ pub fn get_this_param<'a>(parent: &AstNodes<'a>) -> Option<&'a AstNode<'a, TSThi
 }
 
 impl<'a> FormatWrite<'a> for AstNode<'a, FormalParameters<'a>> {
-    fn write(&self, f: &mut Formatter<'_, 'a>) {
+    fn write(&self, f: &mut JsFormatter<'_, 'a>) {
         // `function foo /**/ () {}`
         //               ^^^ keep comments printed before parameters
         let comments = f.context().comments().comments_before(self.span.start);
@@ -98,7 +105,7 @@ impl<'a> FormatWrite<'a> for AstNode<'a, FormalParameters<'a>> {
 }
 
 impl<'a> FormatWrite<'a> for AstNode<'a, FormalParameter<'a>> {
-    fn write(&self, f: &mut Formatter<'_, 'a>) {
+    fn write(&self, f: &mut JsFormatter<'_, 'a>) {
         let content = format_with(|f| {
             let left = format_with(|f| {
                 if let Some(accessibility) = self.accessibility() {
@@ -160,13 +167,16 @@ impl<'a> FormatWrite<'a> for AstNode<'a, FormalParameter<'a>> {
 }
 
 impl<'a> FormatWrite<'a> for AstNode<'a, TSThisParameter<'a>> {
-    fn write(&self, f: &mut Formatter<'_, 'a>) {
+    fn write(&self, f: &mut JsFormatter<'_, 'a>) {
         write!(f, ["this", self.type_annotation()]);
     }
 }
 
 enum Parameter<'a, 'b> {
-    This(&'b AstNode<'a, TSThisParameter<'a>>),
+    This {
+        param: &'b AstNode<'a, TSThisParameter<'a>>,
+        list: &'b AstNode<'a, FormalParameters<'a>>,
+    },
     Formal(&'b AstNode<'a, FormalParameter<'a>>),
     Rest(&'b AstNode<'a, FormalParameterRest<'a>>),
 }
@@ -174,17 +184,29 @@ enum Parameter<'a, 'b> {
 impl GetSpan for Parameter<'_, '_> {
     fn span(&self) -> Span {
         match self {
-            Self::This(param) => param.span(),
+            Self::This { param, .. } => param.span(),
             Self::Formal(param) => param.span(),
             Self::Rest(e) => e.span(),
         }
     }
 }
 
-impl<'a> Format<'a> for Parameter<'a, '_> {
-    fn fmt(&self, f: &mut Formatter<'_, 'a>) {
+impl<'a> Format<'a, JsFormatContext<'a>> for Parameter<'a, '_> {
+    fn fmt(&self, f: &mut JsFormatter<'_, 'a>) {
         match self {
-            Self::This(param) => param.fmt(f),
+            Self::This { param, list } => {
+                param.fmt(f);
+                // The generated trailing pass captures nothing here (inverted window, see `get_this_param`).
+                // Capture like any other parameter: up to the next one, or dangling inside the parens when `this` is last
+                // (`AST_NODE_WITHOUT_FOLLOWING_NODE_LIST` rule in `ast_nodes.rs` generator gives the list's own last child).
+                let following_span_start = list
+                    .items
+                    .first()
+                    .map(|p| p.span.start)
+                    .or_else(|| list.rest.as_deref().map(|r| r.span.start))
+                    .unwrap_or(0);
+                format_trailing_comments(list.span(), param.span(), following_span_start).fmt(f);
+            }
             Self::Formal(param) => param.fmt(f),
             Self::Rest(e) => e.fmt(f),
         }
@@ -192,14 +214,18 @@ impl<'a> Format<'a> for Parameter<'a, '_> {
 }
 
 struct FormalParametersIter<'a, 'b> {
-    this: Option<&'b AstNode<'a, TSThisParameter<'a>>>,
+    this: Option<Parameter<'a, 'b>>,
     params: AstNodeIterator<'a, FormalParameter<'a>>,
     rest: Option<&'b AstNode<'a, FormalParameterRest<'a>>>,
 }
 
 impl<'a, 'b> From<&'b ParameterList<'a, 'b>> for FormalParametersIter<'a, 'b> {
     fn from(value: &'b ParameterList<'a, 'b>) -> Self {
-        Self { this: value.this, params: value.list.items().iter(), rest: value.list.rest() }
+        Self {
+            this: value.this.map(|param| Parameter::This { param, list: value.list }),
+            params: value.list.items().iter(),
+            rest: value.list.rest(),
+        }
     }
 }
 
@@ -207,7 +233,7 @@ impl<'a, 'b> Iterator for FormalParametersIter<'a, 'b> {
     type Item = Parameter<'a, 'b>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.this.take().map(Parameter::This).or_else(|| {
+        self.this.take().or_else(|| {
             self.params
                 .next()
                 .map(Parameter::Formal)
@@ -275,8 +301,8 @@ impl<'a, 'b> ParameterList<'a, 'b> {
     }
 }
 
-impl<'a> Format<'a> for ParameterList<'a, '_> {
-    fn fmt(&self, f: &mut Formatter<'_, 'a>) {
+impl<'a> Format<'a, JsFormatContext<'a>> for ParameterList<'a, '_> {
+    fn fmt(&self, f: &mut JsFormatter<'_, 'a>) {
         match self.layout {
             None | Some(ParameterLayout::Default | ParameterLayout::NoParameters) => {
                 let has_trailing_rest = self.list.rest().is_some();
@@ -317,7 +343,7 @@ impl<'a> Format<'a> for ParameterList<'a, '_> {
 }
 
 /// Returns `true` if parentheses can be safely avoided and the `arrow_parentheses` formatter option allows it
-pub fn can_avoid_parentheses(arrow: &ArrowFunctionExpression<'_>, f: &Formatter<'_, '_>) -> bool {
+pub fn can_avoid_parentheses(arrow: &ArrowFunctionExpression<'_>, f: &JsFormatter<'_, '_>) -> bool {
     f.options().arrow_parentheses.is_as_needed()
         && arrow.params.items.len() == 1
         && arrow.params.rest.is_none()
@@ -337,7 +363,7 @@ pub fn should_hug_function_parameters<'a>(
     parameters: &AstNode<'a, FormalParameters<'a>>,
     this_param: Option<&AstNode<'a, TSThisParameter<'a>>>,
     parentheses_not_needed: bool,
-    f: &Formatter<'_, 'a>,
+    f: &JsFormatter<'_, 'a>,
 ) -> bool {
     let list = &parameters.items();
 

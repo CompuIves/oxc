@@ -1,31 +1,7 @@
-use std::path::{Component, Path, PathBuf};
+use std::borrow::Cow;
 
+use oxc_diagnostics::OxcCode;
 use tower_lsp_server::ls_types::Range;
-
-/// Normalize a path by removing `.` and resolving `..` components,
-/// without touching the filesystem.
-pub fn normalize_path<P: AsRef<Path>>(path: P) -> PathBuf {
-    let mut result = PathBuf::new();
-
-    for component in path.as_ref().components() {
-        match component {
-            Component::ParentDir => {
-                result.pop();
-            }
-            Component::CurDir => {
-                // Skip current directory component
-            }
-            Component::Normal(c) => {
-                result.push(c);
-            }
-            Component::RootDir | Component::Prefix(_) => {
-                result.push(component.as_os_str());
-            }
-        }
-    }
-
-    result
-}
 
 /// Returns `true` if LSP ranges `a` and `b` overlap or touch (share a boundary point).
 ///
@@ -38,24 +14,29 @@ pub(super) fn range_overlaps(a: Range, b: Range) -> bool {
     a.start <= b.end && a.end >= b.start
 }
 
+/// Converts an `OxcCode` to a full rule name string, including plugin prefix if applicable.
+///
+/// this conversion is a bit messy, but basically we need to reconstruct the rule name with plugin prefix
+pub fn get_full_rule_name(rule_code: &OxcCode) -> Option<Cow<'_, str>> {
+    let rule_name = rule_code.number.as_ref()?;
+    let scope = rule_code.scope.as_ref()?;
+
+    // eslint does not have a plugin prefix
+    if scope == "eslint" || scope.is_empty() {
+        Some(Cow::Borrowed(rule_name))
+    } else {
+        Some(Cow::Owned(format!("{scope}/{rule_name}")))
+    }
+}
+
 #[cfg(test)]
 mod test {
-    use std::path::Path;
-
     use tower_lsp_server::ls_types::{Position, Range};
 
-    use crate::lsp::utils::{normalize_path, range_overlaps};
+    use crate::lsp::utils::range_overlaps;
 
     fn range(sl: u32, sc: u32, el: u32, ec: u32) -> Range {
         Range::new(Position::new(sl, sc), Position::new(el, ec))
-    }
-
-    #[test]
-    fn test_normalize_path() {
-        assert_eq!(
-            normalize_path(Path::new("/root/directory/./.oxlintrc.json")),
-            Path::new("/root/directory/.oxlintrc.json")
-        );
     }
 
     #[test]

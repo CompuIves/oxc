@@ -4,10 +4,12 @@ import { createTwoFilesPatch } from "diff";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import prettier from "prettier";
+import * as sveltePlugin from "prettier-plugin-svelte";
 import { format } from "../dist/index.js";
 
 const CONFORMANCE_DIR = import.meta.dirname;
 const FIXTURES_DIR = join(CONFORMANCE_DIR, "fixtures");
+const EXTERNALS_DIR = join(FIXTURES_DIR, "externals");
 const SNAPSHOTS_DIR = join(CONFORMANCE_DIR, "snapshots");
 
 type Category = {
@@ -23,14 +25,41 @@ type Source = {
   ext?: string;
   /** Files to exclude (e.g. test runner files that are not fixtures) */
   excludes?: string[];
+  /** Transform relative path to a filepath for formatting (e.g. "xxx/input.html" → "xxx.svelte") */
+  resolveFilePath?: (name: string) => string;
 };
+
+// Shared note strings for deliberate Prettier divergences (deduped).
+// A note only IDENTIFIES the known diff; the explanation lives in the linked DIVERGENCES.md entry.
+const NOTE_FILL_BREAK_POSITION =
+  "fill break position (Prettier breaks inside the wide chunk, ours at the separator). See crates/oxc_formatter_css/DIVERGENCES.md#fill-break-position";
+const NOTE_MQ_OP_SPACING =
+  "media-query operator spacing. See crates/oxc_formatter_css/DIVERGENCES.md#media-query-operator-spacing";
+const NOTE_EOL_LINE_COMMENT_WIDTH =
+  "trailing `//` comment never counts toward print width. See crates/oxc_formatter_css/DIVERGENCES.md#trailing-line-comment-print-width";
+
+const NOTE_EMBEDDED_EXPRESSION_INDENT =
+  "embedded `${expr}` re-indents to the placeholder. See apps/oxfmt/DIVERGENCES.md#template-expression-indent";
+
+const NOTE_UNION_ANNOTATION_FLAT =
+  "union out of its `:`/`as` position expands to leading-`|` right away. See crates/oxc_formatter/DIVERGENCES.md#union-annotation-flat-retry";
+
+const NOTE_BLOCK_SCALAR_TRAILING_WS =
+  "block scalar trailing whitespace is part of the value. See crates/oxc_formatter_yaml/DIVERGENCES.md#block-scalar-trailing-whitespace";
+
+const NOTE_BROKEN_TEMPLATE_COMMENT_INDENT =
+  "broken `${}` holding comments indents to the placeholder. See apps/oxfmt/DIVERGENCES.md#broken-template-comment-indent";
+const NOTE_TS_IN_VUE_GENERIC_COMMA =
+  "`<T = any,>` comma removed like plain `.ts`. See apps/oxfmt/DIVERGENCES.md#ts-in-vue-generic-trailing-comma";
+const NOTE_STYLED_EXTEND_TAG =
+  "`Xxx.extend` not recognized as tag. See apps/oxfmt/DIVERGENCES.md#styled-extend-tag";
 
 const categories: Category[] = [
   {
     name: "js-in-vue",
     sources: [
-      { dir: join(FIXTURES_DIR, "prettier"), ext: ".vue" },
-      { dir: join(FIXTURES_DIR, "vue-vben-admin"), ext: ".vue" },
+      { dir: join(EXTERNALS_DIR, "prettier"), ext: ".vue" },
+      { dir: join(EXTERNALS_DIR, "vue-vben-admin"), ext: ".vue" },
       { dir: join(FIXTURES_DIR, "edge-cases", "js-in-vue") },
     ],
     optionSets: [
@@ -38,34 +67,42 @@ const categories: Category[] = [
       { printWidth: 100, vueIndentScriptAndStyle: true, singleQuote: true },
     ],
     notes: {
-      "prettier/vue/multiparser/lang-tsx.vue": "`lang=tsx` is not supported",
-      "vue-vben-admin/effects/common-ui/src/components/api-component/api-component.vue":
-        "`<T = any,>() => {}` comma in generic param is removed even in .ts(x) file",
+      "externals/vue-vben-admin/@core/ui-kit/shadcn-ui/src/components/render-content/render-content.vue":
+        NOTE_UNION_ANNOTATION_FLAT,
+      "externals/vue-vben-admin/effects/common-ui/src/components/api-component/api-component.vue": [
+        NOTE_TS_IN_VUE_GENERIC_COMMA,
+        NOTE_UNION_ANNOTATION_FLAT,
+      ].join("\n"),
+      "edge-cases/js-in-vue/generic-trailing-comma.vue": NOTE_TS_IN_VUE_GENERIC_COMMA,
     },
   },
   {
     name: "gql-in-js",
     sources: [
       {
-        dir: join(FIXTURES_DIR, "prettier", "js/multiparser-graphql"),
+        dir: join(EXTERNALS_DIR, "prettier", "js/multiparser-graphql"),
         ext: ".js",
         excludes: ["format.test.js"],
       },
       { dir: join(FIXTURES_DIR, "edge-cases", "gql-in-js") },
     ],
     optionSets: [{ printWidth: 80 }, { printWidth: 100 }],
-    notes: {},
+    notes: {
+      "externals/prettier/js/multiparser-graphql/graphql-tag.js":
+        "`{ # c` comment after an opening delimiter stays inline. See crates/oxc_formatter_graphql/DIVERGENCES.md#comment-after-opening-delimiter",
+      "edge-cases/gql-in-js/template-expression-indent.js": NOTE_EMBEDDED_EXPRESSION_INDENT,
+    },
   },
   {
     name: "css-in-js",
     sources: [
       {
-        dir: join(FIXTURES_DIR, "prettier", "js/multiparser-css"),
+        dir: join(EXTERNALS_DIR, "prettier", "js/multiparser-css"),
         ext: ".js",
         excludes: ["format.test.js"],
       },
       {
-        dir: join(FIXTURES_DIR, "prettier", "jsx/embed"),
+        dir: join(EXTERNALS_DIR, "prettier", "jsx/embed"),
         ext: ".js",
         excludes: ["format.test.js"],
       },
@@ -73,36 +110,68 @@ const categories: Category[] = [
     ],
     optionSets: [{ printWidth: 80 }, { printWidth: 100 }],
     notes: {
-      "prettier/js/multiparser-css/styled-components.js": "`Xxx.extend` not recognized as tag",
+      "externals/prettier/js/multiparser-css/styled-components.js": NOTE_STYLED_EXTEND_TAG,
+      "edge-cases/css-in-js/styled-extend-tag.js": NOTE_STYLED_EXTEND_TAG,
+      "edge-cases/css-in-js/template-expression-indent.js": NOTE_EMBEDDED_EXPRESSION_INDENT,
     },
   },
   {
     name: "html-in-js",
     sources: [
       {
-        dir: join(FIXTURES_DIR, "prettier", "js/multiparser-html"),
+        dir: join(EXTERNALS_DIR, "prettier", "js/multiparser-html"),
         ext: ".js",
         excludes: ["format.test.js"],
       },
       {
-        dir: join(FIXTURES_DIR, "webawesome"),
+        dir: join(EXTERNALS_DIR, "webawesome"),
         ext: ".ts",
       },
       { dir: join(FIXTURES_DIR, "edge-cases", "html-in-js") },
     ],
     optionSets: [{ printWidth: 80 }, { printWidth: 100, htmlWhitespaceSensitivity: "ignore" }],
     notes: {
-      "prettier/js/multiparser-html/issue-10691.js":
-        "js-in-html(`<script>`)-in-js needs lot more work; Please see oxc_formatter/src/print/template/embed/html.rs",
-      "webawesome/relative-time/relative-time.test.ts":
-        "html-in-js: Need to solve `label({ embed, hug }))` + `shouldExpandLastArg`",
+      "externals/webawesome/number-input/number-input.styles.ts": NOTE_FILL_BREAK_POSITION,
+      "externals/webawesome/page/page.styles.ts": NOTE_FILL_BREAK_POSITION,
+      "edge-cases/html-in-js/template-expression-indent.js": NOTE_EMBEDDED_EXPRESSION_INDENT,
+      "externals/webawesome/carousel/carousel.ts": NOTE_EMBEDDED_EXPRESSION_INDENT,
+      "externals/webawesome/color-picker/color-picker.ts": [
+        NOTE_UNION_ANNOTATION_FLAT,
+        NOTE_EMBEDDED_EXPRESSION_INDENT,
+      ].join("\n"),
+      "externals/webawesome/input/input.ts": [
+        NOTE_UNION_ANNOTATION_FLAT,
+        NOTE_EMBEDDED_EXPRESSION_INDENT,
+      ].join("\n"),
+      "externals/webawesome/badge/badge.ts": NOTE_UNION_ANNOTATION_FLAT,
+      "externals/webawesome/button/button.ts": NOTE_UNION_ANNOTATION_FLAT,
+      "externals/webawesome/callout/callout.ts": NOTE_UNION_ANNOTATION_FLAT,
+      "externals/webawesome/checkbox/checkbox.ts": NOTE_UNION_ANNOTATION_FLAT,
+      "externals/webawesome/copy-button/copy-button.ts": NOTE_UNION_ANNOTATION_FLAT,
+      "externals/webawesome/details/details.ts": NOTE_UNION_ANNOTATION_FLAT,
+      "externals/webawesome/dropdown/dropdown.ts": NOTE_UNION_ANNOTATION_FLAT,
+      "externals/webawesome/dropdown-item/dropdown-item.ts": NOTE_UNION_ANNOTATION_FLAT,
+      "externals/webawesome/format-number/format-number.ts": NOTE_UNION_ANNOTATION_FLAT,
+      "externals/webawesome/icon/icon.ts": NOTE_UNION_ANNOTATION_FLAT,
+      "externals/webawesome/number-input/number-input.ts": NOTE_UNION_ANNOTATION_FLAT,
+      "externals/webawesome/page/page.ts": NOTE_UNION_ANNOTATION_FLAT,
+      "externals/webawesome/popup/popup.ts": NOTE_UNION_ANNOTATION_FLAT,
+      "externals/webawesome/qr-code/qr-code.ts": NOTE_UNION_ANNOTATION_FLAT,
+      "externals/webawesome/radio/radio.ts": NOTE_UNION_ANNOTATION_FLAT,
+      "externals/webawesome/radio-group/radio-group.ts": NOTE_UNION_ANNOTATION_FLAT,
+      "externals/webawesome/rating/rating.ts": NOTE_UNION_ANNOTATION_FLAT,
+      "externals/webawesome/select/select.ts": NOTE_UNION_ANNOTATION_FLAT,
+      "externals/webawesome/slider/slider.ts": NOTE_UNION_ANNOTATION_FLAT,
+      "externals/webawesome/switch/switch.ts": NOTE_UNION_ANNOTATION_FLAT,
+      "externals/webawesome/tag/tag.ts": NOTE_UNION_ANNOTATION_FLAT,
+      "externals/webawesome/textarea/textarea.ts": NOTE_UNION_ANNOTATION_FLAT,
     },
   },
   {
     name: "angular-in-js",
     sources: [
       {
-        dir: join(FIXTURES_DIR, "prettier", "typescript/angular-component-examples"),
+        dir: join(EXTERNALS_DIR, "prettier", "typescript/angular-component-examples"),
         ext: ".ts",
       },
       { dir: join(FIXTURES_DIR, "edge-cases", "angular-in-js") },
@@ -114,7 +183,7 @@ const categories: Category[] = [
     name: "md-in-js",
     sources: [
       {
-        dir: join(FIXTURES_DIR, "prettier", "js/multiparser-markdown"),
+        dir: join(EXTERNALS_DIR, "prettier", "js/multiparser-markdown"),
         ext: ".js",
         excludes: ["format.test.js"],
       },
@@ -127,19 +196,145 @@ const categories: Category[] = [
     name: "xxx-in-js-comment",
     sources: [
       {
-        dir: join(FIXTURES_DIR, "prettier", "js/multiparser-html/language-comment"),
+        dir: join(EXTERNALS_DIR, "prettier", "js/multiparser-html/language-comment"),
         ext: ".js",
         excludes: ["format.test.js"],
       },
       {
-        dir: join(FIXTURES_DIR, "prettier", "js/multiparser-comments"),
+        dir: join(EXTERNALS_DIR, "prettier", "js/multiparser-comments"),
         ext: ".js",
         excludes: ["format.test.js"],
       },
       { dir: join(FIXTURES_DIR, "edge-cases", "xxx-in-js-comment") },
     ],
-    optionSets: [{ printWidth: 80 }, { printWith: 100 }],
+    optionSets: [{ printWidth: 80 }, { printWidth: 100 }],
+    notes: {
+      "externals/prettier/js/multiparser-comments/comment-inside.js":
+        NOTE_BROKEN_TEMPLATE_COMMENT_INDENT,
+      "edge-cases/xxx-in-js-comment/broken-template-comment-indent.js":
+        NOTE_BROKEN_TEMPLATE_COMMENT_INDENT,
+    },
+  },
+  {
+    name: "svelte",
+    sources: [
+      {
+        dir: join(EXTERNALS_DIR, "plugin-svelte"),
+        ext: "input.html",
+        excludes: ["syntax-error"],
+        resolveFilePath: (name) => name.replace("/input.html", ".svelte"),
+      },
+    ],
+    optionSets: [
+      { printWidth: 80, svelte: {} },
+      {
+        printWidth: 120,
+        singleQuote: true,
+        htmlWhitespaceSensitivity: "ignore",
+        bracketSameLine: true,
+        // For prettier
+        svelteIndentScriptAndStyle: true,
+        svelteSortOrder: "options-scripts-styles-markup",
+        // For oxfmt
+        svelte: {
+          indentScriptAndStyle: true,
+          sortOrder: "options-scripts-styles-markup",
+        },
+      },
+    ],
     notes: {},
+  },
+  {
+    name: "graphql",
+    sources: [{ dir: join(EXTERNALS_DIR, "gitlab"), ext: ".graphql" }],
+    optionSets: [{ printWidth: 80 }, { printWidth: 100 }],
+    notes: {},
+  },
+  {
+    name: "less",
+    sources: [{ dir: join(EXTERNALS_DIR, "ng-zorro-antd"), ext: ".less" }],
+    optionSets: [{ printWidth: 80 }, { printWidth: 100 }],
+    notes: {
+      "externals/ng-zorro-antd/components/style/themes/compact.less": NOTE_FILL_BREAK_POSITION,
+      "externals/ng-zorro-antd/components/style/themes/default.less": [
+        NOTE_FILL_BREAK_POSITION,
+        NOTE_EOL_LINE_COMMENT_WIDTH,
+      ].join("\n"),
+      "externals/ng-zorro-antd/components/style/themes/variable.less": [
+        NOTE_FILL_BREAK_POSITION,
+        NOTE_EOL_LINE_COMMENT_WIDTH,
+      ].join("\n"),
+      "externals/ng-zorro-antd/components/style/themes/dark.less": NOTE_EOL_LINE_COMMENT_WIDTH,
+      "externals/ng-zorro-antd/components/table/style/index.less": NOTE_FILL_BREAK_POSITION,
+      "externals/ng-zorro-antd/components/table/style/rtl.less": NOTE_FILL_BREAK_POSITION,
+    },
+  },
+  {
+    name: "css",
+    sources: [
+      { dir: join(EXTERNALS_DIR, "mantine"), ext: ".css" },
+      { dir: join(EXTERNALS_DIR, "docusaurus"), ext: ".css" },
+    ],
+    optionSets: [{ printWidth: 80 }, { printWidth: 100 }],
+    notes: {},
+  },
+  {
+    name: "yaml",
+    sources: [
+      { dir: join(EXTERNALS_DIR, "aws-cloudformation-templates"), ext: ".yaml" },
+      { dir: join(EXTERNALS_DIR, "aws-cloudformation-templates"), ext: ".yml" },
+      { dir: join(EXTERNALS_DIR, "gitlab-ci-templates"), ext: ".yml" },
+      { dir: join(EXTERNALS_DIR, "gitlab"), ext: ".yml" },
+    ],
+    optionSets: [
+      { printWidth: 80 },
+      { printWidth: 100, tabWidth: 4, proseWrap: "always" },
+      { printWidth: 120, singleQuote: true, bracketSpacing: false, trailingComma: "none" },
+    ],
+    notes: {
+      "externals/aws-cloudformation-templates/RainModules/load-balancer.yml":
+        "over-indented comment after `key: value` never rewrites the pair. See crates/oxc_formatter_yaml/DIVERGENCES.md#comment-over-indented",
+      "externals/aws-cloudformation-templates/ElasticLoadBalancing/ELB_Access_Logs_And_Connection_Draining.yaml":
+        NOTE_BLOCK_SCALAR_TRAILING_WS,
+      "externals/aws-cloudformation-templates/ElasticLoadBalancing/ELBGuidedAutoScalingRollingUpgrade.yaml":
+        NOTE_BLOCK_SCALAR_TRAILING_WS,
+      "externals/aws-cloudformation-templates/ElasticLoadBalancing/ELBStickinessSample.yaml":
+        NOTE_BLOCK_SCALAR_TRAILING_WS,
+      "externals/aws-cloudformation-templates/ElasticLoadBalancing/ELBWithLockedDownAutoScaledInstances.yaml":
+        NOTE_BLOCK_SCALAR_TRAILING_WS,
+      "externals/aws-cloudformation-templates/RainModules/bucket.yml":
+        NOTE_BLOCK_SCALAR_TRAILING_WS,
+      "externals/aws-cloudformation-templates/Solutions/OperatingSystems/ubuntu20.04_cfn-hup.yaml":
+        NOTE_BLOCK_SCALAR_TRAILING_WS,
+    },
+  },
+  {
+    name: "scss",
+    sources: [
+      { dir: join(EXTERNALS_DIR, "vue-vben-admin"), ext: ".scss" },
+      { dir: join(EXTERNALS_DIR, "gitlab"), ext: ".scss" },
+    ],
+    optionSets: [{ printWidth: 80 }, { printWidth: 100 }],
+    notes: {
+      "externals/gitlab/stylesheets/components/content_editor.scss": NOTE_FILL_BREAK_POSITION,
+      "externals/gitlab/stylesheets/page_bundles/_ide_theme_overrides.scss":
+        NOTE_FILL_BREAK_POSITION,
+      "externals/gitlab/stylesheets/framework/diffs.scss": NOTE_MQ_OP_SPACING,
+      "externals/gitlab/stylesheets/page_bundles/editor.scss": NOTE_MQ_OP_SPACING,
+      "externals/gitlab/stylesheets/page_bundles/issuable_list.scss": NOTE_MQ_OP_SPACING,
+      "externals/gitlab/stylesheets/page_bundles/labels.scss": NOTE_MQ_OP_SPACING,
+      "externals/gitlab/stylesheets/page_bundles/environments.scss": NOTE_MQ_OP_SPACING,
+      "externals/gitlab/stylesheets/page_bundles/merge_requests.scss": NOTE_MQ_OP_SPACING,
+      "externals/gitlab/stylesheets/page_bundles/settings.scss": NOTE_MQ_OP_SPACING,
+      "externals/gitlab/stylesheets/pages/settings.scss": NOTE_MQ_OP_SPACING,
+      "externals/gitlab/stylesheets/page_bundles/projects.scss": NOTE_MQ_OP_SPACING,
+      "externals/gitlab/stylesheets/highlight/conflict_colors.scss":
+        "blank lines in maps with paren values are preserved. See crates/oxc_formatter_css/DIVERGENCES.md#map-paren-value-blank-lines",
+      "externals/gitlab/stylesheets/framework/sidebar.scss": NOTE_FILL_BREAK_POSITION,
+      "externals/gitlab/stylesheets/framework/variables_overrides.scss":
+        "no trailing comma into non-comma-list map-item parens. See crates/oxc_formatter_css/DIVERGENCES.md#map-item-break-comma-lists-only",
+      "externals/gitlab/stylesheets/pages/profile.scss": NOTE_EOL_LINE_COMMENT_WIDTH,
+    },
   },
 ];
 
@@ -162,6 +357,16 @@ for (const category of categories) {
   for (const r of categoryResult.optionSetResults) {
     const pct = ((r.passed / r.total) * 100).toFixed(2);
     console.log(`  ${JSON.stringify(r.options)}: ${r.passed}/${r.total} (${pct}%)`);
+  }
+
+  // A note whose fixture no longer fails is stale (e.g. resolved by a Prettier pin bump) — surface it for cleanup
+  const failedNames = new Set(
+    categoryResult.optionSetResults.flatMap((r) => r.failures.map((f) => f.name)),
+  );
+  for (const name of Object.keys(category.notes ?? {})) {
+    if (!failedNames.has(name)) {
+      console.warn(`  WARNING: note for "${name}" matched no failure, remove it?`);
+    }
   }
 }
 
@@ -196,7 +401,10 @@ function collectFixtures(sources: Source[]): Fixture[] {
   for (const source of sources) {
     if (!existsSync(source.dir)) continue;
 
-    for (const entry of readdirSync(source.dir, { withFileTypes: true, recursive: true })) {
+    for (const entry of readdirSync(source.dir, {
+      withFileTypes: true,
+      recursive: true,
+    })) {
       if (!entry.isFile()) continue;
       if (source.ext && !entry.name.endsWith(source.ext)) continue;
 
@@ -204,7 +412,8 @@ function collectFixtures(sources: Source[]): Fixture[] {
       const relPath = relative(FIXTURES_DIR, fullPath);
       if (source.excludes?.some((s) => relPath.includes(s))) continue;
 
-      results.push({ name: relPath, fullPath });
+      const name = source.resolveFilePath?.(relPath) ?? relPath;
+      results.push({ name, fullPath });
     }
   }
 
@@ -238,7 +447,12 @@ async function runCategory(category: Category, fixtures: Fixture[]): Promise<Cat
       }
     }
 
-    optionSetResults.push({ options, passed, total: fixtures.length, failures });
+    optionSetResults.push({
+      options,
+      passed,
+      total: fixtures.length,
+      failures,
+    });
   }
 
   return { name: category.name, optionSetResults };
@@ -252,8 +466,9 @@ async function compareWithPrettier(
   let prettierResult: string;
   try {
     prettierResult = await prettier.format(content, {
-      filepath: fileName,
       ...options,
+      filepath: fileName,
+      plugins: [sveltePlugin],
     });
   } catch {
     prettierResult = "ERROR";
@@ -284,7 +499,11 @@ function writeReport(results: CategoryResult[]) {
     // Collect all failures per fixture across option sets
     const failuresByFixture = new Map<
       string,
-      { optionIndex: number; options: Record<string, unknown>; failure: Failure }[]
+      {
+        optionIndex: number;
+        options: Record<string, unknown>;
+        failure: Failure;
+      }[]
     >();
     for (let i = 0; i < result.optionSetResults.length; i++) {
       for (const failure of result.optionSetResults[i].failures) {
@@ -293,7 +512,11 @@ function writeReport(results: CategoryResult[]) {
           entries = [];
           failuresByFixture.set(failure.name, entries);
         }
-        entries.push({ optionIndex: i + 1, options: result.optionSetResults[i].options, failure });
+        entries.push({
+          optionIndex: i + 1,
+          options: result.optionSetResults[i].options,
+          failure,
+        });
       }
     }
 
@@ -319,7 +542,9 @@ function writeReport(results: CategoryResult[]) {
           const safeName = failure.name.replaceAll("/", "__");
           const diffRelPath = `diffs/${result.name}/${safeName}.md`;
           const diffLink = `[${failure.name}](${diffRelPath})`;
-          lines.push(`| ${diffLink} | ${failure.note ?? ""} |`);
+          // Notes may be multi-line (joined constants); `<br>` keeps the table cell intact.
+          const noteCell = (failure.note ?? "").replaceAll("\n", "<br>");
+          lines.push(`| ${diffLink} | ${noteCell} |`);
         }
         lines.push("");
       }
@@ -337,7 +562,11 @@ function writeDiffFile(
   diffsDir: string,
   categoryName: string,
   fixtureName: string,
-  entries: { optionIndex: number; options: Record<string, unknown>; failure: Failure }[],
+  entries: {
+    optionIndex: number;
+    options: Record<string, unknown>;
+    failure: Failure;
+  }[],
 ) {
   const safeName = fixtureName.replaceAll("/", "__");
   const dir = join(diffsDir, categoryName);
@@ -351,7 +580,8 @@ function writeDiffFile(
     failure: { note },
   } = entries[0];
   if (note) {
-    lines.push(`> ${note}`);
+    // Multi-line notes keep the blockquote prefix on every line.
+    lines.push(`> ${note.replaceAll("\n", "\n> ")}`);
     lines.push("");
   }
 

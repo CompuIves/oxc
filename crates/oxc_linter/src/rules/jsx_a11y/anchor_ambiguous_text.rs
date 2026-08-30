@@ -94,11 +94,13 @@ declare_oxc_lint!(
     jsx_a11y,
     restriction,
     config = AnchorAmbiguousTextConfig,
+    version = "0.13.2",
+    short_description = "Inspects anchor link text for the use of ambiguous words.",
 );
 
 impl Rule for AnchorAmbiguousText {
     fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
-        serde_json::from_value::<DefaultRuleConfig<Self>>(value).map(DefaultRuleConfig::into_inner)
+        DefaultRuleConfig::<Self>::from_value(value).map(DefaultRuleConfig::into_inner)
     }
 
     fn run<'a>(&self, node: &AstNode<'a>, ctx: &LintContext<'a>) {

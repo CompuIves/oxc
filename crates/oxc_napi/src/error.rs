@@ -27,8 +27,9 @@ impl OxcError {
     pub fn from_diagnostics(
         filename: &str,
         source_text: &str,
-        diagnostics: Vec<OxcDiagnostic>,
+        diagnostics: impl IntoIterator<Item = OxcDiagnostic>,
     ) -> Vec<Self> {
+        let diagnostics = diagnostics.into_iter().collect::<Vec<_>>();
         if diagnostics.is_empty() {
             return vec![];
         }
@@ -41,19 +42,14 @@ impl OxcError {
         diagnostic: OxcDiagnostic,
     ) -> Self {
         let mut error = Self::from(&diagnostic);
-        let codeframe = diagnostic.with_source_code(Arc::clone(named_source));
-        error.codeframe = Some(format!("{codeframe:?}"));
+        error.codeframe = Some(diagnostic.render_with_source_code(Arc::clone(named_source)));
         error
     }
 }
 
 impl From<&OxcDiagnostic> for OxcError {
     fn from(diagnostic: &OxcDiagnostic) -> Self {
-        let labels = diagnostic
-            .labels
-            .as_ref()
-            .map(|labels| labels.iter().map(ErrorLabel::from).collect::<Vec<_>>())
-            .unwrap_or_default();
+        let labels = diagnostic.labels.iter().map(ErrorLabel::from).collect::<Vec<_>>();
         Self {
             severity: Severity::from(diagnostic.severity),
             message: diagnostic.message.to_string(),
@@ -72,12 +68,11 @@ pub struct ErrorLabel {
 }
 
 impl From<&LabeledSpan> for ErrorLabel {
-    #[expect(clippy::cast_possible_truncation)]
     fn from(label: &LabeledSpan) -> Self {
         Self {
             message: label.label().map(ToString::to_string),
-            start: label.offset() as u32,
-            end: (label.offset() + label.len()) as u32,
+            start: label.offset(),
+            end: label.offset() + label.len(),
         }
     }
 }

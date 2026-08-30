@@ -89,6 +89,8 @@ declare_oxc_lint!(
     suspicious,
     dangerous_suggestion,
     config = NoExtraneousClass,
+    version = "0.7.0",
+    short_description = "Disallow classes used as namespaces.",
 );
 
 fn empty_class_diagnostic(span: Span, has_decorators: bool) -> OxcDiagnostic {
@@ -114,16 +116,14 @@ fn only_constructor_no_extraneous_class_diagnostic(span: Span) -> OxcDiagnostic 
 
 impl Rule for NoExtraneousClass {
     fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
-        serde_json::from_value::<DefaultRuleConfig<Self>>(value).map(DefaultRuleConfig::into_inner)
+        DefaultRuleConfig::<Self>::from_value(value).map(DefaultRuleConfig::into_inner)
     }
 
     fn run<'a>(&self, node: &AstNode<'a>, ctx: &LintContext<'a>) {
         let AstKind::Class(class) = node.kind() else {
             return;
         };
-        if class.super_class.is_some()
-            || (self.allow_with_decorator && !class.decorators.is_empty())
-        {
+        if class.heritage.is_some() || (self.allow_with_decorator && !class.decorators.is_empty()) {
             return;
         }
         let span = class.id.as_ref().map_or(class.span, |id| id.span);
@@ -132,16 +132,14 @@ impl Rule for NoExtraneousClass {
             [] => {
                 if !self.allow_empty {
                     let mut span = class.span;
-                    #[expect(clippy::checked_conversions, clippy::cast_possible_truncation)]
                     if let Some(decorator) = class.decorators.last() {
                         span = Span::new(decorator.span.end, span.end);
-                        // NOTE: there will always be a 'c' because of 'class' keyword.
-                        let start = ctx.source_range(span).find('c').unwrap();
-                        // SAFETY: source files are guaranteed to be less than
-                        // 2^32 characters, so conversion will never fail. Using
-                        // unchecked assert here removes a useless bounds check.
-                        unsafe { std::hint::assert_unchecked(start <= u32::MAX as usize) };
-                        span = span.shrink_left(start as u32);
+                        // NOTE: the `class` keyword always follows the decorators.
+                        if let Some(start) =
+                            ctx.find_next_token_within(span.start, span.end, "class")
+                        {
+                            span = span.shrink_left(start);
+                        }
                     }
                     let has_decorators = !class.decorators.is_empty();
                     ctx.diagnostic_with_suggestion(
@@ -150,7 +148,7 @@ impl Rule for NoExtraneousClass {
                             if has_decorators {
                                 return fixer.noop();
                             }
-                            if let AstKind::ExportNamedDeclaration(decl) =
+                            if let AstKind::ExportDeclaration(decl) =
                                 ctx.nodes().parent_kind(node.id())
                             {
                                 fixer.delete(decl)
@@ -283,6 +281,8 @@ fn test() {
     ];
 
     let fail = vec![
+        // the `c` inside the comment is not the `class` keyword
+        ("@dec /* c */ class Foo {}", None),
         ("class Foo {}", None),
         (
             "

@@ -1,16 +1,8 @@
-commit: 7b8cb3bd
+commit: b465fdbf
 
 estree_typescript Summary:
-AST Parsed     : 9765/9765 (100.00%)
-Positive Passed: 9742/9765 (99.76%)
-Expect to Parse: tasks/coverage/typescript/tests/cases/compiler/ambientWithStatements.ts
-A 'return' statement can only be used within a function body.
-Expect to Parse: tasks/coverage/typescript/tests/cases/compiler/constDeclarations-invalidContexts.ts
-Lexical declaration cannot appear in a single-statement context
-Expect to Parse: tasks/coverage/typescript/tests/cases/compiler/constDeclarations-scopes.ts
-Lexical declaration cannot appear in a single-statement context
-Expect to Parse: tasks/coverage/typescript/tests/cases/compiler/constDeclarations-validContexts.ts
-Lexical declaration cannot appear in a single-statement context
+AST Parsed     : 9723/9723 (100.00%)
+Positive Passed: 9707/9723 (99.84%)
 Mismatch: tasks/coverage/typescript/tests/cases/compiler/moduleDetectionIsolatedModulesCjsFileScope.ts
 
 Mismatch: tasks/coverage/typescript/tests/cases/compiler/moduleNodeImportRequireEmit.ts
@@ -26,10 +18,6 @@ Mismatch: tasks/coverage/typescript/tests/cases/conformance/externalModules/modu
 Mismatch: tasks/coverage/typescript/tests/cases/conformance/externalModules/rewriteRelativeImportExtensions/cjsErrors.ts
 
 Mismatch: tasks/coverage/typescript/tests/cases/conformance/externalModules/rewriteRelativeImportExtensions/emitModuleCommonJS.ts
-
-Mismatch: tasks/coverage/typescript/tests/cases/conformance/importDefer/importDeferComments.ts
-
-Mismatch: tasks/coverage/typescript/tests/cases/conformance/importDefer/importDeferDeclaration.ts
 
 Mismatch: tasks/coverage/typescript/tests/cases/conformance/jsx/jsxReactTestSuite.tsx
 
@@ -47,5 +35,3 @@ Mismatch: tasks/coverage/typescript/tests/cases/conformance/node/esmModuleExport
 
 Mismatch: tasks/coverage/typescript/tests/cases/conformance/nonjsExtensions/declarationFilesForNodeNativeModules.ts
 
-Expect to Parse: tasks/coverage/typescript/tests/cases/conformance/parser/ecmascript5/ErrorRecovery/parserStatementIsNotAMemberVariableDeclaration1.ts
-A 'return' statement can only be used within a function body.

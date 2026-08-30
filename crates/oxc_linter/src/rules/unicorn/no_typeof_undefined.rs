@@ -52,6 +52,8 @@ declare_oxc_lint!(
     pedantic,
     fix_or_suggestion,
     config = NoTypeofUndefined,
+    version = "0.0.18",
+    short_description = "Disallow `typeof` comparisons with `undefined`.",
 );
 
 impl Rule for NoTypeofUndefined {
@@ -103,7 +105,7 @@ impl Rule for NoTypeofUndefined {
     }
 
     fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
-        serde_json::from_value::<DefaultRuleConfig<Self>>(value).map(DefaultRuleConfig::into_inner)
+        DefaultRuleConfig::<Self>::from_value(value).map(DefaultRuleConfig::into_inner)
     }
 }
 

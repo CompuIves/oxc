@@ -6,8 +6,6 @@ import { renderMarkdown } from "./markdown-renderer.mjs";
 import {
   createRuleEntries,
   overrideTypeScriptPluginStatusWithEslintPluginStatus as syncTypeScriptPluginStatusWithEslintPluginStatus,
-  syncUnicornPluginStatusWithEslintPluginStatus,
-  syncVitestPluginStatusWithJestPluginStatus,
   updateImplementedStatus,
   updateNotSupportedStatus,
   updatePendingFixStatus,
@@ -63,18 +61,15 @@ void (async () => {
   updateNotSupportedStatus(ruleEntries);
   await updatePendingFixStatus(ruleEntries);
   await syncTypeScriptPluginStatusWithEslintPluginStatus(ruleEntries);
-  await syncVitestPluginStatusWithJestPluginStatus(ruleEntries);
-  syncUnicornPluginStatusWithEslintPluginStatus(ruleEntries);
 
   //
   // Render list and update if necessary
   //
   const results = await Promise.allSettled(
     Array.from(targetPluginNames).map((pluginName) => {
-      const pluginMeta =
-        /** @type {import("./eslint-rules.mjs").TargetPluginMeta} */ (
-          ALL_TARGET_PLUGINS.get(pluginName)
-        );
+      const pluginMeta = /** @type {import("./eslint-rules.mjs").TargetPluginMeta} */ (
+        ALL_TARGET_PLUGINS.get(pluginName)
+      );
       const content = renderMarkdown(pluginName, pluginMeta, ruleEntries);
 
       if (!values.update) return Promise.resolve(content);

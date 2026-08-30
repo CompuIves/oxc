@@ -4,6 +4,40 @@ All notable changes to this package will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0).
 
+## [0.140.0] - 2026-07-13
+
+### 🚀 Features
+
+- ddab89a data_structures: Add `likely` and `unlikely` functions (#24368) (overlookmotel)
+
+## [0.139.0] - 2026-07-06
+
+### 🚀 Features
+
+- 2e62012 data_structures: Add `StringExt` trait (#24006) (overlookmotel)
+
+## [0.137.0] - 2026-06-18
+
+### 🚀 Features
+
+- 556cc6d data_structures: Add `CodeBuffer::as_str` method (#23571) (overlookmotel)
+
+### 📚 Documentation
+
+- f68641e data_structures: Improve docs on safety contract (#23575) (overlookmotel)
+
+## [0.128.0] - 2026-04-27
+
+### 📚 Documentation
+
+- ce65070 data_structures: Document why `as_ref` and `as_mut` on `NonNullConst` and `NonNullMut` take `self` (#21800) (overlookmotel)
+
+## [0.126.0] - 2026-04-15
+
+### 🚀 Features
+
+- 24b03de data_structures: Introduce `NonNullConst` and `NonNullMut` pointer types (#21425) (overlookmotel)
+
 ## [0.124.0] - 2026-04-06
 
 ### 📚 Documentation

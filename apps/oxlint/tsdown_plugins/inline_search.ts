@@ -4,7 +4,7 @@ import { Visitor } from "oxc-parser";
 import { parse } from "./utils.ts";
 
 import type { Plugin } from "rolldown";
-import type * as ESTree from "@oxc-project/types";
+import type * as ESTree from "oxc-parser";
 
 // Name of binary search function to inline
 const INLINE_FUNC_NAME = "firstTokenAtOrAfter";
@@ -76,7 +76,7 @@ const plugin: Plugin = {
       // Visit AST.
       // Inline call sites and check for any calls that could not be inlined.
       const visitor = new Visitor({
-        VariableDeclaration(varDecl: ESTree.VariableDeclaration) {
+        VariableDeclaration(varDecl) {
           if (varDecl.declarations.length !== 1) return;
 
           const declarator = varDecl.declarations[0];
@@ -103,8 +103,8 @@ const plugin: Plugin = {
           const args = callNode.arguments.map((arg) => {
             if (arg.type !== "Identifier" && arg.type !== "Literal") {
               throw new Error(
-                `Unexpected parameter type in \`${INLINE_FUNC_NAME}\` call ` +
-                  `at line ${lineNumber(arg.start)}: ${arg.type}`,
+                `Unexpected parameter type in \`${INLINE_FUNC_NAME}\` call `
+                  + `at line ${lineNumber(arg.start)}: ${arg.type}`,
               );
             }
             return code.slice(arg.start, arg.end);
@@ -112,8 +112,8 @@ const plugin: Plugin = {
 
           if (args.length !== fnParams.length) {
             throw new Error(
-              `\`${INLINE_FUNC_NAME}\` called with ${args.length} args, expected ${fnParams.length} ` +
-                `at line ${lineNumber(callNode.start)}`,
+              `\`${INLINE_FUNC_NAME}\` called with ${args.length} args, expected ${fnParams.length} `
+                + `at line ${lineNumber(callNode.start)}`,
             );
           }
 
@@ -140,11 +140,11 @@ const plugin: Plugin = {
           inlinedCallExprs.add(callNode);
         },
 
-        CallExpression(callExpr: ESTree.CallExpression) {
+        CallExpression(callExpr) {
           if (isTargetCall(callExpr) && !inlinedCallExprs.has(callExpr)) {
             throw new Error(
-              `\`${INLINE_FUNC_NAME}\` call on line ${lineNumber(callExpr.start)} could not be inlined. ` +
-                "All calls must be in a variable declaration.",
+              `\`${INLINE_FUNC_NAME}\` call on line ${lineNumber(callExpr.start)} could not be inlined. `
+                + "All calls must be in a variable declaration.",
             );
           }
         },
@@ -170,9 +170,9 @@ export default plugin;
  */
 function isTargetCall(node: ESTree.Node): node is ESTree.CallExpression {
   return (
-    node.type === "CallExpression" &&
-    node.callee.type === "Identifier" &&
-    node.callee.name === INLINE_FUNC_NAME
+    node.type === "CallExpression"
+    && node.callee.type === "Identifier"
+    && node.callee.name === INLINE_FUNC_NAME
   );
 }
 
@@ -219,9 +219,9 @@ function extractInlinedFunction(
 
   const lastStmt = body.body.at(-1);
   if (
-    !lastStmt ||
-    lastStmt.type !== "ReturnStatement" ||
-    lastStmt.argument?.type !== "Identifier"
+    !lastStmt
+    || lastStmt.type !== "ReturnStatement"
+    || lastStmt.argument?.type !== "Identifier"
   ) {
     throw new Error(`\`${funcName}\` must end with \`return <identifier>;\``);
   }

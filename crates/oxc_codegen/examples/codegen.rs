@@ -15,6 +15,7 @@
 //!
 //! - `--minify`: Generate minified output
 //! - `--twice`: Test idempotency by parsing and generating twice
+//! - `--sourcemap`: Print the generated source map (requires the `sourcemap` feature)
 
 use std::path::Path;
 
@@ -85,8 +86,8 @@ fn parse<'a>(
             ..ParseOptions::default()
         })
         .parse();
-    for error in ret.errors {
-        println!("{:?}", error.with_source_code(source_text.to_string()));
+    for error in ret.diagnostics {
+        println!("{}", error.render_with_source_code(source_text.to_string()));
     }
     ret.program
 }

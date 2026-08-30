@@ -1,4 +1,4 @@
-use oxc_ast::{AstKind, ast::TSModuleDeclarationName};
+use oxc_ast::AstKind;
 use oxc_diagnostics::OxcDiagnostic;
 use oxc_macros::declare_oxc_lint;
 use oxc_span::Span;
@@ -9,6 +9,7 @@ use crate::{
     AstNode,
     context::{ContextHost, LintContext},
     rule::{DefaultRuleConfig, Rule},
+    utils::has_ambient_typescript_ancestor,
 };
 
 fn no_namespace_diagnostic(span: Span) -> OxcDiagnostic {
@@ -113,36 +114,36 @@ declare_oxc_lint!(
     typescript,
     restriction,
     config = NoNamespace,
+    version = "0.0.8",
+    short_description = "Disallow TypeScript namespaces.",
 );
 
 impl Rule for NoNamespace {
     fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
-        serde_json::from_value::<DefaultRuleConfig<Self>>(value).map(DefaultRuleConfig::into_inner)
+        DefaultRuleConfig::<Self>::from_value(value).map(DefaultRuleConfig::into_inner)
     }
 
     fn run<'a>(&self, node: &AstNode<'a>, ctx: &LintContext<'a>) {
-        let AstKind::TSModuleDeclaration(declaration) = node.kind() else {
+        let AstKind::TSNamespaceDeclaration(declaration) = node.kind() else {
             return;
         };
-        if !matches!(&declaration.id, TSModuleDeclarationName::Identifier(_)) {
-            return;
-        }
 
-        // Ignore nested `TSModuleDeclaration`s
-        // e.g. the 2 inner `TSModuleDeclaration`s in `module A.B.C {}`
-        if let AstKind::TSModuleDeclaration(_) = ctx.nodes().parent_kind(node.id()) {
+        // Ignore nested `TSNamespaceDeclaration`s
+        // e.g. the 2 inner declarations in `module A.B.C {}`
+        if let AstKind::TSNamespaceDeclaration(_) = ctx.nodes().parent_kind(node.id()) {
             return;
         }
 
         if self.allow_declarations
-            && (declaration.declare || is_any_ancestor_declaration(node, ctx))
+            && (declaration.declare || has_ambient_typescript_ancestor(node.id(), ctx.nodes()))
         {
             return;
         }
 
         let keyword = declaration.kind.as_str();
         let mut span_start = declaration.span.start;
-        span_start += ctx.find_next_token_from(span_start, keyword).unwrap();
+        span_start +=
+            ctx.find_next_token_within(span_start, declaration.span.end, keyword).unwrap();
         #[expect(clippy::cast_possible_truncation)]
         let span = Span::sized(span_start, keyword.len() as u32);
         ctx.diagnostic(no_namespace_diagnostic(span));
@@ -154,15 +155,6 @@ impl Rule for NoNamespace {
         }
         ctx.source_type().is_typescript()
     }
-}
-
-fn is_any_ancestor_declaration(node: &AstNode, ctx: &LintContext) -> bool {
-    ctx.nodes().ancestors(node.id()).any(|node| match node.kind() {
-        AstKind::TSModuleDeclaration(decl) => decl.declare,
-        // No need to check `declare` field, as `global` is only valid in ambient context
-        AstKind::TSGlobalDeclaration(_) => true,
-        _ => false,
-    })
 }
 
 #[test]
@@ -240,6 +232,12 @@ fn test() {
         (
             "module foo {}",
             Some(serde_json::json!([{ "allowDefinitionFiles": true }])),
+            None,
+            Some(PathBuf::from("test.d.ts")),
+        ),
+        (
+            "global { namespace foo {} }",
+            Some(serde_json::json!([{ "allowDeclarations": true, "allowDefinitionFiles": false }])),
             None,
             Some(PathBuf::from("test.d.ts")),
         ),
@@ -349,7 +347,7 @@ fn test() {
         (
             "namespace A {
                export declare namespace B {
-                 declare namespace C {}
+                 namespace C {}
                }
              }",
             Some(serde_json::json!([{ "allowDeclarations": true }])),
@@ -359,7 +357,7 @@ fn test() {
         (
             "namespace A {
                export declare namespace B {
-                 export declare namespace C {}
+                 export namespace C {}
                }
              }",
             Some(serde_json::json!([{ "allowDeclarations": true }])),
@@ -429,7 +427,7 @@ fn test() {
         (
             "export namespace A {
                export declare namespace B {
-                 declare namespace C {}
+                 namespace C {}
                }
              }",
             Some(serde_json::json!([{ "allowDeclarations": true }])),
@@ -439,7 +437,7 @@ fn test() {
         (
             "export namespace A {
                export declare namespace B {
-                 export declare namespace C {}
+                 export namespace C {}
                }
              }",
             Some(serde_json::json!([{ "allowDeclarations": true }])),

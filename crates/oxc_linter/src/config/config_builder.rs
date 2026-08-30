@@ -17,7 +17,6 @@ use crate::{
     config::{
         ESLintRule, OxlintOverrides, OxlintRules,
         external_plugins::ExternalPluginEntry,
-        overrides::OxlintOverride,
         plugins::{LintPlugins, is_normal_plugin_name, normalize_plugin_name},
         rules::OverrideRulesError,
     },
@@ -149,13 +148,38 @@ impl ConfigStoreBuilder {
         fn resolve_oxlintrc_config(
             config: Oxlintrc,
             in_object_extends: bool,
+            config_stack: &mut Vec<PathBuf>,
         ) -> Result<(Oxlintrc, Vec<PathBuf>), ConfigBuilderError> {
             if in_object_extends {
                 check_no_relative_js_plugins_in_extends(&config)?;
             }
 
             let path = config.path.clone();
-            let root_path = path.parent();
+            if path.as_os_str().is_empty() {
+                return resolve_oxlintrc_config_extends(config, config_stack);
+            }
+
+            let canonical_path = path.canonicalize().unwrap_or(path);
+            if let Some(cycle_start) = config_stack.iter().position(|path| path == &canonical_path)
+            {
+                let mut cycle = config_stack[cycle_start..].to_vec();
+                cycle.push(config_stack[cycle_start].clone());
+                let referenced_from = config_stack[..=cycle_start].to_vec();
+                return Err(ConfigBuilderError::CircularExtends { cycle, referenced_from });
+            }
+
+            config_stack.push(canonical_path);
+            let result = resolve_oxlintrc_config_extends(config, config_stack);
+            config_stack.pop();
+            result
+        }
+
+        fn resolve_oxlintrc_config_extends(
+            config: Oxlintrc,
+            config_stack: &mut Vec<PathBuf>,
+        ) -> Result<(Oxlintrc, Vec<PathBuf>), ConfigBuilderError> {
+            let config_path = config.path.clone();
+            let root_path = config_path.parent();
             let extends = config.extends.clone();
             let extends_configs = config.extends_configs.clone();
             let mut extended_paths = Vec::new();
@@ -163,20 +187,20 @@ impl ConfigStoreBuilder {
             let mut oxlintrc = config;
 
             for config in extends_configs.into_iter().rev() {
-                let (extends, extends_paths) = resolve_oxlintrc_config(config, true)?;
+                let (extends, extends_paths) = resolve_oxlintrc_config(config, true, config_stack)?;
                 oxlintrc = oxlintrc.merge(extends);
                 extended_paths.extend(extends_paths);
             }
 
             for path in extends.iter().rev() {
-                if path.starts_with("eslint:") || path.starts_with("plugin:") {
-                    // `eslint:` and `plugin:` named configs are not supported
-                    continue;
-                }
-                // if path does not include a ".", then we will heuristically skip it since it
-                // kind of looks like it might be a named config
-                if !path.to_string_lossy().contains('.') {
-                    continue;
+                let path_str = path.to_string_lossy();
+                // if path does not include a ".", it is likely a named config (e.g., "prettier",
+                // "eslint:recommended", "plugin:unicorn/recommended") rather than a file path.
+                // Oxlint does not support named configs.
+                if !path_str.contains('.') {
+                    return Err(ConfigBuilderError::UnsupportedNamedConfig {
+                        name: path_str.to_string(),
+                    });
                 }
 
                 let path = match root_path {
@@ -193,7 +217,8 @@ impl ConfigStoreBuilder {
 
                 extended_paths.push(path.clone());
 
-                let (extends, extends_paths) = resolve_oxlintrc_config(extends_oxlintrc, false)?;
+                let (extends, extends_paths) =
+                    resolve_oxlintrc_config(extends_oxlintrc, false, config_stack)?;
 
                 oxlintrc = oxlintrc.merge(extends);
                 extended_paths.extend(extends_paths);
@@ -202,7 +227,9 @@ impl ConfigStoreBuilder {
             Ok((oxlintrc, extended_paths))
         }
 
-        let (oxlintrc, extended_paths) = resolve_oxlintrc_config(oxlintrc, false)?;
+        validate_ignore_patterns(&oxlintrc)?;
+
+        let (oxlintrc, extended_paths) = resolve_oxlintrc_config(oxlintrc, false, &mut Vec::new())?;
 
         // Collect external plugins from both base config and overrides
         let mut external_plugins: FxHashSet<&ExternalPluginEntry> = FxHashSet::default();
@@ -217,6 +244,14 @@ impl ConfigStoreBuilder {
             }
         }
 
+        let mut external_plugins = external_plugins.into_iter().collect_vec();
+        external_plugins.sort_unstable_by(|a, b| {
+            a.specifier
+                .cmp(&b.specifier)
+                .then_with(|| a.name.cmp(&b.name))
+                .then_with(|| a.config_dir.cmp(&b.config_dir))
+        });
+
         // Only attempt to load external JS plugins when external plugins are enabled,
         // i.e., when the external JS linter is available/initialized. If the store is
         // disabled, configs that reference external plugins are accepted but the plugins
@@ -224,7 +259,7 @@ impl ConfigStoreBuilder {
         if !external_plugins.is_empty() && external_plugin_store.is_enabled() {
             let Some(external_linter) = external_linter else {
                 #[expect(clippy::missing_panics_doc, reason = "infallible")]
-                let first_plugin = external_plugins.iter().next().unwrap();
+                let first_plugin = external_plugins.first().unwrap();
                 return Err(ConfigBuilderError::NoExternalLinterConfigured {
                     plugin_specifier: first_plugin.specifier.clone(),
                 });
@@ -235,7 +270,7 @@ impl ConfigStoreBuilder {
                 ..Default::default()
             });
 
-            for entry in &external_plugins {
+            for entry in external_plugins {
                 Self::load_external_plugin(
                     &entry.config_dir,
                     &entry.specifier,
@@ -256,7 +291,7 @@ impl ConfigStoreBuilder {
         let mut categories = oxlintrc.categories.clone();
 
         if !start_empty {
-            categories.insert(RuleCategory::Correctness, AllowWarnDeny::Warn);
+            categories.entry(RuleCategory::Correctness).or_insert(AllowWarnDeny::Warn);
         }
 
         let config = LintConfig {
@@ -314,11 +349,6 @@ impl ConfigStoreBuilder {
         self
     }
 
-    pub fn with_categories(mut self, categories: OxlintCategories) -> Self {
-        self.categories = categories;
-        self
-    }
-
     /// Enable or disable a set of plugins, leaving unrelated plugins alone.
     ///
     /// See [`ConfigStoreBuilder::with_builtin_plugins`] for details on how plugin configuration affects your
@@ -362,12 +392,6 @@ impl ConfigStoreBuilder {
     #[cfg(test)]
     pub(crate) fn with_rule(mut self, rule: RuleEnum, severity: AllowWarnDeny) -> Self {
         self.rules.insert(rule, severity);
-        self
-    }
-
-    /// Appends an override to the end of the current list of overrides.
-    pub fn with_overrides<O: IntoIterator<Item = OxlintOverride>>(mut self, overrides: O) -> Self {
-        self.overrides.extend(overrides);
         self
     }
 
@@ -419,7 +443,7 @@ impl ConfigStoreBuilder {
     }
 
     fn get_all_rules_for_plugins(&self, override_plugins: Option<LintPlugins>) -> Vec<RuleEnum> {
-        let mut builtin_plugins = if let Some(override_plugins) = override_plugins {
+        let builtin_plugins = if let Some(override_plugins) = override_plugins {
             self.config.plugins | override_plugins
         } else {
             self.config.plugins
@@ -428,11 +452,6 @@ impl ConfigStoreBuilder {
         if builtin_plugins.is_all() {
             RULES.clone()
         } else {
-            // we need to include some jest rules when vitest is enabled, see [`VITEST_COMPATIBLE_JEST_RULES`]
-            if builtin_plugins.contains(LintPlugins::VITEST) {
-                builtin_plugins |= LintPlugins::JEST;
-            }
-
             RULES
                 .iter()
                 .filter(|rule| {
@@ -476,12 +495,7 @@ impl ConfigStoreBuilder {
         // When a plugin gets disabled before build(), rules for that plugin aren't removed until
         // with_filters() gets called. If the user never calls it, those now-undesired rules need
         // to be taken out.
-        let mut plugins = self.plugins();
-
-        // Apply the same Vitest->Jest logic as in get_all_rules()
-        if plugins.contains(LintPlugins::VITEST) {
-            plugins |= LintPlugins::JEST;
-        }
+        let plugins = self.plugins();
 
         let overrides = std::mem::take(&mut self.overrides);
         let resolved_overrides = self.resolve_overrides(overrides, external_plugin_store)?;
@@ -532,7 +546,7 @@ impl ConfigStoreBuilder {
                 )?;
 
                 // Convert to vectors
-                builtin_rules.extend(rules_map.into_iter());
+                builtin_rules.extend(rules_map);
                 external_rules.extend(
                     external_rules_map
                         .into_iter()
@@ -541,6 +555,7 @@ impl ConfigStoreBuilder {
 
                 Ok::<_, Vec<OverrideRulesError>>(ResolvedOxlintOverride {
                     files: override_config.files,
+                    exclude_files: override_config.exclude_files,
                     env: override_config.env,
                     globals: override_config.globals,
                     plugins: override_config.plugins,
@@ -553,10 +568,7 @@ impl ConfigStoreBuilder {
     }
 
     /// Warn for all correctness rules in the given set of plugins.
-    fn warn_correctness(mut plugins: LintPlugins) -> FxHashMap<RuleEnum, AllowWarnDeny> {
-        if plugins.contains(LintPlugins::VITEST) {
-            plugins |= LintPlugins::JEST;
-        }
+    fn warn_correctness(plugins: LintPlugins) -> FxHashMap<RuleEnum, AllowWarnDeny> {
         RULES
             .iter()
             .filter(|rule| {
@@ -597,6 +609,12 @@ impl ConfigStoreBuilder {
             })
             .collect();
 
+        oxlintrc.plugins = Some(self.config.plugins);
+        oxlintrc.settings.clone_from(&self.config.settings);
+        oxlintrc.env.clone_from(&self.config.env);
+        oxlintrc.globals.clone_from(&self.config.globals);
+        oxlintrc.overrides.clone_from(&self.overrides);
+        oxlintrc.options = self.config.options.clone();
         oxlintrc.rules = OxlintRules::new(new_rules);
         serde_json::to_string_pretty(&oxlintrc).unwrap()
     }
@@ -627,14 +645,13 @@ impl ConfigStoreBuilder {
         // Use alias if provided.
         // Otherwise use package name if the specifier is not relative, and normalize it.
         let plugin_name = if let Some(alias_name) = alias {
-            // Check that the alias is valid - does not start with `eslint-plugin-` etc
+            // Check that the alias is valid - does not start with common plugin package prefixes.
             if !is_normal_plugin_name(alias_name) {
                 return Err(ConfigBuilderError::PluginLoadFailed {
                     plugin_specifier: plugin_specifier.to_string(),
                     error: format!(
                         "Plugin alias '{alias_name}' is not valid. \
-                         Must not start with 'eslint-plugin-', or be of form '@scope/eslint-plugin' \
-                         or '@scope/eslint-plugin-name'."
+                         Strip plugin package prefixes, e.g. use 'foo' or '@scope/foo'."
                     ),
                 });
             }
@@ -709,6 +726,18 @@ fn get_name(plugin_name: &str, rule_name: &str) -> CompactStr {
     }
 }
 
+/// Validate each entry of `ignorePatterns`; see [`oxc_config::validate_ignore_pattern`].
+fn validate_ignore_patterns(oxlintrc: &Oxlintrc) -> Result<(), ConfigBuilderError> {
+    oxlintrc
+        .ignore_patterns
+        .iter()
+        .try_for_each(|pattern| oxc_config::validate_ignore_pattern(pattern))
+        .map_err(|reason| ConfigBuilderError::InvalidConfigFile {
+            file: oxlintrc.path.display().to_string(),
+            reason,
+        })
+}
+
 impl Debug for ConfigStoreBuilder {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ConfigStoreBuilder")
@@ -719,7 +748,7 @@ impl Debug for ConfigStoreBuilder {
 }
 
 /// An error that can occur while building a [`Config`] from an [`Oxlintrc`].
-#[derive(Eq, PartialEq, Debug, Clone)]
+#[derive(Eq, PartialEq, Clone)]
 pub enum ConfigBuilderError {
     /// There were unknown rules that could not be matched to any known plugins/rules.
     UnknownRules {
@@ -751,6 +780,21 @@ pub enum ConfigBuilderError {
         /// The errors that occurred
         errors: Vec<OverrideRulesError>,
     },
+    /// An unsupported named config was found in `extends`.
+    UnsupportedNamedConfig {
+        name: String,
+    },
+    /// A cycle was found while resolving configuration files referenced by `extends`.
+    CircularExtends {
+        cycle: Vec<PathBuf>,
+        referenced_from: Vec<PathBuf>,
+    },
+}
+
+impl Debug for ConfigBuilderError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        Display::fmt(self, f)
+    }
 }
 
 impl Display for ConfigBuilderError {
@@ -820,6 +864,27 @@ impl Display for ConfigBuilderError {
                 }
                 Ok(())
             }
+            ConfigBuilderError::UnsupportedNamedConfig { name } => {
+                write!(
+                    f,
+                    "Unsupported named config \"{name}\" in extends. \
+                     Oxlint does not support ESLint shared configs. \
+                     If this is a file path, add a file extension (e.g., \".json\")."
+                )
+            }
+            ConfigBuilderError::CircularExtends { cycle, referenced_from } => {
+                writeln!(f, "Circular oxlint config extends detected:")?;
+                write!(f, "{}", cycle.iter().map(|path| path.display()).join("\n -> "))?;
+
+                if referenced_from.len() > 1 {
+                    write!(
+                        f,
+                        "\n\nReferenced from:\n{}",
+                        referenced_from.iter().map(|path| path.display()).join("\n -> ")
+                    )?;
+                }
+                Ok(())
+            }
         }
     }
 }
@@ -835,6 +900,8 @@ impl From<Vec<OverrideRulesError>> for ConfigBuilderError {
 #[cfg(test)]
 mod test {
     use std::path::PathBuf;
+
+    use cow_utils::CowUtils;
 
     use super::*;
 
@@ -863,6 +930,29 @@ mod test {
         let builder = ConfigStoreBuilder::empty();
         assert_eq!(builder.plugins(), LintPlugins::default());
         assert!(builder.rules.is_empty());
+    }
+
+    #[test]
+    fn test_ignore_patterns_with_parent_reference_rejected() {
+        fn from_ignore_pattern(pattern: &str) -> Result<ConfigStoreBuilder, ConfigBuilderError> {
+            let oxlintrc =
+                Oxlintrc { ignore_patterns: vec![pattern.to_string()], ..Oxlintrc::default() };
+            ConfigStoreBuilder::from_oxlintrc(
+                true,
+                oxlintrc,
+                None,
+                &mut ExternalPluginStore::default(),
+                None,
+            )
+        }
+
+        // Pattern-level cases are covered by `oxc_config::validate_ignore_pattern` tests;
+        // this only checks that `from_oxlintrc` rejects a config containing one.
+        assert!(matches!(
+            from_ignore_pattern("../src"),
+            Err(ConfigBuilderError::InvalidConfigFile { .. })
+        ));
+        assert!(from_ignore_pattern("dist").is_ok());
     }
 
     #[test]
@@ -1142,6 +1232,50 @@ mod test {
     }
 
     #[test]
+    // https://github.com/oxc-project/oxc/issues/19409
+    fn test_correctness_category_off_applies_to_override_plugins() {
+        let oxlintrc: Oxlintrc = serde_json::from_str(
+            r#"
+            {
+                "plugins": ["typescript"],
+                "categories": { "correctness": "off" },
+                "overrides": [
+                    {
+                        "files": ["subdir/**/*.ts"],
+                        "plugins": ["promise"],
+                        "rules": { "typescript/no-inferrable-types": "error" }
+                    }
+                ]
+            }
+            "#,
+        )
+        .unwrap();
+
+        let mut external_plugin_store = ExternalPluginStore::default();
+        let builder = ConfigStoreBuilder::from_oxlintrc(
+            false,
+            oxlintrc,
+            None,
+            &mut external_plugin_store,
+            None,
+        )
+        .unwrap();
+        let config = builder.build(&mut external_plugin_store).unwrap();
+
+        let resolved = config.apply_overrides(Path::new("subdir/foo.ts"));
+
+        assert!(
+            resolved.config.plugins.contains(LintPlugins::PROMISE),
+            "override should enable the promise plugin"
+        );
+        assert!(resolved.rules.len() == 1, "only rules from the override should be applied");
+        let (rule, severity) = &resolved.rules[0];
+        assert_eq!(rule.plugin_name(), "typescript");
+        assert_eq!(rule.name(), "no-inferrable-types");
+        assert_eq!(*severity, AllowWarnDeny::Deny);
+    }
+
+    #[test]
     fn test_extends_rules_single() {
         let base_config = config_store_from_path("fixtures/extends_config/rules_config.json");
         let derived_config = config_store_from_str(
@@ -1301,6 +1435,38 @@ mod test {
     }
 
     #[test]
+    fn test_extends_circular() {
+        let path = PathBuf::from("fixtures/extends_config/circular/root.json");
+        let mut external_plugin_store = ExternalPluginStore::default();
+        let error = ConfigStoreBuilder::from_oxlintrc(
+            true,
+            Oxlintrc::from_file(&path).unwrap(),
+            None,
+            &mut external_plugin_store,
+            None,
+        )
+        .unwrap_err();
+
+        let ConfigBuilderError::CircularExtends { cycle, referenced_from } = &error else {
+            panic!("expected circular extends error, got {error:?}");
+        };
+        assert_eq!(
+            cycle.iter().filter_map(|path| path.file_name()).collect::<Vec<_>>(),
+            ["a.json", "b.json", "a.json"]
+        );
+        assert_eq!(
+            referenced_from.iter().filter_map(|path| path.file_name()).collect::<Vec<_>>(),
+            ["root.json", "a.json"]
+        );
+
+        let cwd = std::env::current_dir().unwrap().canonicalize().unwrap();
+        let message = error.to_string();
+        let message = message.cow_replace(cwd.to_str().unwrap(), "<cwd>").into_owned();
+        let message = message.cow_replace('\\', "/");
+        insta::assert_snapshot!("circular_extends_error", message);
+    }
+
+    #[test]
     fn test_extends_plugins() {
         // Test 1: Default plugins when none are specified
         let default_config = config_store_from_str(
@@ -1324,10 +1490,13 @@ mod test {
         assert_eq!(parent_config.plugins(), LintPlugins::REACT | LintPlugins::TYPESCRIPT);
 
         // Test 3: Child config that extends parent without specifying plugins
-        // Should inherit parent's plugins
+        // Should inherit parent's plugins and apply the default plugins from the child config
         let child_no_plugins_config =
             config_store_from_path("fixtures/extends_config/plugins/child_no_plugins.json");
-        assert_eq!(child_no_plugins_config.plugins(), LintPlugins::REACT | LintPlugins::TYPESCRIPT);
+        assert_eq!(
+            child_no_plugins_config.plugins(),
+            LintPlugins::REACT | LintPlugins::TYPESCRIPT | LintPlugins::OXC | LintPlugins::UNICORN
+        );
 
         // Test 4: Child config that extends parent and specifies additional plugins
         // Should have parent's plugins plus its own
@@ -1387,7 +1556,8 @@ mod test {
                 "extends": [
                     "fixtures/extends_config/plugins/jest.json",
                     "fixtures/extends_config/plugins/react.json"
-                ]
+                ],
+                "plugins": []
             }
             "#,
         );
@@ -1395,6 +1565,15 @@ mod test {
             plugin_config.plugins(),
             extends_plugin_config.plugins(),
             "Extending a config with a plugin is the same as adding it directly"
+        );
+
+        // Test 9: Child Config with plugins extends parent with default plugins (not specified by user)
+        let child_with_plugins_parent_no_plugin_config = config_store_from_path(
+            "fixtures/extends_config/plugins/child_with_plugins_parent_default_plugin.json",
+        );
+        assert_eq!(
+            child_with_plugins_parent_no_plugin_config.plugins(),
+            LintPlugins::JEST | LintPlugins::UNICORN | LintPlugins::TYPESCRIPT | LintPlugins::OXC
         );
     }
 
@@ -1447,6 +1626,15 @@ mod test {
             Some(AllowWarnDeny::Deny)
         );
 
+        let config =
+            config_store_from_str(r#"{ "options": {"respectEslintDisableDirectives": false } }"#);
+        assert_eq!(config.base.config.options.respect_eslint_disable_directives, Some(false));
+
+        let config = config_store_from_str(
+            r#"{ "extends": ["fixtures/extends_config/options/respect_eslint_disable_directives_false.json"] }"#,
+        );
+        assert_eq!(config.base.config.options.respect_eslint_disable_directives, Some(false));
+
         let config = config_store_from_str(
             r#"{ "extends": ["fixtures/extends_config/options/deny_warnings_true.json"] }"#,
         );
@@ -1489,23 +1677,35 @@ mod test {
     }
 
     #[test]
-    fn test_not_extends_named_configs() {
-        // For now, test that extending named configs is just ignored
-        let config = config_store_from_str(
-            r#"
-        {
-            "extends": [
-                "next/core-web-vitals",
-                "eslint:recommended",
-                "plugin:@typescript-eslint/strict-type-checked",
-                "prettier",
-                "plugin:unicorn/recommended"
-            ]
+    fn test_errors_on_named_configs() {
+        let cases = [
+            ("prettier", r#"{ "extends": ["prettier"] }"#),
+            ("this-does-not-exist", r#"{ "extends": ["this-does-not-exist"] }"#),
+            ("eslint:recommended", r#"{ "extends": ["eslint:recommended"] }"#),
+            ("plugin:unicorn/recommended", r#"{ "extends": ["plugin:unicorn/recommended"] }"#),
+            ("next/core-web-vitals", r#"{ "extends": ["next/core-web-vitals"] }"#),
+        ];
+
+        for (name, json) in cases {
+            let mut external_plugin_store = ExternalPluginStore::default();
+            let result = ConfigStoreBuilder::from_oxlintrc(
+                true,
+                serde_json::from_str(json).unwrap(),
+                None,
+                &mut external_plugin_store,
+                None,
+            );
+            let err = result.unwrap_err();
+            assert!(
+                matches!(err, ConfigBuilderError::UnsupportedNamedConfig { .. }),
+                "expected UnsupportedNamedConfig for \"{name}\", got: {err}"
+            );
+            let err_msg = err.to_string();
+            assert!(
+                err_msg.contains(name),
+                "error message should contain \"{name}\", got: {err_msg}"
+            );
         }
-        "#,
-        );
-        assert_eq!(config.plugins(), LintPlugins::default());
-        assert!(config.rules().is_empty());
     }
 
     #[test]

@@ -1,11 +1,11 @@
 use oxc_ast::{
     AstKind,
     ast::{
-        ArrowFunctionExpression, AwaitExpression, ForOfStatement, Function, FunctionType,
-        MethodDefinition, ObjectProperty, PropertyKey,
+        ArrowFunctionExpression, AwaitExpression, ForOfStatement, Function, FunctionBody,
+        FunctionType, MethodDefinition, ObjectProperty, PropertyKey,
     },
 };
-use oxc_ast_visit::{Visit, walk::walk_for_of_statement};
+use oxc_ast_visit::{VisitJs, walk_js::walk_for_of_statement};
 use oxc_diagnostics::OxcDiagnostic;
 use oxc_macros::declare_oxc_lint;
 use oxc_semantic::ScopeFlags;
@@ -80,83 +80,103 @@ declare_oxc_lint!(
     RequireAwait,
     eslint,
     pedantic,
-    fix_dangerous
+    fix_dangerous,
+    version = "0.4.2",
+    short_description = "Disallow async functions which have no `await` expression.",
 );
 
 impl Rule for RequireAwait {
     fn run<'a>(&self, node: &AstNode<'a>, ctx: &LintContext<'a>) {
-        let AstKind::FunctionBody(body) = node.kind() else {
+        match node.kind() {
+            AstKind::ArrowFunctionExpression(func) => Self::check_arrow_expression(func, ctx),
+            AstKind::FunctionBody(body) => Self::check_function_body(body, node, ctx),
+            _ => {}
+        }
+    }
+}
+
+impl RequireAwait {
+    fn check_arrow_expression(func: &ArrowFunctionExpression, ctx: &LintContext) {
+        if !func.r#async {
             return;
-        };
+        }
+        let Some(expression) = func.get_expression() else { return };
+        let mut finder = AwaitFinder { found: false };
+        finder.visit_expression(expression);
+        if !finder.found {
+            let need_delete_span = get_delete_span(ctx, func.span.start, func.span.end);
+            ctx.diagnostic_with_dangerous_fix(require_await_diagnostic(func.span), |fixer| {
+                fixer.delete_range(need_delete_span)
+            });
+        }
+    }
+
+    fn check_function_body<'a>(body: &FunctionBody<'a>, node: &AstNode<'a>, ctx: &LintContext<'a>) {
         if body.is_empty() {
             return;
         }
         let parent = ctx.nodes().parent_node(node.id());
 
         match parent.kind() {
-            AstKind::Function(func) => {
-                if func.r#async && !func.generator {
-                    let mut finder = AwaitFinder { found: false };
-                    finder.visit_function_body(body);
-                    if !finder.found {
-                        if matches!(func.r#type, FunctionType::FunctionDeclaration) {
-                            let need_delete_span = get_delete_span(ctx, func.span.start);
+            AstKind::Function(func) if func.r#async && !func.generator => {
+                let mut finder = AwaitFinder { found: false };
+                finder.visit_function_body(body);
+                if !finder.found {
+                    if matches!(func.r#type, FunctionType::FunctionDeclaration) {
+                        let need_delete_span = get_delete_span(ctx, func.span.start, func.span.end);
+                        ctx.diagnostic_with_dangerous_fix(
+                            require_await_diagnostic(
+                                func.id.as_ref().map_or(func.span, |ident| ident.span),
+                            ),
+                            |fixer| fixer.delete_range(need_delete_span),
+                        );
+                    } else {
+                        let parent_parent_node = ctx.nodes().parent_kind(parent.id());
+                        if let AstKind::ObjectProperty(ObjectProperty { span, key, .. })
+                        | AstKind::MethodDefinition(MethodDefinition { span, key, .. }) =
+                            parent_parent_node
+                        {
+                            let need_delete_span = get_delete_span(
+                                ctx,
+                                if matches!(parent_parent_node, AstKind::ObjectProperty(x) if !x.method)
+                                {
+                                    func.span.start
+                                } else {
+                                    span.start
+                                },
+                                func.span.end,
+                            );
+                            let check_span = if matches!(key, PropertyKey::StaticIdentifier(_)) {
+                                key.span()
+                            } else {
+                                func.span
+                            };
+                            ctx.diagnostic_with_dangerous_fix(
+                                require_await_diagnostic(check_span),
+                                |fixer| fixer.delete_range(need_delete_span),
+                            );
+                        } else {
+                            let need_delete_span =
+                                get_delete_span(ctx, func.span.start, func.span.end);
                             ctx.diagnostic_with_dangerous_fix(
                                 require_await_diagnostic(
                                     func.id.as_ref().map_or(func.span, |ident| ident.span),
                                 ),
                                 |fixer| fixer.delete_range(need_delete_span),
                             );
-                        } else {
-                            let parent_parent_node = ctx.nodes().parent_kind(parent.id());
-                            if let AstKind::ObjectProperty(ObjectProperty { span, key, .. })
-                            | AstKind::MethodDefinition(MethodDefinition {
-                                span, key, ..
-                            }) = parent_parent_node
-                            {
-                                let need_delete_span = get_delete_span(
-                                    ctx,
-                                    if matches!(parent_parent_node, AstKind::ObjectProperty(x) if !x.method)
-                                    {
-                                        func.span.start
-                                    } else {
-                                        span.start
-                                    },
-                                );
-                                let check_span = if matches!(key, PropertyKey::StaticIdentifier(_))
-                                {
-                                    key.span()
-                                } else {
-                                    func.span
-                                };
-                                ctx.diagnostic_with_dangerous_fix(
-                                    require_await_diagnostic(check_span),
-                                    |fixer| fixer.delete_range(need_delete_span),
-                                );
-                            } else {
-                                let need_delete_span = get_delete_span(ctx, func.span.start);
-                                ctx.diagnostic_with_dangerous_fix(
-                                    require_await_diagnostic(
-                                        func.id.as_ref().map_or(func.span, |ident| ident.span),
-                                    ),
-                                    |fixer| fixer.delete_range(need_delete_span),
-                                );
-                            }
                         }
                     }
                 }
             }
-            AstKind::ArrowFunctionExpression(func) => {
-                if func.r#async {
-                    let mut finder = AwaitFinder { found: false };
-                    finder.visit_function_body(body);
-                    if !finder.found {
-                        let need_delete_span = get_delete_span(ctx, func.span.start);
-                        ctx.diagnostic_with_dangerous_fix(
-                            require_await_diagnostic(func.span),
-                            |fixer| fixer.delete_range(need_delete_span),
-                        );
-                    }
+            AstKind::ArrowFunctionExpression(func) if func.r#async => {
+                let mut finder = AwaitFinder { found: false };
+                finder.visit_function_body(body);
+                if !finder.found {
+                    let need_delete_span = get_delete_span(ctx, func.span.start, func.span.end);
+                    ctx.diagnostic_with_dangerous_fix(
+                        require_await_diagnostic(func.span),
+                        |fixer| fixer.delete_range(need_delete_span),
+                    );
                 }
             }
             _ => {}
@@ -164,9 +184,11 @@ impl Rule for RequireAwait {
     }
 }
 
-fn get_delete_span(ctx: &LintContext, start: u32) -> Span {
+fn get_delete_span(ctx: &LintContext, start: u32, end: u32) -> Span {
     // Find the position of "async" keyword from the start position
-    let async_pos = ctx.find_next_token_from(start, "async").unwrap_or(0);
+    let async_pos = ctx
+        .find_next_token_within(start, end, "async")
+        .expect("async function span must contain the `async` keyword");
     let async_start = start + async_pos;
     let async_end = async_start + 5;
     let async_key_span = Span::new(async_start, async_end);
@@ -195,7 +217,7 @@ struct AwaitFinder {
     found: bool,
 }
 
-impl<'a> Visit<'a> for AwaitFinder {
+impl<'a> VisitJs<'a> for AwaitFinder {
     fn visit_await_expression(&mut self, _expr: &AwaitExpression) {
         if self.found {
             return;

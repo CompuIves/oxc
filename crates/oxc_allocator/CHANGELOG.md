@@ -4,6 +4,197 @@ All notable changes to this package will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0).
 
+## [0.147.0] - 2026-08-24
+
+### 🐛 Bug Fixes
+
+- 2cde1f6 rust: Address nightly deprecations (#25998) (Boshen)
+
+## [0.144.0] - 2026-08-10
+
+### 🚀 Features
+
+- b3c1b30 allocator: Add `ArenaVec::push_mut` (#25338) (overlookmotel)
+
+### 📚 Documentation
+
+- fe111eb allocator: Improve doc comments for `Arena` methods (#24922) (overlookmotel)
+
+## [0.143.0] - 2026-08-03
+
+### 💥 BREAKING CHANGES
+
+- f0a41c8 allocator: [**BREAKING**] Remove `ArenaBox::dangling` method (#25236) (overlookmotel)
+
+### 🚀 Features
+
+- 3c8312e allocator: Make `Box` `Send` + `Sync` when the type it contains is (#25242) (overlookmotel)
+
+## [0.141.0] - 2026-07-20
+
+### 🚀 Features
+
+- f08b152 allocator: Implement `FromIn` for array to `Vec` conversion (#24620) (overlookmotel)
+- 2338c13 track-memory-allocations: Track heap deallocs, alloc bytes, and peak growth (#24619) (Boshen)
+
+### 🐛 Bug Fixes
+
+- 40c2f43 allocator: `Vec::from_array_in` do not allocate zero-length array (#24628) (overlookmotel)
+
+### ⚡ Performance
+
+- c35d8ab allocator: Mark `ReplaceWith` panic path cold (#24515) (camc314)
+- ba65790 semantic, allocator: Branchless `clone_in` for semantic IDs (#24564) (overlookmotel)
+
+## [0.140.0] - 2026-07-13
+
+### 🐛 Bug Fixes
+
+- 460176a track-memory-allocations: Exclude arena chunks from Sys allocs (#24292) (Dunqing)
+
+### ⚡ Performance
+
+- 3ff0234 allocator: Remove `unwrap` from `ReplaceWith` (#24365) (overlookmotel)
+
+## [0.139.0] - 2026-07-06
+
+### 🚀 Features
+
+- 7db7a29 allocator: Add `ReplaceWith` trait (#24012) (overlookmotel)
+
+### 📚 Documentation
+
+- 30d17f5 allocator: Clarify docs for `TakeIn::take_in_box` (#24093) (overlookmotel)
+
+## [0.138.0] - 2026-06-29
+
+### 💥 BREAKING CHANGES
+
+- 36009dd allocator: [**BREAKING**] `GetAllocator::allocator` take `&self` (#23676) (overlookmotel)
+- bd74f9d allocator: [**BREAKING**] Rename `AllocatorAccessor` trait to `GetAllocator` (#23675) (overlookmotel)
+
+### 🚀 Features
+
+- fcbf993 allocator: Add `Vec::from_value_in` method (#23718) (overlookmotel)
+- 989ddb7 allocator: Add `Vec::from_box_in` method (#23717) (overlookmotel)
+- 9d1aa7f allocator: Improve `PartialEq` for `Vec` (#23716) (overlookmotel)
+
+### 🐛 Bug Fixes
+
+- 0b3021f allocator: Remove `Vec::from_box_in` (#23873) (overlookmotel)
+- 7231d55 allocator: Fix unsound lifetime extension in `Box::new_in` (#23685) (overlookmotel)
+
+## [0.137.0] - 2026-06-18
+
+### 💥 BREAKING CHANGES
+
+- 7a76cd3 estree: [**BREAKING**] Make whether to include TS fields a runtime option (#23574) (overlookmotel)
+
+### ⚡ Performance
+
+- bcb3894 minifier: Incremental scoping refresh, delete LiveUsageCollector (#23197) (Dunqing)
+
+## [0.136.0] - 2026-06-15
+
+### 📚 Documentation
+
+- 65b6d7a allocator: Fix memory leaks in `Arena` examples (#23257) (overlookmotel)
+
+## [0.131.0] - 2026-05-15
+
+### 🐛 Bug Fixes
+
+- 4ab57eb allocator: Fixed-size allocators use `VirtualAlloc` on Windows (#22124) (overlookmotel)
+- 66d77eb allocator: Fix segfault on Linux MUSL with fixed-size allocators (#22388) (overlookmotel)
+
+### ⚡ Performance
+
+- 73a9043 allocator/bitset: Avoid temp heap `String` allocation (#22403) (camc314)
+
+## [0.129.0] - 2026-05-05
+
+### 💥 BREAKING CHANGES
+
+- 0ffbe0d allocator: [**BREAKING**] Remove `Allocator::end_ptr` method (#21871) (overlookmotel)
+
+### ⚡ Performance
+
+- 0bf0cb9 allocator: Per-platform `Arena::new_fixed_size` implementations (#22088) (overlookmotel)
+
+### 📚 Documentation
+
+- 62ec410 allocator: Correct doc comment for `Allocator::from_raw_parts` (#22093) (overlookmotel)
+- 3e152c6 allocator: Correct typos in comments (#22092) (overlookmotel)
+- e220855 allocator: Correct doc comment for `Allocator::set_cursor_ptr` (#21866) (overlookmotel)
+
+## [0.128.0] - 2026-04-27
+
+### 🚀 Features
+
+- b738a39 allocator: Add `Allocator::cursor_ptr` method (#21773) (overlookmotel)
+
+### 🐛 Bug Fixes
+
+- 674dfac allocator: `Arena` retry allocation when chunk size approaches maximum (#21777) (overlookmotel)
+- f130cc0 allocator: Fix arithmetic overflow in `Arena::new_chunk_memory_details` (#21745) (overlookmotel)
+- b9bf239 allocator: Fix UB in `Arena::grow_zeroed` (#21739) (overlookmotel)
+- d2b9389 allocator: Clippy warning when building without `testing` feature (#21681) (camc314)
+
+### ⚡ Performance
+
+- 0044392 allocator: Reduce branches when allocating new chunk (#21776) (overlookmotel)
+- 7896bd0 allocator: `Allocator::used_bytes` do not use chunk iterator (#21771) (overlookmotel)
+- a5c562f allocator: Remove check in `Arena::new_chunk_memory_details` (#21750) (overlookmotel)
+- 35bbe1f allocator: `Arena` use unchecked size round up where guaranteed no overflow (#21743) (overlookmotel)
+- ffe229b allocator: Remove unnecessary check from `Arena::try_alloc_layout_slow_impl` (#21732) (overlookmotel)
+- 72fece5 allocator: Use `NonNull::offset_from_unsigned` in `Arena::chunk_capacity` (#21731) (overlookmotel)
+- 1b58029 allocator: Move code into cold path in `Arena::alloc_layout` (#21622) (overlookmotel)
+- 3cf7cef allocator: Reduce instructions on allocation hot path (#21510) (overlookmotel)
+
+### 📚 Documentation
+
+- 93b7dbd allocator: Improve doc comments for `ChunkFooter` (#21733) (overlookmotel)
+
+## [0.127.0] - 2026-04-20
+
+### ⚡ Performance
+
+- be2b392 allocator: Store pointers directly in `Arena` (#21483) (overlookmotel)
+
+## [0.126.0] - 2026-04-15
+
+### 💥 BREAKING CHANGES
+
+- 24fb7eb allocator: [**BREAKING**] Rename `Box` and `Vec` methods (#21395) (overlookmotel)
+
+### 📚 Documentation
+
+- c5b19bb allocator: Reformat comments in `Arena` (#21448) (overlookmotel)
+- 922cbee allocator: Remove references to "bump" from comments (#21397) (overlookmotel)
+
+## [0.125.0] - 2026-04-13
+
+### 🐛 Bug Fixes
+
+- b43250a allocator: Move allocation tracking into `Bump` (#21342) (overlookmotel)
+- 36f505f allocator: `StringBuilder` use `Allocator::alloc_layout` (#21340) (overlookmotel)
+- 7a08a6f allocator: Fix allocation counting in `Allocator::alloc_concat_strs_array` (#21336) (overlookmotel)
+- bd8bd39 allocator: Remove unsafe hacks from `from_raw_parts` methods (#21283) (overlookmotel)
+- 8f4c340 allocator: Remove dangerous pointer const to mut cast (#21279) (overlookmotel)
+
+### ⚡ Performance
+
+- c3ca6f6 allocator: `StringBuilder::from_strs_array_in` check for 0 length earlier (#21338) (overlookmotel)
+- c2422bb allocator: `Allocator::alloc_concat_strs_array` check for 0 length earlier (#21337) (overlookmotel)
+- 04b0fdc allocator: Mark `Allocator::alloc_layout` as `#[inline(always)]` (#21335) (overlookmotel)
+- 17aee9e allocator: Use `offset_from_unsigned` in `ChunkFooter::as_raw_parts` (#21280) (overlookmotel)
+
+### 📚 Documentation
+
+- f5e1845 allocator: Upgrade headers in doc comments for `Bump` (#21263) (overlookmotel)
+- 2870174 allocator: Upper case `SAFETY` in comments (#21253) (overlookmotel)
+- dd47359 allocator: Add doc comments for panics and errors (#21230) (overlookmotel)
+
 ## [0.124.0] - 2026-04-06
 
 ### 🐛 Bug Fixes

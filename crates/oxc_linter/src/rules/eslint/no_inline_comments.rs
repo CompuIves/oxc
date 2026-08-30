@@ -79,12 +79,14 @@ declare_oxc_lint!(
     NoInlineComments,
     eslint,
     pedantic,
-    config = NoInlineCommentsConfig
+    config = NoInlineCommentsConfig,
+    version = "1.34.0",
+    short_description = "Disallows comments on the same line as code.",
 );
 
 impl Rule for NoInlineComments {
     fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
-        serde_json::from_value::<DefaultRuleConfig<Self>>(value).map(DefaultRuleConfig::into_inner)
+        DefaultRuleConfig::<Self>::from_value(value).map(DefaultRuleConfig::into_inner)
     }
 
     fn run_once(&self, ctx: &LintContext) {

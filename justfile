@@ -16,7 +16,7 @@ alias f := fix
 # Initialize the project by installing all necessary tools
 init:
   # Rust related init
-  cargo binstall watchexec-cli cargo-insta typos-cli cargo-shear@1.11.2 -y
+  cargo binstall watchexec-cli cargo-insta typos-cli cargo-shear@1.13.1 -y
   # Node.js related init
   pnpm install
 
@@ -47,30 +47,35 @@ ready:
   git status
 
 # Run cargo check
-check:
-  cargo ck
+check *args:
+  cargo ck {{args}}
 
 # Run all the tests
-test:
-  cargo test --all-features
+test *args:
+  cargo test --all-features {{args}}
 
 # Lint the whole project
-lint:
-  cargo lint -- --deny warnings
+[unix]
+lint *args:
+  CARGO_BUILD_WARNINGS=deny cargo lint {{args}}
+
+[windows]
+lint *args:
+  $Env:CARGO_BUILD_WARNINGS='deny'; cargo lint {{args}}
 
 # Format all files
 fmt:
-  -cargo shear --fix # remove all unused dependencies
+  -cargo shear --fix --check-test-targets # remove all unused dependencies
   cargo fmt
   node --run fmt
 
 [unix]
-doc:
-  RUSTDOCFLAGS='-D warnings' cargo doc --no-deps --document-private-items
+doc *args:
+  RUSTDOCFLAGS='-D warnings' cargo doc --no-deps --document-private-items --all-features {{args}}
 
 [windows]
-doc:
-  $Env:RUSTDOCFLAGS='-D warnings'; cargo doc --no-deps --document-private-items
+doc *args:
+  $Env:RUSTDOCFLAGS='-D warnings'; cargo doc --no-deps --document-private-items --all-features {{args}}
 
 # Fix all auto-fixable format and lint issues
 fix:
@@ -108,7 +113,6 @@ benchmark-one *args:
 coverage:
   cargo coverage
   cargo run -p oxc_transform_conformance -- --exec
-  cargo run -p oxc_prettier_conformance
 
 # Run Test262, Babel and TypeScript conformance suite
 conformance *args='':
@@ -171,6 +175,8 @@ watch-oxlint-node *args='':
 # Create a new lint rule for any plugin
 new-rule name plugin='eslint':
   cargo run -p rulegen {{name}} {{plugin}}
+  just linter-schema-json
+  just linter-config-ts
   just fmt
 
 # Update test cases for an existing lint rule from upstream
@@ -231,7 +237,7 @@ test-transform *args='':
 # Update transformer conformance test fixtures
 update-transformer-fixtures:
   cd tasks/coverage/babel; git reset --hard HEAD; git clean -f -q
-  node tasks/transform_conformance/update_fixtures.mjs
+  node tasks/transform_conformance/update_fixtures.ts
 
 # ==================== MINIFIER ====================
 
@@ -243,6 +249,10 @@ minsize:
 # Update memory allocation snapshots
 allocs:
   cargo allocs
+
+# Update linter timing snapshots
+lint-timings:
+  cargo lint-timings
 
 # Generate minifier size comparison
 minifier-diff:
@@ -279,6 +289,7 @@ website path:
   cargo run -p website_linter rules --rules-json {{path}}/.vitepress/data/rules.json --rule-docs {{path}}/src/docs/guide/usage/linter/rules --git-ref $(git rev-parse HEAD) --rule-count {{path}}/src/docs/guide/usage
   cargo run -p website_linter cli > {{path}}/src/docs/guide/usage/linter/generated-cli.md
   cargo run -p website_linter schema-markdown > {{path}}/src/docs/guide/usage/linter/generated-config.md
+  cargo run -p website_linter schema-markdown-lsp > {{path}}/src/docs/guide/usage/linter/generated-lsp-config.md
   cargo run -p website_formatter cli > {{path}}/src/docs/guide/usage/formatter/generated-cli.md
   cargo run -p website_formatter schema-markdown > {{path}}/src/docs/guide/usage/formatter/generated-config.md
 

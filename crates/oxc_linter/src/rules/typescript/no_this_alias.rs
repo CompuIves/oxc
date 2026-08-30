@@ -97,11 +97,13 @@ declare_oxc_lint!(
     typescript,
     correctness,
     config = NoThisAliasConfig,
+    version = "0.0.7",
+    short_description = "Disallow aliasing of `this`.",
 );
 
 impl Rule for NoThisAlias {
     fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
-        serde_json::from_value::<DefaultRuleConfig<Self>>(value).map(DefaultRuleConfig::into_inner)
+        DefaultRuleConfig::<Self>::from_value(value).map(DefaultRuleConfig::into_inner)
     }
 
     fn run<'a>(&self, node: &AstNode<'a>, ctx: &LintContext<'a>) {

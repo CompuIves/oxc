@@ -23,6 +23,8 @@ pub struct RuleTableRow {
     pub plugin: String,
     pub category: RuleCategory,
     #[cfg(feature = "ruledocs")]
+    pub version: &'static str,
+    #[cfg(feature = "ruledocs")]
     pub documentation: Option<&'static str>,
     #[cfg(feature = "ruledocs")]
     pub schema: Option<schemars::schema::Schema>,
@@ -60,6 +62,8 @@ impl RuleTable {
                 RuleTableRow {
                     name,
                     #[cfg(feature = "ruledocs")]
+                    version: rule.version(),
+                    #[cfg(feature = "ruledocs")]
                     documentation: rule.documentation(),
                     #[cfg(feature = "ruledocs")]
                     schema: generator.as_mut().and_then(|g| rule.schema(g)),
@@ -74,7 +78,7 @@ impl RuleTable {
 
         let total = rows.len();
 
-        rows.sort_by_key(|row| (row.plugin.clone(), row.name));
+        rows.sort_unstable_by(|a, b| a.plugin.cmp(&b.plugin).then(a.name.cmp(b.name)));
 
         let rules_with_fixes = rows.iter().filter(|r| r.autofix.has_fix()).count();
 

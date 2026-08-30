@@ -4,6 +4,141 @@ All notable changes to this package will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0).
 
+## [0.147.0] - 2026-08-24
+
+### 🐛 Bug Fixes
+
+- 8a9bdbd estree: Include decorators in `FormalParameterRest ` spans (#26021) (camc314)
+
+## [0.145.0] - 2026-08-18
+
+### 🐛 Bug Fixes
+
+- db44651 napi: Disable reuseWorker in browser bindings (#25640) (leaysgur)
+- 0c68b7f estree: Emit `decorators` on `FormalParameterRest` (#25582) (camc314)
+
+## [0.144.0] - 2026-08-10
+
+### 💥 BREAKING CHANGES
+
+- a33788e ast: [**BREAKING**] Group class heritage into `ClassHeritage` (#25360) (camc314)
+- 5c5cdcd ast: [**BREAKING**] Narrow `TSInterfaceHeritage::expression` to TSTypeName (#24360) (camc314)
+- 6be314f ast: [**BREAKING**] Remove duplicated `VariableDeclarator::kind` (#25319) (camc314)
+- 44fd320 ast: [**BREAKING**] Split TS external modules & Namespace Declarations (#25284) (camc314)
+
+### 🐛 Bug Fixes
+
+- 2a1058a napi: Omit parser header from WASI declarations (#25254) (camc314)
+
+## [0.143.0] - 2026-08-03
+
+### 💥 BREAKING CHANGES
+
+- 067da8c ast: [**BREAKING**] Store single parameter in `TSIndexSignature::parameter` (#25154) (camc314)
+- 1bdedd1 ast: [**BREAKING**] Introduce `ExportDeclaration`, `ExportFromDeclaration` (#25095) (camc314)
+- c917f20 ast: [**BREAKING**] Introduce `ArrowFunctionBody` enum (#24987) (camc314)
+
+## [0.142.0] - 2026-07-27
+
+### 🚀 Features
+
+- 11f5d1f ast_visit: Add `Utf8ToUtf16::convert_program_and_comments` (#24859) (overlookmotel)
+
+### 🐛 Bug Fixes
+
+- e80574f estree: Handle empty spans serializing `ImportMeta` and `NewTarget` (#24775) (overlookmotel)
+
+## [0.141.0] - 2026-07-20
+
+### 💥 BREAKING CHANGES
+
+- 54cc121 ast: [**BREAKING**] Split `MetaProperty` into `ImportMeta` and `NewTarget` (#24557) (camc314)
+
+### 🚀 Features
+
+- 7b045cd minfier: Drop last break from last switch case (#24673) (Armano)
+- 3d22307 parser: Add `ParseOptions::enable_ident_hashes` (#24491) (Boshen)
+
+## [0.138.0] - 2026-06-29
+
+### 🛡️ Security
+
+- 3cdd18f deps: Update npm packages (#23690) (renovate[bot])
+
+## [0.137.0] - 2026-06-18
+
+### 💥 BREAKING CHANGES
+
+- 7a76cd3 estree: [**BREAKING**] Make whether to include TS fields a runtime option (#23574) (overlookmotel)
+
+### 🚀 Features
+
+- 53509a8 minifier: Treeshake pure typed arrays and Set/Map array literals (#23469) (Dunqing)
+
+### 🐛 Bug Fixes
+
+- ae02b4e ci/parser: Use `minimal` for vitest reporter (#23457) (camc314)
+
+## [0.136.0] - 2026-06-15
+
+### ⚡ Performance
+
+- da1a6c6 diagnostics: Migrate to allocation-optimized oxc-miette (#23094) (Boshen)
+
+## [0.130.0] - 2026-05-11
+
+### 📚 Documentation
+
+- a4a6892 napi/parser: Correct code comment (#22278) (overlookmotel)
+
+## [0.129.0] - 2026-05-05
+
+### 🐛 Bug Fixes
+
+- 429deac napi/parser: Export `visitorKeys` from `wasm` entrypoint (#21996) (NullVoxPopuli)
+
+## [0.128.0] - 2026-04-27
+
+### 💥 BREAKING CHANGES
+
+- 502e804 ast: [**BREAKING**] Reduce size of `TSTypePredicateName` (#21711) (overlookmotel)
+- 5651539 ast: [**BREAKING**] Reduce size of `JSXExpression` (#21710) (overlookmotel)
+- c44e280 ast: [**BREAKING**] Reduce size of `ArrayExpressionElement` (#21709) (overlookmotel)
+
+### ⚡ Performance
+
+- 9fa362e napi/parser: Do not generate tokens except in tests (#21811) (overlookmotel)
+
+### 🛡️ Security
+
+- d8076c9 deps: Update rolldown (#21639) (renovate)
+
+## [0.127.0] - 2026-04-20
+
+### 🐛 Bug Fixes
+
+- 00fc136 codegen: Preserve coverage comments before object properties (#21312) (bab)
+
+## [0.125.0] - 2026-04-13
+
+### 💥 BREAKING CHANGES
+
+- 382958a span: [**BREAKING**] Remove re-exports of string types from `oxc_span` crate (#21246) (overlookmotel)
+
+### ⚡ Performance
+
+- addcd02 napi/parser, linter/plugins: Raw transfer deserializer for `Vec`s use shift instead of multiply where possible (#21142) (overlookmotel)
+- 3068ded napi/parser, linter/plugins: Shift before add when calculating positions in raw transfer deserializer (#21141) (overlookmotel)
+- eb400b8 napi/parser, linter/plugins: Remove `uint32` buffer view (#21140) (overlookmotel)
+- 2675085 napi/parser: Lazy deserialization use only `Int32Array` (#21139) (overlookmotel)
+- 5b35a53 napi/parser: Deserializing tokens use only `int32` array (#21138) (overlookmotel)
+- f163d10 parser: Tokens raw deserialization use `Int32Array` (#21137) (overlookmotel)
+- 7a86613 linter/plugins: Use `Int32Array`s for tokens and comments buffers (#21136) (overlookmotel)
+- 8c51121 napi/parser, linter/plugins: Raw transfer deserialize `Span` fields as `i32`s (#21135) (overlookmotel)
+- bc1bcdd napi/parser, linter/plugins: Inline trivial raw transfer field deserializers into node object definitions (#21134) (overlookmotel)
+- c0278ab napi/parser, linter/plugins: Use `Int32Array` in raw transfer deserializer (#21132) (overlookmotel)
+- 43482c7 linter/plugins: Use `>>` not `>>>` in binary search loops (#21129) (overlookmotel)
+
 ## [0.124.0] - 2026-04-06
 
 ### ⚡ Performance

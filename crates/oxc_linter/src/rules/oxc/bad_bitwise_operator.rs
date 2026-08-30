@@ -69,7 +69,9 @@ declare_oxc_lint!(
     BadBitwiseOperator,
     oxc,
     restriction, // Restricted because there are false positives for enum bitflags in TypeScript, e.g. in the vscode repo
-    suggestion
+    suggestion,
+    version = "0.0.3",
+    short_description = "This rule applies when bitwise operators are used where logical operators are expected.",
 );
 
 impl Rule for BadBitwiseOperator {
@@ -78,28 +80,34 @@ impl Rule for BadBitwiseOperator {
             AstKind::BinaryExpression(bin_expr) => {
                 if is_mistype_short_circuit(node) {
                     let start = bin_expr.left.span().end;
+                    let right_start = bin_expr.right.span().start;
                     ctx.diagnostic_with_suggestion(
                         bad_bitwise_operator_diagnostic("&", "&&", bin_expr.span),
-                        |fixer| Self::fix_binary_operator(fixer, start, "&", "&&", ctx),
+                        |fixer| {
+                            Self::fix_binary_operator(fixer, start, right_start, "&", "&&", ctx)
+                        },
                     );
                 } else if is_mistype_option_fallback(node) {
                     let start = bin_expr.left.span().end;
+                    let right_start = bin_expr.right.span().start;
                     ctx.diagnostic_with_suggestion(
                         bad_bitwise_operator_diagnostic("|", "||", bin_expr.span),
-                        |fixer| Self::fix_binary_operator(fixer, start, "|", "||", ctx),
+                        |fixer| {
+                            Self::fix_binary_operator(fixer, start, right_start, "|", "||", ctx)
+                        },
                     );
                 }
             }
-            AstKind::AssignmentExpression(assign_expr) => {
+            AstKind::AssignmentExpression(assign_expr)
                 if assign_expr.operator == AssignmentOperator::BitwiseOR
-                    && !is_numeric_expr(&assign_expr.right, true)
-                {
-                    let start = assign_expr.left.span().end;
-                    ctx.diagnostic_with_suggestion(
-                        bad_bitwise_or_operator_diagnostic(assign_expr.span),
-                        |fixer| Self::fix_assignment_operator(fixer, start, ctx),
-                    );
-                }
+                    && !is_numeric_expr(&assign_expr.right, true) =>
+            {
+                let start = assign_expr.left.span().end;
+                let right_start = assign_expr.right.span().start;
+                ctx.diagnostic_with_suggestion(
+                    bad_bitwise_or_operator_diagnostic(assign_expr.span),
+                    |fixer| Self::fix_assignment_operator(fixer, start, right_start, ctx),
+                );
             }
             _ => {}
         }
@@ -111,28 +119,31 @@ impl BadBitwiseOperator {
     fn fix_binary_operator(
         fixer: RuleFixer<'_, '_>,
         start: u32,
+        end: u32,
         bad: &str,
         good: &'static str,
         ctx: &LintContext<'_>,
     ) -> crate::fixer::RuleFix {
-        let Some(offset) = ctx.find_next_token_from(start, bad) else {
+        // The operator precedes the right operand; its start bounds out nested operators.
+        let Some(offset) = ctx.find_next_token_within(start, end, bad) else {
             return fixer.noop();
         };
         let op_start = start + offset;
-        let op_span = Span::new(op_start, op_start + bad.len() as u32);
+        let op_span = Span::sized(op_start, bad.len() as u32);
         fixer.replace(op_span, good)
     }
 
     fn fix_assignment_operator(
         fixer: RuleFixer<'_, '_>,
         start: u32,
+        end: u32,
         ctx: &LintContext<'_>,
     ) -> crate::fixer::RuleFix {
-        let Some(offset) = ctx.find_next_token_from(start, "|=") else {
+        let Some(offset) = ctx.find_next_token_within(start, end, "|=") else {
             return fixer.noop();
         };
         let op_start = start + offset;
-        let op_span = Span::new(op_start, op_start + 2);
+        let op_span = Span::sized(op_start, 2);
         fixer.replace(op_span, "||=")
     }
 }

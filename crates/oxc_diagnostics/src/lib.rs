@@ -1,8 +1,8 @@
 //! Error data types and utilities for handling/reporting them.
 //!
 //! The main type in this module is [`OxcDiagnostic`], which is used by all other oxc tools to
-//! report problems. It implements [miette]'s [`Diagnostic`] trait, making it compatible with other
-//! tooling you may be using.
+//! report problems. It implements this crate's [`Diagnostic`] trait and can be rendered by the
+//! included graphical and JSON report handlers.
 //!
 //! ```rust,ignore
 //! use oxc_diagnostics::{OxcDiagnostic, Result};
@@ -12,15 +12,13 @@
 //! }
 //! ```
 //!
-//! See the [miette] documentation for more information on how to interact with diagnostics.
-//!
 //! ## Reporting
 //! If you are writing your own tools that may produce their own errors, you can use
 //! [`DiagnosticService`] to format and render them to a string or a stream. It can receive
 //! [`Error`]s over a multi-producer, single consumer
 //!
 //! ```rust,ignore
-//! use std::{path::PathBuf, sync::Arc, thread};
+//! use std::{sync::Arc, thread};
 //! use oxc_diagnostics::{DiagnosticService, Error, OxcDiagnostic, GraphicalReportHandler, NamedSource};
 //!
 //! fn my_tool() -> Result<()> {
@@ -31,13 +29,12 @@
 //! let (mut service, sender) = DiagnosticService::new(Box::new(GraphicalReportHandler::new()));
 //!
 //! thread::spawn(move || {
-//!     let file_path_being_processed = PathBuf::from("file.txt");
-//!     let file_being_processed = Arc::new(NamedSource::new(file_path_being_processed.clone()));
+//!     let file_being_processed = Arc::new(NamedSource::new("file.txt", "source text"));
 //!
 //!     for _ in 0..10 {
 //!         if let Err(diagnostic) = my_tool() {
-//!             let report = diagnostic.with_source_code(Arc::clone(&file_being_processed));
-//!             sender.send((file_path_being_processed, vec![Error::new(e)]));
+//!             let error = diagnostic.with_source_code(Arc::clone(&file_being_processed));
+//!             sender.send(vec![error]);
 //!         }
 //!         // The service will stop when all senders are dropped
 //!     }
@@ -46,7 +43,11 @@
 //! service.run();
 //! ```
 
+mod handlers;
+mod named_source;
+mod protocol;
 mod service;
+mod source_impls;
 
 use std::{
     borrow::Cow,
@@ -57,14 +58,131 @@ use std::{
 pub mod reporter;
 
 pub use crate::service::{DiagnosticSender, DiagnosticService};
+pub use crate::{
+    handlers::{GraphicalReportHandler, GraphicalTheme, JSONReportHandler},
+    named_source::NamedSource,
+    protocol::{Diagnostic, Severity, SourceCode},
+};
+pub use oxc_span::LabeledSpan;
 
-pub type Error = miette::Error;
-pub type Severity = miette::Severity;
+pub type Error = Box<dyn Diagnostic + Send + Sync>;
 
 pub type Result<T> = std::result::Result<T, OxcDiagnostic>;
 
-use miette::{Diagnostic, SourceCode};
-pub use miette::{GraphicalReportHandler, GraphicalTheme, LabeledSpan, NamedSource};
+fn render(diagnostic: &dyn Diagnostic) -> String {
+    let mut output = String::new();
+    let _ = GraphicalReportHandler::new_themed(GraphicalTheme::none())
+        .with_width(80)
+        .with_links(false)
+        .render_report(&mut output, diagnostic);
+    output
+}
+
+/// Owned labels attached to an [`OxcDiagnostic`].
+///
+/// The common one- and two-label cases are stored inline.
+pub type Labels = smallvec::SmallVec<[LabeledSpan; 2]>;
+
+/// A collection of [`OxcDiagnostic`]s.
+///
+/// A drop-in replacement for `Vec<OxcDiagnostic>` that can additionally report
+/// whether it holds any [errors](Severity::Error) or [warnings](Severity::Warning).
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct Diagnostics(Vec<OxcDiagnostic>);
+
+impl Diagnostics {
+    pub const fn new() -> Self {
+        Self(Vec::new())
+    }
+
+    /// `true` if any diagnostic has [error](Severity::Error) severity.
+    pub fn has_errors(&self) -> bool {
+        self.0.iter().any(|diagnostic| diagnostic.severity == Severity::Error)
+    }
+
+    /// `true` if any diagnostic has [warning](Severity::Warning) severity.
+    pub fn has_warnings(&self) -> bool {
+        self.0.iter().any(|diagnostic| diagnostic.severity == Severity::Warning)
+    }
+
+    /// Iterate over the [error](Severity::Error)-severity diagnostics.
+    pub fn errors(&self) -> impl Iterator<Item = &OxcDiagnostic> {
+        self.0.iter().filter(|diagnostic| diagnostic.severity == Severity::Error)
+    }
+
+    /// Iterate over the [warning](Severity::Warning)-severity diagnostics.
+    pub fn warnings(&self) -> impl Iterator<Item = &OxcDiagnostic> {
+        self.0.iter().filter(|diagnostic| diagnostic.severity == Severity::Warning)
+    }
+
+    pub fn into_vec(self) -> Vec<OxcDiagnostic> {
+        self.0
+    }
+
+    pub fn push(&mut self, diagnostic: OxcDiagnostic) {
+        self.0.push(diagnostic);
+    }
+
+    pub fn extend(&mut self, diagnostics: impl IntoIterator<Item = OxcDiagnostic>) {
+        self.0.extend(diagnostics);
+    }
+}
+
+impl Deref for Diagnostics {
+    type Target = Vec<OxcDiagnostic>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl DerefMut for Diagnostics {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl From<Vec<OxcDiagnostic>> for Diagnostics {
+    fn from(diagnostics: Vec<OxcDiagnostic>) -> Self {
+        Self(diagnostics)
+    }
+}
+
+impl From<OxcDiagnostic> for Diagnostics {
+    fn from(diagnostic: OxcDiagnostic) -> Self {
+        Self(vec![diagnostic])
+    }
+}
+
+impl From<Diagnostics> for Vec<OxcDiagnostic> {
+    fn from(diagnostics: Diagnostics) -> Self {
+        diagnostics.0
+    }
+}
+
+impl FromIterator<OxcDiagnostic> for Diagnostics {
+    fn from_iter<T: IntoIterator<Item = OxcDiagnostic>>(iter: T) -> Self {
+        Self(iter.into_iter().collect())
+    }
+}
+
+impl IntoIterator for Diagnostics {
+    type Item = OxcDiagnostic;
+    type IntoIter = std::vec::IntoIter<OxcDiagnostic>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
+}
+
+impl<'a> IntoIterator for &'a Diagnostics {
+    type Item = &'a OxcDiagnostic;
+    type IntoIter = std::slice::Iter<'a, OxcDiagnostic>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.iter()
+    }
+}
 
 /// Describes an error or warning that occurred.
 ///
@@ -72,13 +190,11 @@ pub use miette::{GraphicalReportHandler, GraphicalTheme, LabeledSpan, NamedSourc
 #[derive(Debug, Clone, Eq, PartialEq)]
 #[must_use]
 pub struct OxcDiagnostic {
-    // `Box` the data to make `OxcDiagnostic` 8 bytes so that `Result` is small.
-    // This is required because rust does not performance return value optimization.
     inner: Box<OxcDiagnosticInner>,
 }
 
 impl Deref for OxcDiagnostic {
-    type Target = Box<OxcDiagnosticInner>;
+    type Target = OxcDiagnosticInner;
 
     fn deref(&self) -> &Self::Target {
         &self.inner
@@ -98,6 +214,7 @@ pub struct OxcCode {
 }
 
 impl OxcCode {
+    #[must_use]
     pub fn is_some(&self) -> bool {
         self.scope.is_some() || self.number.is_some()
     }
@@ -117,7 +234,7 @@ impl Display for OxcCode {
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct OxcDiagnosticInner {
     pub message: Cow<'static, str>,
-    pub labels: Option<Vec<LabeledSpan>>,
+    pub labels: Labels,
     pub help: Option<Cow<'static, str>>,
     pub note: Option<Cow<'static, str>>,
     pub severity: Severity,
@@ -126,7 +243,7 @@ pub struct OxcDiagnosticInner {
 }
 
 impl Display for OxcDiagnostic {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.message.fmt(f)
     }
 }
@@ -135,16 +252,16 @@ impl std::error::Error for OxcDiagnostic {}
 
 impl Diagnostic for OxcDiagnostic {
     /// The secondary help message.
-    fn help<'a>(&'a self) -> Option<Box<dyn Display + 'a>> {
-        self.help.as_ref().map(Box::new).map(|c| c as Box<dyn Display>)
+    fn help(&self) -> Option<Cow<'_, str>> {
+        self.help.as_deref().map(Cow::Borrowed)
     }
 
     /// A note for the diagnostic.
     ///
     /// Similar to rustc - intended for additional explanation and information,
     /// e.g. why an error was emitted, how to turn it off.
-    fn note<'a>(&'a self) -> Option<Box<dyn Display + 'a>> {
-        self.note.as_ref().map(Box::new).map(|c| c as Box<dyn Display>)
+    fn note(&self) -> Option<Cow<'_, str>> {
+        self.note.as_deref().map(Cow::Borrowed)
     }
 
     /// The severity level of this diagnostic.
@@ -155,52 +272,55 @@ impl Diagnostic for OxcDiagnostic {
     }
 
     /// Labels covering problematic portions of source code.
-    fn labels(&self) -> Option<Box<dyn Iterator<Item = LabeledSpan> + '_>> {
-        self.labels
-            .as_ref()
-            .map(|ls| ls.iter().cloned())
-            .map(Box::new)
-            .map(|b| b as Box<dyn Iterator<Item = LabeledSpan>>)
+    fn labels(&self) -> &[LabeledSpan] {
+        &self.labels
     }
 
     /// An error code uniquely identifying this diagnostic.
     ///
     /// Note that codes may be scoped, which will be rendered as `scope(code)`.
-    fn code<'a>(&'a self) -> Option<Box<dyn Display + 'a>> {
-        self.code.is_some().then(|| Box::new(&self.code) as Box<dyn Display>)
+    fn code(&self) -> Option<Cow<'_, str>> {
+        self.code.is_some().then(|| Cow::Owned(self.code.to_string()))
     }
 
     /// A URL that provides more information about the problem that occurred.
-    fn url<'a>(&'a self) -> Option<Box<dyn Display + 'a>> {
-        self.url.as_ref().map(Box::new).map(|c| c as Box<dyn Display>)
+    fn url(&self) -> Option<Cow<'_, str>> {
+        self.url.as_deref().map(Cow::Borrowed)
     }
 }
 
 impl OxcDiagnostic {
     /// Create new an error-level [`OxcDiagnostic`].
+    #[cold]
+    #[inline(never)]
     pub fn error<T: Into<Cow<'static, str>>>(message: T) -> Self {
-        Self {
-            inner: Box::new(OxcDiagnosticInner {
-                message: message.into(),
-                labels: None,
-                note: None,
-                help: None,
-                severity: Severity::Error,
-                code: OxcCode::default(),
-                url: None,
-            }),
-        }
+        Self::new(Severity::Error, message.into())
     }
 
     /// Create new a warning-level [`OxcDiagnostic`].
+    #[cold]
+    #[inline(never)]
     pub fn warn<T: Into<Cow<'static, str>>>(message: T) -> Self {
+        Self::new(Severity::Warning, message.into())
+    }
+
+    /// Render this diagnostic using Oxc's deterministic non-interactive style.
+    pub fn render(&self) -> String {
+        render(self)
+    }
+
+    // Outlined so the `Box` allocation + field initialization exists once in the binary
+    // instead of being inlined into every diagnostic construction site.
+    #[cold]
+    #[inline(never)]
+    fn new(severity: Severity, message: Cow<'static, str>) -> Self {
         Self {
             inner: Box::new(OxcDiagnosticInner {
-                message: message.into(),
-                labels: None,
+                message,
+                labels: Labels::new(),
                 help: None,
                 note: None,
-                severity: Severity::Warning,
+                severity,
                 code: OxcCode::default(),
                 url: None,
             }),
@@ -224,10 +344,7 @@ impl OxcDiagnostic {
     /// Use [`OxcDiagnostic::with_error_code`] to set both the scope and number at once.
     #[inline]
     pub fn with_error_code_scope<T: Into<Cow<'static, str>>>(mut self, code_scope: T) -> Self {
-        self.inner.code.scope = match self.inner.code.scope {
-            Some(scope) => Some(scope),
-            None => Some(code_scope.into()),
-        };
+        self.inner.code.scope.get_or_insert_with(|| code_scope.into());
         debug_assert!(
             self.inner.code.scope.as_ref().is_some_and(|s| !s.is_empty()),
             "Error code scopes cannot be empty"
@@ -241,10 +358,7 @@ impl OxcDiagnostic {
     /// Use [`OxcDiagnostic::with_error_code`] to set both the scope and number at once.
     #[inline]
     pub fn with_error_code_num<T: Into<Cow<'static, str>>>(mut self, code_num: T) -> Self {
-        self.inner.code.number = match self.inner.code.number {
-            Some(num) => Some(num),
-            None => Some(code_num.into()),
-        };
+        self.inner.code.number.get_or_insert_with(|| code_num.into());
         debug_assert!(
             self.inner.code.number.as_ref().is_some_and(|n| !n.is_empty()),
             "Error code numbers cannot be empty"
@@ -275,6 +389,8 @@ impl OxcDiagnostic {
     ///         .with_help("Run my_tool --init to set up a new config file"));
     /// }
     /// ```
+    #[cold]
+    #[inline(never)]
     pub fn with_help<T: Into<Cow<'static, str>>>(mut self, help: T) -> Self {
         self.inner.help = Some(help.into());
         self
@@ -294,6 +410,8 @@ impl OxcDiagnostic {
     ///         .with_note("Some useful information or suggestion"));
     /// }
     /// ```
+    #[cold]
+    #[inline(never)]
     pub fn with_note<T: Into<Cow<'static, str>>>(mut self, note: T) -> Self {
         self.inner.note = Some(note.into());
         self
@@ -312,7 +430,7 @@ impl OxcDiagnostic {
     /// [`oxc_span::Span`]: https://docs.rs/oxc_span/latest/oxc_span/struct.Span.html
     /// [`label`]: https://docs.rs/oxc_span/latest/oxc_span/struct.Span.html#method.label
     pub fn with_label<T: Into<LabeledSpan>>(mut self, label: T) -> Self {
-        self.inner.labels = Some(vec![label.into()]);
+        self.inner.labels = std::iter::once(label.into()).collect();
         self
     }
 
@@ -333,15 +451,13 @@ impl OxcDiagnostic {
         mut self,
         labels: T,
     ) -> Self {
-        self.inner.labels = Some(labels.into_iter().map(Into::into).collect());
+        self.inner.labels = labels.into_iter().map(Into::into).collect();
         self
     }
 
     /// Add a label to this diagnostic without clobbering existing labels.
     pub fn and_label<T: Into<LabeledSpan>>(mut self, label: T) -> Self {
-        let mut labels = self.inner.labels.unwrap_or_default();
-        labels.push(label.into());
-        self.inner.labels = Some(labels);
+        self.inner.labels.push(label.into());
         self
     }
 
@@ -350,9 +466,7 @@ impl OxcDiagnostic {
         mut self,
         labels: T,
     ) -> Self {
-        let mut all_labels = self.inner.labels.unwrap_or_default();
-        all_labels.extend(labels.into_iter().map(Into::into));
-        self.inner.labels = Some(all_labels);
+        self.inner.labels.extend(labels.into_iter().map(Into::into));
         self
     }
 
@@ -365,12 +479,72 @@ impl OxcDiagnostic {
     /// Add source code to this diagnostic and convert it into an [`Error`].
     ///
     /// You should use a [`NamedSource`] if you have a file name as well as the source code.
-    pub fn with_source_code<T: SourceCode + Send + Sync + 'static>(self, code: T) -> Error {
-        Error::from(self).with_source_code(code)
+    pub fn with_source_code<T: SourceCode + 'static>(self, source_code: T) -> Error {
+        Box::new(DiagnosticWithSource { diagnostic: self, source_code })
+    }
+
+    /// Attach source code and render using Oxc's deterministic non-interactive style.
+    pub fn render_with_source_code<T: SourceCode>(self, source_code: T) -> String {
+        render(&DiagnosticWithSource { diagnostic: self, source_code })
     }
 
     /// Consumes the diagnostic and returns the inner owned data.
     pub fn inner_owned(self) -> OxcDiagnosticInner {
         *self.inner
+    }
+}
+
+impl From<OxcDiagnostic> for Error {
+    fn from(diagnostic: OxcDiagnostic) -> Self {
+        Box::new(diagnostic)
+    }
+}
+
+struct DiagnosticWithSource<S> {
+    diagnostic: OxcDiagnostic,
+    source_code: S,
+}
+
+impl<S> fmt::Debug for DiagnosticWithSource<S> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Debug::fmt(&self.diagnostic, f)
+    }
+}
+
+impl<S> Display for DiagnosticWithSource<S> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        Display::fmt(&self.diagnostic, f)
+    }
+}
+
+impl<S> std::error::Error for DiagnosticWithSource<S> {}
+
+impl<S: SourceCode> Diagnostic for DiagnosticWithSource<S> {
+    fn code(&self) -> Option<Cow<'_, str>> {
+        self.diagnostic.code()
+    }
+
+    fn severity(&self) -> Option<Severity> {
+        self.diagnostic.severity()
+    }
+
+    fn help(&self) -> Option<Cow<'_, str>> {
+        self.diagnostic.help()
+    }
+
+    fn note(&self) -> Option<Cow<'_, str>> {
+        self.diagnostic.note()
+    }
+
+    fn url(&self) -> Option<Cow<'_, str>> {
+        self.diagnostic.url()
+    }
+
+    fn labels(&self) -> &[LabeledSpan] {
+        self.diagnostic.labels()
+    }
+
+    fn source_code(&self) -> Option<&dyn SourceCode> {
+        Some(&self.source_code)
     }
 }

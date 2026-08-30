@@ -73,7 +73,9 @@ declare_oxc_lint!(
     /// ```
     NoThenable,
     unicorn,
-    correctness
+    correctness,
+    version = "0.0.13",
+    short_description = "Disallow defining a `then` property.",
 );
 
 impl Rule for NoThenable {
@@ -98,33 +100,41 @@ impl Rule for NoThenable {
                     ctx.diagnostic(class(span));
                 }
             }
-            AstKind::ExportNamedDeclaration(decl) => {
+            AstKind::ExportDeclaration(decl) => {
                 // check declaration
-                if let Some(decl) = &decl.declaration {
-                    match decl {
-                        Declaration::VariableDeclaration(decl) => {
-                            for decl in &decl.declarations {
-                                check_binding_pattern(&decl.id, ctx);
-                            }
+                let decl = &decl.declaration;
+                match decl {
+                    Declaration::VariableDeclaration(decl) => {
+                        for decl in &decl.declarations {
+                            check_binding_pattern(&decl.id, ctx);
                         }
-                        Declaration::FunctionDeclaration(decl) => {
-                            if let Some(bind) = decl.id.as_ref()
-                                && bind.name == "then"
-                            {
-                                ctx.diagnostic(export(bind.span));
-                            }
+                    }
+                    Declaration::FunctionDeclaration(decl) => {
+                        if let Some(bind) = decl.id.as_ref()
+                            && bind.name == "then"
+                        {
+                            ctx.diagnostic(export(bind.span));
                         }
-                        Declaration::ClassDeclaration(decl) => {
-                            if let Some(bind) = decl.id.as_ref()
-                                && bind.name == "then"
-                            {
-                                ctx.diagnostic(export(bind.span));
-                            }
+                    }
+                    Declaration::ClassDeclaration(decl) => {
+                        if let Some(bind) = decl.id.as_ref()
+                            && bind.name == "then"
+                        {
+                            ctx.diagnostic(export(bind.span));
                         }
-                        _ => {}
+                    }
+                    _ => {}
+                }
+            }
+            AstKind::ExportNamedDeclaration(decl) => {
+                // check specifier
+                for spec in &decl.specifiers {
+                    if spec.exported.name() == "then" {
+                        ctx.diagnostic(export(spec.exported.span()));
                     }
                 }
-                // check specifier
+            }
+            AstKind::ExportFromDeclaration(decl) => {
                 for spec in &decl.specifiers {
                     if spec.exported.name() == "then" {
                         ctx.diagnostic(export(spec.exported.span()));
@@ -139,10 +149,8 @@ impl Rule for NoThenable {
                         ctx.diagnostic(class(span));
                     }
                 }
-                AssignmentTarget::StaticMemberExpression(expr) => {
-                    if expr.property.name == "then" {
-                        ctx.diagnostic(class(expr.span));
-                    }
+                AssignmentTarget::StaticMemberExpression(expr) if expr.property.name == "then" => {
+                    ctx.diagnostic(class(expr.span));
                 }
                 _ => {}
             },

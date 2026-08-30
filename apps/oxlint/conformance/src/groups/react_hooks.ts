@@ -1,8 +1,11 @@
+import repos from "../../repos.json" with { type: "json" };
+
 import type { MockFn, TestGroup } from "../index.ts";
 import type { TestCase } from "../rule_tester.ts";
 
 const group: TestGroup = {
   name: "react-hooks",
+  ...repos.react,
 
   submoduleName: "react",
   testFilesDirPath: "packages/eslint-plugin-react-hooks/__tests__",
@@ -49,18 +52,18 @@ const group: TestGroup = {
   shouldSkipTest(ruleName: string, test: TestCase, code: string, err: Error): boolean {
     // Code is flow syntax
     if (
-      ruleName.startsWith("rules-of-hooks/") &&
-      err.message === "Parsing failed" &&
-      code.match(/^\s*(\/\/[^\n]*\n)*(hook|component) [a-zA-Z]/)
+      ruleName.startsWith("rules-of-hooks/")
+      && err.message === "Parsing failed"
+      && code.match(/^\s*(\/\/[^\n]*\n)*(hook|component) [a-zA-Z]/)
     ) {
       return true;
     }
 
     // Code is TypeScript, but they're being parsed as JSX
     if (
-      ruleName.startsWith("rules-of-hooks/") &&
-      err.message === "Parsing failed" &&
-      [
+      ruleName.startsWith("rules-of-hooks/")
+      && err.message === "Parsing failed"
+      && [
         "function Example({ prop }) {\n  const bar = useEffect(<T>(a: T): Hello => {\n    prop();\n  }, [prop]);\n}",
         "function Foo() {\n  const foo = ({}: any);\n  useMemo(() => {\n    console.log(foo);\n  }, [foo]);\n}",
       ].includes(code.trim())

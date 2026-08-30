@@ -16,14 +16,25 @@ import type { Options, Plugin } from "prettier";
 
 const CACHES = {
   prettier: null as typeof import("prettier") | null,
+  sveltePlugin: null as Plugin | null,
   tailwindPlugin: null as typeof import("prettier-plugin-tailwindcss") | null,
   tailwindSorter: null as typeof import("prettier-plugin-tailwindcss/sorter") | null,
   oxfmtPlugin: null as Plugin | null,
 };
 
+async function loadCached<K extends keyof typeof CACHES>(
+  key: K,
+  loader: () => Promise<NonNullable<(typeof CACHES)[K]>>,
+): Promise<NonNullable<(typeof CACHES)[K]>> {
+  CACHES[key] ??= await loader();
+  return CACHES[key]!;
+}
+
+// ---
+
 async function loadPrettier(): Promise<typeof import("prettier")> {
-  if (!CACHES.prettier) {
-    CACHES.prettier = await import("prettier");
+  return loadCached("prettier", async () => {
+    const prettier = await import("prettier");
 
     // NOTE: This is needed for xxx-in-js formatting to work correctly.
     //
@@ -37,7 +48,7 @@ async function loadPrettier(): Promise<typeof import("prettier")> {
     // In call sites, Prettier checks `if (!options.parentParser)`, so as long as the default is falsy,
     // there should be no side effects on other calls that don't set these fields.
     // @ts-expect-error: Use internal API
-    const { formatOptionsHiddenDefaults } = CACHES.prettier.__internal;
+    const { formatOptionsHiddenDefaults } = prettier.__internal;
     // For html(angular)-in-js: Prevent attribute level formatting from running.
     // (e.g., CSS in `style="..."` attributes, JS in `onclick="..."` event handlers)
     // This does NOT affect `<style>`/`<script>` tags, they are always formatted.
@@ -53,22 +64,9 @@ async function loadPrettier(): Promise<typeof import("prettier")> {
     formatOptionsHiddenDefaults.__onHtmlRoot = null;
     // For md-in-js: Use `~` instead of `` ` `` for code fences
     formatOptionsHiddenDefaults.__inJsTemplate = null;
-  }
-  return CACHES.prettier;
-}
 
-// ---
-
-/**
- * TODO: Plugins support
- * - Read `plugins` field
- * - Load plugins dynamically and parse `languages` field
- * - Map file extensions and filenames to Prettier parsers
- *
- * @returns Array of loaded plugin's `languages` info
- */
-export async function resolvePlugins(): Promise<string[]> {
-  return [];
+    return prettier;
+  });
 }
 
 // ---
@@ -86,13 +84,45 @@ export type FormatFileParam = {
 export async function formatFile({ code, options }: FormatFileParam): Promise<string> {
   const prettier = CACHES.prettier ?? (await loadPrettier());
 
-  // Enable Tailwind CSS plugin for non-JS files if needed
+  // NOTE: Plugins order matters here!
+  // This plugin add `svelte` parser to support for `.svelte` files, and is also needed for `svelte-in-md` to work
+  if ("_useSveltePlugin" in options) await setupSveltePlugin(options);
+  // Enable Tailwind CSS plugin, this plugin transforms `parsers` already installed by prior plugins
   if ("_useTailwindPlugin" in options) await setupTailwindPlugin(options);
-  // Add oxfmt plugin for (j|t)-in-xxx files to use `oxc_formatter` instead of built-in formatter.
-  // NOTE: This must be last since Prettier plugins are applied in order
+  // This plugin overrides `babel(-ts)` and `typescript` parsers to use `oxc_formatter` instead of built-in parsers
   if ("_oxfmtPluginOptionsJson" in options) await setupOxfmtPlugin(options);
 
+  // This is needed to detect tsx-in-vue properly, see `prettier-plugin-oxfmt` for details.
+  // All `<script>` blocks in one SFC must share the same `lang` (Vue compiler restriction),
+  // so a single per-file flag is enough.
+  if (options.parser === "vue" && hasTsxScriptBlock(code)) {
+    options._oxfmtVueScriptLang = "tsx";
+  }
+
   return prettier.format(code, options);
+}
+
+// `<script` + a tag boundary (so `<scripts` does not match) + attributes + the tag-closing `>`.
+// Quoted attribute values may contain `>` (e.g. `generic="T extends Record<string, string>"`),
+// so they are consumed as whole quoted chunks before `>` can terminate the tag.
+const SCRIPT_OPEN_TAG_RE = /<script(?=[\s>])((?:"[^"]*"|'[^']*'|[^"'>])*)>/gv;
+// Standalone `lang` attribute (not e.g. `data-lang`) whose whole value is "tsx", quoted or unquoted
+const LANG_TSX_ATTR_RE = /(?:^|\s)lang\s*=\s*(?:"tsx"|'tsx'|tsx(?=[\s\/]|$))/v;
+
+/**
+ * Whether any `<script ...>` open tag in `sourceText` carries `lang="tsx"`.
+ *
+ * A plain-text scan may have a false positive.
+ * (e.g. the literal tag inside a template string or comment),
+ * the block parses as `tsx`, worst case the lone generic comma is kept or,
+ * if the block uses ts-only syntax, it is left unformatted.
+ * Never destructive, so leniency is acceptable trade-off here.
+ */
+function hasTsxScriptBlock(sourceText: string): boolean {
+  for (const [, attrs] of sourceText.matchAll(SCRIPT_OPEN_TAG_RE)) {
+    if (LANG_TSX_ATTR_RE.test(attrs)) return true;
+  }
+  return false;
 }
 
 // ---
@@ -104,8 +134,7 @@ export type FormatEmbeddedCodeParam = {
 
 /**
  * Format non-js code snippets into formatted string.
- * Mainly used for formatting code fences within JSDoc,
- * and is also used as a temporary fallback for html-in-js.
+ * Used for formatting code fences within JSDoc.
  *
  * @returns Formatted code snippet
  */
@@ -128,84 +157,66 @@ export async function formatEmbeddedCode({
 // ---
 
 export type FormatEmbeddedDocParam = {
-  texts: string[];
+  code: string;
   options: Options;
 };
 
 /**
- * Format non-js code snippets into Prettier `Doc` JSON strings.
- *
+ * Format a non-js code snippet into a Prettier `Doc` JSON string.
  * This makes our printer correctly handle `printWidth` even for embedded code.
- * - For gql-in-js, `texts` contains multiple parts split by `${}` in a template literal
- * - For others, `texts` always contains a single string with `${}` parts replaced by placeholders
- * However, this function does not need to be aware of that,
- * as it simply formats each text part independently and returns an array of formatted parts.
  *
- * @returns Doc JSON strings
+ * @returns `Doc` JSON string
  */
 export async function formatEmbeddedDoc({
-  texts,
+  code,
   options,
-}: FormatEmbeddedDocParam): Promise<string[]> {
+}: FormatEmbeddedDocParam): Promise<string> {
   const prettier = CACHES.prettier ?? (await loadPrettier());
 
   // Enable Tailwind CSS plugin for embedded code (e.g., html`...` in JS) if needed
   if ("_useTailwindPlugin" in options) await setupTailwindPlugin(options);
 
+  const metadata: Record<string, unknown> = {};
+
+  // html(angular)-in-js specific options: see the comment in `loadPrettier()` for rationale
+  if (options.parser === "html" || options.parser === "angular") {
+    // Any truthy value works
+    options.parentParser = "OXFMT";
+    // https://github.com/prettier/prettier/blob/90983f40dce5e20beea4e5618b5e0426a6a7f4f0/src/language-js/embed/html.js#L42-L44
+    options.__onHtmlRoot = (root: { children?: unknown[] }) =>
+      (metadata.htmlHasMultipleRootElements = (root.children?.length ?? 0) > 1);
+  }
+
+  // md-in-js specific options: see the comment in `loadPrettier()` for rationale
+  if (options.parser === "markdown") {
+    // https://github.com/prettier/prettier/blob/90983f40dce5e20beea4e5618b5e0426a6a7f4f0/src/language-js/embed/markdown.js#L21
+    options.__inJsTemplate = true;
+  }
+
   // NOTE: This will throw if:
   // - Specified parser is not available
   // - Or, code has syntax errors
   // In such cases, Rust side will fallback to original code
-  return Promise.all(
-    texts.map(async (text) => {
-      const metadata: Record<string, unknown> = {};
+  // @ts-expect-error: Use internal API, but it's necessary and only way to get `Doc`
+  const doc = await prettier.__debug.printToDoc(code, options);
 
-      // html(angular)-in-js specific options: see the comment in `loadPrettier()` for rationale
-      if (options.parser === "html" || options.parser === "angular") {
-        // Any truthy value works
-        options.parentParser = "OXFMT";
-        // https://github.com/prettier/prettier/blob/90983f40dce5e20beea4e5618b5e0426a6a7f4f0/src/language-js/embed/html.js#L42-L44
-        options.__onHtmlRoot = (root: { children?: unknown[] }) =>
-          (metadata.htmlHasMultipleRootElements = (root.children?.length ?? 0) > 1);
-      }
-
-      // md-in-js specific options: see the comment in `loadPrettier()` for rationale
-      if (options.parser === "markdown") {
-        // https://github.com/prettier/prettier/blob/90983f40dce5e20beea4e5618b5e0426a6a7f4f0/src/language-js/embed/markdown.js#L21
-        options.__inJsTemplate = true;
-      }
-
-      // @ts-expect-error: Use internal API, but it's necessary and only way to get `Doc`
-      const doc = await prettier.__debug.printToDoc(text, options);
-
-      // Serialize as [doc, metadata], handling special values:
-      // - Symbol group IDs → numeric counters
-      // - -Infinity (dedentToRoot) → marker string
-      const symbolToNumber = new Map<symbol, number>();
-      let nextId = 1;
-      return JSON.stringify([doc, metadata], (_key, value) => {
-        if (typeof value === "symbol") {
-          if (!symbolToNumber.has(value)) symbolToNumber.set(value, nextId++);
-          return symbolToNumber.get(value);
-        }
-        if (value === -Infinity) return "__NEGATIVE_INFINITY__";
-        return value;
-      });
-    }),
-  );
+  // Serialize as [doc, metadata], handling special values:
+  // - Symbol group IDs → numeric counters
+  // - -Infinity (dedentToRoot) → marker string
+  const symbolToNumber = new Map<symbol, number>();
+  let nextId = 1;
+  return JSON.stringify([doc, metadata], (_key, value) => {
+    if (typeof value === "symbol") {
+      if (!symbolToNumber.has(value)) symbolToNumber.set(value, nextId++);
+      return symbolToNumber.get(value);
+    }
+    if (value === -Infinity) return "__NEGATIVE_INFINITY__";
+    return value;
+  });
 }
 
 // ---
 // Tailwind CSS support
-// ---
-
-async function loadTailwindPlugin(): Promise<typeof import("prettier-plugin-tailwindcss")> {
-  if (!CACHES.tailwindPlugin) {
-    CACHES.tailwindPlugin = await import("prettier-plugin-tailwindcss");
-  }
-  return CACHES.tailwindPlugin;
-}
-
 // ---
 
 /**
@@ -213,9 +224,12 @@ async function loadTailwindPlugin(): Promise<typeof import("prettier-plugin-tail
  * Option mapping (sortTailwindcss.xxx → tailwindXxx) is also done in Rust side.
  */
 async function setupTailwindPlugin(options: Options): Promise<void> {
-  const tailwindPlugin = CACHES.tailwindPlugin ?? (await loadTailwindPlugin());
+  CACHES.tailwindPlugin ??= await loadCached(
+    "tailwindPlugin",
+    () => import("prettier-plugin-tailwindcss"),
+  );
   options.plugins ??= [];
-  options.plugins.push(tailwindPlugin as Plugin);
+  options.plugins.push(CACHES.tailwindPlugin as Plugin);
 }
 
 // ---
@@ -231,13 +245,6 @@ export interface SortTailwindClassesArgs {
   };
 }
 
-async function loadTailwindSorter() {
-  if (!CACHES.tailwindSorter) {
-    CACHES.tailwindSorter = await import("prettier-plugin-tailwindcss/sorter");
-  }
-  return CACHES.tailwindSorter;
-}
-
 /**
  * Process Tailwind CSS classes found in JS/TS files in batch.
  * @param args - Object containing classes and options (filepath is in options.filepath)
@@ -247,7 +254,11 @@ export async function sortTailwindClasses({
   classes,
   options,
 }: SortTailwindClassesArgs): Promise<string[]> {
-  const { createSorter } = CACHES.tailwindSorter ?? (await loadTailwindSorter());
+  CACHES.tailwindSorter ??= await loadCached(
+    "tailwindSorter",
+    () => import("prettier-plugin-tailwindcss/sorter"),
+  );
+  const { createSorter } = CACHES.tailwindSorter;
 
   const sorter = await createSorter({
     filepath: options.filepath,
@@ -261,23 +272,33 @@ export async function sortTailwindClasses({
 }
 
 // ---
-// Oxfmt plugin support for (j|t)-in-xxx files
+// Svelte plugin support
 // ---
 
-async function loadOxfmtPlugin(): Promise<Plugin> {
-  if (!CACHES.oxfmtPlugin) {
-    CACHES.oxfmtPlugin = (await import("./prettier-plugin-oxfmt/index")) as Plugin;
-  }
-  return CACHES.oxfmtPlugin;
+/**
+ * Load prettier-plugin-svelte to provide the `svelte` parser.
+ */
+async function setupSveltePlugin(options: Options): Promise<void> {
+  CACHES.sveltePlugin ??= await loadCached(
+    "sveltePlugin",
+    async () => (await import("prettier-plugin-svelte")) as Plugin,
+  );
+  options.plugins ??= [];
+  options.plugins.push(CACHES.sveltePlugin);
 }
 
+// ---
+// Oxfmt plugin support for (j|t)-in-xxx files
 // ---
 
 /**
  * Load oxfmt plugin for js-in-xxx parsers.
  */
 async function setupOxfmtPlugin(options: Options): Promise<void> {
-  const oxcPlugin = CACHES.oxfmtPlugin ?? (await loadOxfmtPlugin());
+  CACHES.oxfmtPlugin ??= await loadCached(
+    "oxfmtPlugin",
+    async () => (await import("./prettier-plugin-oxfmt/index")) as Plugin,
+  );
   options.plugins ??= [];
-  options.plugins.push(oxcPlugin);
+  options.plugins.push(CACHES.oxfmtPlugin);
 }

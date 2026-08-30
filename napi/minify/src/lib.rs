@@ -15,7 +15,7 @@ static ALLOC: mimalloc_safe::MiMalloc = mimalloc_safe::MiMalloc;
 
 mod options;
 
-use std::path::PathBuf;
+use std::{collections::BTreeMap, path::PathBuf};
 
 use napi::{Either, Task, bindgen_prelude::AsyncTask};
 use napi_derive::napi;
@@ -37,13 +37,32 @@ pub struct MinifyResult {
     pub code: String,
     pub map: Option<SourceMap>,
     pub errors: Vec<OxcError>,
+    /// Legal comments extracted from the source code.
+    /// Only populated when `codegen.legalComments` is `"linked"` or `"external"`.
+    pub legal_comments: Vec<String>,
+    /// Updated property-name cache sorted by original name. Present when `mangleProps` ran on a
+    /// parse without errors.
+    #[napi(ts_type = "Record<string, string | false>")]
+    pub mangle_cache: Option<BTreeMap<String, Either<String, bool>>>,
+}
+
+fn to_napi_mangle_cache(
+    cache: oxc_minifier::ManglePropertyCache,
+) -> BTreeMap<String, Either<String, bool>> {
+    cache
+        .into_iter()
+        .map(|(original, target)| {
+            let value = target.map_or(Either::B(false), |target| Either::A(target.to_string()));
+            (original.to_string(), value)
+        })
+        .collect()
 }
 
 fn minify_impl(filename: &str, source_text: &str, options: Option<MinifyOptions>) -> MinifyResult {
     use oxc_codegen::CodegenOptions;
     let options = options.unwrap_or_default();
 
-    let minifier_options = match oxc_minifier::MinifierOptions::try_from(&options) {
+    let mut minifier_options = match oxc_minifier::MinifierOptions::try_from(&options) {
         Ok(options) => options,
         Err(error) => {
             return MinifyResult {
@@ -66,15 +85,37 @@ fn minify_impl(filename: &str, source_text: &str, options: Option<MinifyOptions>
     };
 
     let parser_ret = Parser::new(&allocator, source_text, source_type).parse();
+    if !parser_ret.diagnostics.is_empty() {
+        // A recovered AST may be incomplete, so skip property mangling and its cache.
+        minifier_options.mangle_properties = None;
+    }
     let mut program = parser_ret.program;
 
-    let scoping = Minifier::new(minifier_options).minify(&allocator, &mut program).scoping;
+    let minifier_ret = Minifier::new(minifier_options).minify(&allocator, &mut program);
+    let scoping = minifier_ret.scoping;
+    let mangle_cache = parser_ret
+        .diagnostics
+        .is_empty()
+        .then(|| minifier_ret.property_mangle_cache.map(to_napi_mangle_cache))
+        .flatten();
 
     let mut codegen_options = match &options.codegen {
         // Need to remove all comments.
         Some(Either::A(false)) => CodegenOptions { minify: false, ..CodegenOptions::minify() },
         None | Some(Either::A(true)) => CodegenOptions::minify(),
-        Some(Either::B(o)) => CodegenOptions::from(o),
+        Some(Either::B(o)) => match o.to_codegen_options() {
+            Ok(opts) => opts,
+            Err(error) => {
+                return MinifyResult {
+                    errors: OxcError::from_diagnostics(
+                        filename,
+                        source_text,
+                        vec![OxcDiagnostic::error(error)],
+                    ),
+                    ..MinifyResult::default()
+                };
+            }
+        },
     };
 
     if options.sourcemap == Some(true) {
@@ -83,10 +124,15 @@ fn minify_impl(filename: &str, source_text: &str, options: Option<MinifyOptions>
 
     let ret = Codegen::new().with_options(codegen_options).with_scoping(scoping).build(&program);
 
+    let legal_comments =
+        ret.legal_comments.iter().map(|c| c.span.source_text(source_text).to_string()).collect();
+
     MinifyResult {
         code: ret.code,
         map: ret.map.map(oxc_sourcemap::napi::SourceMap::from),
-        errors: OxcError::from_diagnostics(filename, source_text, parser_ret.errors),
+        errors: OxcError::from_diagnostics(filename, source_text, parser_ret.diagnostics),
+        legal_comments,
+        mangle_cache,
     }
 }
 

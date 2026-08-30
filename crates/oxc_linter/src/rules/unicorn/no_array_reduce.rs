@@ -58,12 +58,15 @@ declare_oxc_lint!(
     NoArrayReduce,
     unicorn,
     restriction,
+    pending,
     config = NoArrayReduce,
+    version = "0.0.19",
+    short_description = "Disallow `Array#reduce()` and `Array#reduceRight()`.",
 );
 
 impl Rule for NoArrayReduce {
     fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
-        serde_json::from_value::<DefaultRuleConfig<Self>>(value).map(DefaultRuleConfig::into_inner)
+        DefaultRuleConfig::<Self>::from_value(value).map(DefaultRuleConfig::into_inner)
     }
 
     fn run<'a>(&self, node: &AstNode<'a>, ctx: &LintContext<'a>) {
@@ -108,14 +111,19 @@ fn is_simple_operation(node: &CallExpression) -> bool {
     let Some(callback_arg) = node.arguments.first() else {
         return false;
     };
+    if let Argument::ArrowFunctionExpression(callback) = callback_arg
+        && let Some(expression) = callback.get_expression()
+    {
+        return matches!(expression, Expression::BinaryExpression(_));
+    }
     let function_body = match callback_arg {
         // `array.reduce((accumulator, element) => accumulator + element)`
-        Argument::ArrowFunctionExpression(callback) => &callback.body,
+        Argument::ArrowFunctionExpression(callback) => callback.get_function_body().unwrap(),
         Argument::FunctionExpression(callback) => {
             let Some(body) = &callback.body else {
                 return false;
             };
-            body
+            body.as_ref()
         }
         _ => return false,
     };
@@ -202,8 +210,6 @@ fn test() {
         // Not `CallExpression`
         (r"new Array.prototype.reduce.call(foo, fn);", None),
         // Not `MemberExpression`
-        (r"call(foo, fn);", None),
-        (r"reduce.call(foo, fn);", None),
         // `callee.property` is not a `Identifier`
         (r#"Array.prototype.reduce["call"](foo, fn);"#, None),
         (r#"Array.prototype[",educe"].call(foo, fn);"#, None),
@@ -255,13 +261,10 @@ fn test() {
         // Not `CallExpression`
         (r"new foo.reduceRight(fn);", None),
         // Not `MemberExpression`
-        (r"reduce(fn);", None),
         // `callee.property` is not a `Identifier`
-        (r#"foo["reduce"](fn);"#, None),
         // Computed
         (r"foo[reduceRight](fn);", None),
         // Not listed method or property
-        (r"foo.notListed(fn);", None),
         // More or less argument(s)
         (r"foo.reduceRight();", None),
         (r"foo.reduceRight(fn, extraArgument1, extraArgument2);", None),
@@ -270,17 +273,13 @@ fn test() {
         // Not `CallExpression`
         (r"new [].reduceRight.call(foo, fn);", None),
         // Not `MemberExpression`
-        (r"call(foo, fn);", None),
-        (r"reduce.call(foo, fn);", None),
         // `callee.property` is not a `Identifier`
         (r#"[].reduceRight["call"](foo, fn);"#, None),
-        (r#"[]["reduce"].call(foo, fn);"#, None),
         // Computed
         (r"[].reduceRight[call](foo, fn);", None),
         (r"[][reduceRight].call(foo, fn);", None),
         // Not listed method or property
         (r"[].reduceRight.notListed(foo, fn);", None),
-        (r"[].notListed.call(foo, fn);", None),
         // Not empty
         (r"[1].reduceRight.call(foo, fn)", None),
         // Not ArrayExpression
@@ -292,8 +291,6 @@ fn test() {
         // Not `CallExpression`
         (r"new Array.prototype.reduceRight.call(foo, fn);", None),
         // Not `MemberExpression`
-        (r"call(foo, fn);", None),
-        (r"reduce.call(foo, fn);", None),
         // `callee.property` is not a `Identifier`
         (r#"Array.prototype.reduceRight["call"](foo, fn);"#, None),
         (r#"Array.prototype["reeduce"].call(foo, fn);"#, None),
@@ -304,7 +301,6 @@ fn test() {
         (r"Array[prototype].reduceRight.call(foo, fn);", None),
         // Not listed method
         (r"Array.prototype.reduceRight.notListed(foo, fn);", None),
-        (r"Array.prototype.notListed.call(foo, fn);", None),
         (r"Array.notListed.reduceRight.call(foo, fn);", None),
         // Not `Array`
         (r"NotArray.prototype.reduceRight.call(foo, fn);", None),

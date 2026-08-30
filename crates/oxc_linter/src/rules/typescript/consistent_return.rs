@@ -24,6 +24,12 @@ declare_oxc_lint!(
     /// Mixing value-returning and non-value-returning code paths makes control flow harder to
     /// reason about and frequently indicates a bug.
     ///
+    /// ::: warning
+    /// If possible, prefer TypeScript's `noImplicitReturns` compiler option over this rule.
+    /// `noImplicitReturns` uses TypeScript's type information and control-flow analysis,
+    /// so it can catch more implicit return paths than this rule.
+    /// :::
+    ///
     /// ### Examples
     ///
     /// Examples of **incorrect** code for this rule:
@@ -49,11 +55,13 @@ declare_oxc_lint!(
     typescript,
     suspicious,
     config = ConsistentReturnConfig,
+    version = "0.0.8",
+    short_description = "Enforce consistent return behavior in functions.",
 );
 
 impl Rule for ConsistentReturn {
     fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
-        serde_json::from_value::<DefaultRuleConfig<Self>>(value).map(DefaultRuleConfig::into_inner)
+        DefaultRuleConfig::<Self>::from_value(value).map(DefaultRuleConfig::into_inner)
     }
 
     fn to_configuration(&self) -> Option<Result<serde_json::Value, serde_json::Error>> {

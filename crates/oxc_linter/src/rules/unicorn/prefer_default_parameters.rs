@@ -2,7 +2,7 @@ use oxc_ast::{
     AstKind,
     ast::{
         AssignmentOperator, AssignmentTarget, BindingPattern, Expression, FormalParameter,
-        LogicalOperator, Statement,
+        LogicalOperator, MethodDefinitionKind, PropertyKind, Statement,
     },
 };
 use oxc_diagnostics::OxcDiagnostic;
@@ -61,7 +61,9 @@ declare_oxc_lint!(
     PreferDefaultParameters,
     unicorn,
     style,
-    fix,
+    suggestion,
+    version = "1.33.0",
+    short_description = "Prefer default parameters over reassignment.",
 );
 
 impl Rule for PreferDefaultParameters {
@@ -151,6 +153,10 @@ fn check_expression<'a>(
     };
 
     let function_node = ctx.nodes().get_node(function_id);
+    if is_setter_function(ctx, function_id) {
+        return;
+    }
+
     let (params, is_arrow_function) = match function_node.kind() {
         AstKind::Function(func) => (&func.params, false),
         AstKind::ArrowFunctionExpression(arrow) => (&arrow.params, true),
@@ -200,8 +206,23 @@ fn check_expression<'a>(
     };
 
     let new_param_name = if is_assignment { param_name } else { left_name };
-    let mut new_param_text = format!("{new_param_name} = {default_value_text}");
-    let mut replace_span = binding_ident.span;
+    let (mut new_param_text, mut replace_span) =
+        if let Some(type_annotation) = &param.type_annotation {
+            (
+                format!(
+                    "{new_param_name}{} = {default_value_text}",
+                    ctx.source_range(type_annotation.span)
+                ),
+                Span::new(binding_ident.span.start, type_annotation.span.end),
+            )
+        } else if param.optional {
+            (
+                format!("{new_param_name} = {default_value_text}"),
+                Span::new(binding_ident.span.start, param.span.end),
+            )
+        } else {
+            (format!("{new_param_name} = {default_value_text}"), binding_ident.span)
+        };
 
     if is_arrow_function
         && params.items.len() == 1
@@ -215,13 +236,16 @@ fn check_expression<'a>(
 
     let delete_span = expand_statement_delete_span(ctx.source_text(), statement_span);
 
-    ctx.diagnostic_with_fix(prefer_default_parameters_diagnostic(stmt_span, param_name), |fixer| {
-        let fixer = fixer.for_multifix();
-        let mut fix = fixer.new_fix_with_capacity(2);
-        fix.push(fixer.replace(replace_span, new_param_text));
-        fix.push(fixer.delete_range(delete_span));
-        fix.with_message("Prefer default parameters over reassignment.")
-    });
+    ctx.diagnostic_with_suggestion(
+        prefer_default_parameters_diagnostic(stmt_span, param_name),
+        |fixer| {
+            let fixer = fixer.for_multifix();
+            let mut fix = fixer.new_fix_with_capacity(2);
+            fix.push(fixer.replace(replace_span, new_param_text));
+            fix.push(fixer.delete_range(delete_span));
+            fix.with_message("Prefer default parameters over reassignment.")
+        },
+    );
 }
 
 #[expect(clippy::cast_possible_truncation)]
@@ -276,6 +300,14 @@ fn find_enclosing_function<'a>(
         Some((current.id(), function_body_id))
     } else {
         None
+    }
+}
+
+fn is_setter_function(ctx: &LintContext, function_id: NodeId) -> bool {
+    match ctx.nodes().parent_kind(function_id) {
+        AstKind::MethodDefinition(method) => method.kind == MethodDefinitionKind::Set,
+        AstKind::ObjectProperty(property) => property.kind == PropertyKind::Set,
+        _ => false,
     }
 }
 
@@ -372,18 +404,13 @@ fn check_no_extra_references<'a>(
         return false;
     };
 
-    let Some(symbol_id) = binding_ident.symbol_id.get() else {
+    let symbol_id = binding_ident.symbol_id();
+
+    let [reference_id] = ctx.scoping().get_resolved_reference_ids(symbol_id) else {
         return false;
     };
 
-    let references: Vec<_> = ctx.scoping().get_resolved_references(symbol_id).collect();
-
-    if references.len() != 1 {
-        return false;
-    }
-
-    let reference = &references[0];
-    ctx.semantic().reference_span(reference) == param_ident_span
+    ctx.semantic().reference_span(ctx.scoping().get_reference(*reference_id)) == param_ident_span
 }
 
 fn check_no_extra_references_assignment<'a>(
@@ -395,9 +422,7 @@ fn check_no_extra_references_assignment<'a>(
         return false;
     };
 
-    let Some(symbol_id) = binding_ident.symbol_id.get() else {
-        return false;
-    };
+    let symbol_id = binding_ident.symbol_id();
 
     let (has_matching_read, writes) = ctx.scoping().get_resolved_references(symbol_id).fold(
         (false, 0usize),
@@ -573,6 +598,16 @@ fn test() {
                 import('foo');
                 foo = foo || 123;
             }",
+        "class Foo {
+                set value(value: string) {
+                    value = value ?? '';
+                }
+            }",
+        "const foo = {
+                set value(value) {
+                    value = value ?? '';
+                }
+            };",
     ];
 
     let fail = vec![
@@ -956,6 +991,38 @@ bar(); baz();
 }",
             r"function abc(foo = 123) {
     const bar = function() {};
+}",
+        ),
+        (
+            r"function abc(foo: number) {
+    foo = foo || 123;
+}",
+            r"function abc(foo: number = 123) {
+}",
+        ),
+        (
+            r"function abc(foo: number) {
+    const bar = foo || 123;
+}",
+            r"function abc(bar: number = 123) {
+}",
+        ),
+        (
+            r"function abc(foo?: number) {
+    const bar = foo || 123;
+}",
+            r"function abc(bar: number = 123) {
+}",
+        ),
+        (
+            r"class Foo {
+    constructor(private foo?) {
+        foo = foo || 123;
+    }
+}",
+            r"class Foo {
+    constructor(private foo = 123) {
+    }
 }",
         ),
     ];

@@ -1,9 +1,10 @@
 use std::path::Path;
 
 use oxc_allocator::Allocator;
+use oxc_ast::ast::Program;
 use oxc_benchmark::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use oxc_mangler::{MangleOptions, MangleOptionsKeepNames, Mangler};
-use oxc_minifier::{CompressOptions, Compressor};
+use oxc_minifier::{CompressOptions, Compressor, ManglePropertiesOptions, PropertyMangler};
 use oxc_parser::Parser;
 use oxc_semantic::SemanticBuilder;
 use oxc_span::SourceType;
@@ -29,14 +30,18 @@ fn bench_minifier(criterion: &mut Criterion) {
 
                 // Create fresh AST + semantic data for each iteration
                 let mut program = Parser::new(&allocator, source_text, source_type).parse().program;
-                let scoping = SemanticBuilder::new().build(&program).semantic.into_scoping();
+                let scoping = SemanticBuilder::new()
+                    .with_enum_eval(true)
+                    .build(&program)
+                    .semantic
+                    .into_scoping();
 
                 // Minifier only works on esnext.
                 let transform_options = TransformOptions::from_target("esnext").unwrap();
                 let transformer_ret =
                     Transformer::new(&allocator, Path::new(&file.file_name), &transform_options)
                         .build_with_scoping(scoping, &mut program);
-                assert!(transformer_ret.errors.is_empty());
+                assert!(transformer_ret.diagnostics.is_empty());
                 let scoping = SemanticBuilder::new().build(&program).semantic.into_scoping();
 
                 let options = CompressOptions::smallest();
@@ -50,20 +55,42 @@ fn bench_minifier(criterion: &mut Criterion) {
     group.finish();
 }
 
+/// Transform a parsed program to plain JavaScript (targeting esnext), the way the real pipeline
+/// feeds the mangler: TypeScript is stripped before minification, so the mangler only ever runs
+/// on JS - mangling an untransformed `.ts`/`.tsx` AST would not be representative. Returns the
+/// transformed program; the caller builds semantic data from it and mangles.
+fn transform_to_js<'a>(
+    allocator: &'a Allocator,
+    source_text: &'a str,
+    source_type: SourceType,
+    path: &Path,
+) -> Program<'a> {
+    let mut program = Parser::new(allocator, source_text, source_type).parse().program;
+    let scoping =
+        SemanticBuilder::new().with_enum_eval(true).build(&program).semantic.into_scoping();
+    let transform_options = TransformOptions::from_target("esnext").unwrap();
+    let transformer_ret = Transformer::new(allocator, path, &transform_options)
+        .build_with_scoping(scoping, &mut program);
+    assert!(transformer_ret.diagnostics.is_empty());
+    program
+}
+
 fn bench_mangler(criterion: &mut Criterion) {
     let mut group = criterion.benchmark_group("mangler");
     for file in TestFiles::minimal().files() {
         let id = BenchmarkId::from_parameter(&file.file_name);
         let source_type = SourceType::from_path(&file.file_name).unwrap();
         let source_text = file.source_text.as_str();
+        let path = Path::new(&file.file_name);
         let mut allocator = Allocator::default();
         let mut temp_allocator = Allocator::default();
         group.bench_function(id, |b| {
             b.iter_with_setup_wrapper(|runner| {
                 allocator.reset();
                 temp_allocator.reset();
-                let program = Parser::new(&allocator, source_text, source_type).parse().program;
-                let mut semantic = SemanticBuilder::new().build(&program).semantic;
+                let program = transform_to_js(&allocator, source_text, source_type, path);
+                let mut semantic =
+                    SemanticBuilder::new().with_build_nodes(true).build(&program).semantic;
                 runner.run(|| {
                     Mangler::new_with_temp_allocator(&temp_allocator)
                         .build_with_semantic(&mut semantic, &program);
@@ -75,21 +102,25 @@ fn bench_mangler(criterion: &mut Criterion) {
     {
         let files = TestFiles::minimal();
         let first_file = files.files().first().unwrap();
-        let id = BenchmarkId::from_parameter(format!("{}_keep_names", &first_file.file_name));
+        let id = BenchmarkId::from_parameter(format!("{}_keep_names", first_file.file_name));
         let source_type = SourceType::from_path(&first_file.file_name).unwrap();
         let source_text = first_file.source_text.as_str();
-        let allocator = Allocator::default();
-        let temp_allocator = Allocator::default();
+        let path = Path::new(&first_file.file_name);
+        let mut allocator = Allocator::default();
+        let mut temp_allocator = Allocator::default();
         group.bench_function(id, |b| {
             b.iter_with_setup_wrapper(|runner| {
-                let program = Parser::new(&allocator, source_text, source_type).parse().program;
-                let mut semantic = SemanticBuilder::new().build(&program).semantic;
+                allocator.reset();
+                temp_allocator.reset();
+                let program = transform_to_js(&allocator, source_text, source_type, path);
+                let mut semantic =
+                    SemanticBuilder::new().with_build_nodes(true).build(&program).semantic;
                 runner.run(|| {
                     Mangler::new_with_temp_allocator(&temp_allocator)
                         .with_options(MangleOptions {
                             top_level: None,
                             keep_names: MangleOptionsKeepNames::all_true(),
-                            debug: false,
+                            ..MangleOptions::default()
                         })
                         .build_with_semantic(&mut semantic, &program);
                 });
@@ -100,5 +131,33 @@ fn bench_mangler(criterion: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(minifier, bench_minifier, bench_mangler);
+fn bench_property_mangler(criterion: &mut Criterion) {
+    let mut group = criterion.benchmark_group("property_mangler");
+    let options = ManglePropertiesOptions::from_pattern("(^_|_$)").expect("valid benchmark regex");
+
+    for file in TestFiles::minimal().files() {
+        let id = BenchmarkId::from_parameter(&file.file_name);
+        let source_type = SourceType::from_path(&file.file_name).unwrap();
+        let source_text = file.source_text.as_str();
+        let path = Path::new(&file.file_name);
+        let mut allocator = Allocator::default();
+        group.bench_function(id, |b| {
+            b.iter_with_setup_wrapper(|runner| {
+                allocator.reset();
+                let mut program = transform_to_js(&allocator, source_text, source_type, path);
+                runner.run(|| {
+                    let mut mangler = PropertyMangler::new(options.clone());
+                    mangler.collect(&program);
+                    mangler.assign();
+                    mangler.rewrite(&mut program, &allocator);
+                    std::hint::black_box(mangler.into_cache());
+                });
+            });
+        });
+    }
+
+    group.finish();
+}
+
+criterion_group!(minifier, bench_minifier, bench_mangler, bench_property_mangler);
 criterion_main!(minifier);

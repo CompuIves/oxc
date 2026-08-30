@@ -96,11 +96,13 @@ declare_oxc_lint!(
     nursery, // move to style after we've confirmed this works correctly on as many edge-cases as possible.
     dangerous_fix_suggestion,
     config = PreferOptionalChainConfig,
+    version = "1.39.0",
+    short_description = "Enforce using concise optional chain (`?.`) expressions.",
 );
 
 impl Rule for PreferOptionalChain {
     fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
-        serde_json::from_value::<DefaultRuleConfig<Self>>(value).map(DefaultRuleConfig::into_inner)
+        DefaultRuleConfig::<Self>::from_value(value).map(DefaultRuleConfig::into_inner)
     }
 
     fn to_configuration(&self) -> Option<Result<serde_json::Value, serde_json::Error>> {

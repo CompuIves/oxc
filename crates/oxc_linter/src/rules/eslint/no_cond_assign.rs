@@ -69,11 +69,13 @@ declare_oxc_lint!(
     eslint,
     correctness,
     config = NoCondAssignConfig,
+    version = "0.0.5",
+    short_description = "Disallow assignment operators in conditional expressions.",
 );
 
 impl Rule for NoCondAssign {
     fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
-        serde_json::from_value::<DefaultRuleConfig<Self>>(value).map(DefaultRuleConfig::into_inner)
+        DefaultRuleConfig::<Self>::from_value(value).map(DefaultRuleConfig::into_inner)
     }
 
     fn run<'a>(&self, node: &AstNode<'a>, ctx: &LintContext<'a>) {
@@ -90,38 +92,31 @@ impl Rule for NoCondAssign {
                 self.check_expression(ctx, expr.test.get_inner_expression());
             }
             AstKind::AssignmentExpression(expr) if self.0 == NoCondAssignConfig::Always => {
-                let mut spans = vec![];
+                let assignment_span = node.span();
                 for ancestor in ctx.nodes().ancestors(node.id()) {
-                    match ancestor.kind() {
-                        AstKind::IfStatement(if_stmt) => {
-                            spans.push(if_stmt.test.span());
-                        }
-                        AstKind::WhileStatement(while_stmt) => {
-                            spans.push(while_stmt.test.span());
-                        }
-                        AstKind::DoWhileStatement(do_while_stmt) => {
-                            spans.push(do_while_stmt.test.span());
-                        }
+                    let Some(conditional_span) = (match ancestor.kind() {
+                        AstKind::IfStatement(if_stmt) => Some(if_stmt.test.span()),
+                        AstKind::WhileStatement(while_stmt) => Some(while_stmt.test.span()),
+                        AstKind::DoWhileStatement(do_while_stmt) => Some(do_while_stmt.test.span()),
                         AstKind::ForStatement(for_stmt) => {
-                            if let Some(test) = &for_stmt.test {
-                                spans.push(test.span());
-                            }
+                            for_stmt.test.as_ref().map(GetSpan::span)
                         }
-                        AstKind::ConditionalExpression(cond_expr) => {
-                            spans.push(cond_expr.span());
-                        }
+                        AstKind::ConditionalExpression(cond_expr) => Some(cond_expr.test.span()),
                         AstKind::Function(_)
                         | AstKind::ArrowFunctionExpression(_)
                         | AstKind::Program(_)
                         | AstKind::BlockStatement(_) => break,
-                        _ => {}
-                    }
-                }
+                        _ => None,
+                    }) else {
+                        continue;
+                    };
 
-                // Only report the diagnostic if the assignment is in a span where it should not be.
-                // For example, report `if (a = b) { ... }`, not `if (...) { a = b }`
-                if spans.iter().any(|span| span.contains_inclusive(node.span())) {
-                    Self::emit_diagnostic(ctx, expr);
+                    // Only report the diagnostic if the assignment is in a span where it should
+                    // not be. For example, report `if (a = b) { ... }`, not `if (...) { a = b }`.
+                    if conditional_span.contains_inclusive(assignment_span) {
+                        Self::emit_diagnostic(ctx, expr);
+                        return;
+                    }
                 }
             }
             _ => {}
@@ -132,12 +127,13 @@ impl Rule for NoCondAssign {
 impl NoCondAssign {
     #[expect(clippy::cast_possible_truncation)]
     fn emit_diagnostic(ctx: &LintContext<'_>, expr: &AssignmentExpression<'_>) {
+        let operator = expr.operator.as_str();
         let mut operator_span = Span::new(expr.left.span().end, expr.right.span().start);
-        let start =
-            operator_span.source_text(ctx.source_text()).find(expr.operator.as_str()).unwrap_or(0)
-                as u32;
+        let start = ctx
+            .find_next_token_within(operator_span.start, operator_span.end, operator)
+            .expect("assignment expression operands must contain the assignment operator token");
         operator_span.start += start;
-        operator_span.end = operator_span.start + expr.operator.as_str().len() as u32;
+        operator_span.end = operator_span.start + operator.len() as u32;
 
         ctx.diagnostic(no_cond_assign_diagnostic(operator_span));
     }
@@ -229,6 +225,7 @@ fn test() {
             "for (let i = 0; i < nums.length; i += 1) { dosomething();}",
             Some(serde_json::json!(["always"])),
         ),
+        ("let a = 1; a = a ? (a += 5) : 1;", Some(serde_json::json!(["always"]))),
     ];
 
     let fail = vec![
@@ -258,6 +255,8 @@ fn test() {
         ("var x; var b = (x = 0) ? 1 : 0;", None),
         ("var x; var b = x && (y = 0) ? 1 : 0;", Some(serde_json::json!(["always"]))),
         ("(((3496.29)).bkufyydt = 2e308) ? foo : bar;", None),
+        // the `=` inside the comment is not the operator
+        ("while (a /* = */ = b) {}", Some(serde_json::json!(["always"]))),
     ];
 
     Tester::new(NoCondAssign::NAME, NoCondAssign::PLUGIN, pass, fail).test_and_snapshot();

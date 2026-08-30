@@ -4,8 +4,6 @@ import { ALL_TARGET_PLUGINS, createESLintLinter, loadTargetPluginRules } from ".
 import {
   createRuleEntries,
   overrideTypeScriptPluginStatusWithEslintPluginStatus as syncTypeScriptPluginStatusWithEslintPluginStatus,
-  syncUnicornPluginStatusWithEslintPluginStatus,
-  syncVitestPluginStatusWithJestPluginStatus,
   updateImplementedStatus,
   updateNotSupportedStatus,
   updatePendingFixStatus,
@@ -21,16 +19,14 @@ await updateImplementedStatus(ruleEntries);
 updateNotSupportedStatus(ruleEntries);
 await updatePendingFixStatus(ruleEntries);
 await syncTypeScriptPluginStatusWithEslintPluginStatus(ruleEntries);
-await syncVitestPluginStatusWithJestPluginStatus(ruleEntries);
-syncUnicornPluginStatusWithEslintPluginStatus(ruleEntries);
 
 // Helper to gather stats for a plugin
 const statsForPlugin = (pluginName) => {
   const prefix = `${pluginName}/`;
   const entries = Array.from(ruleEntries.entries()).filter(([name]) => name.startsWith(prefix));
-  const filtered = entries.filter(([_, e]) => !e.isNotSupported);
+  const filtered = entries.filter(([_name, e]) => !e.isNotSupported);
   const total = filtered.length;
-  const implemented = filtered.filter(([_, e]) => e.isImplemented).length;
+  const implemented = filtered.filter(([_name, e]) => e.isImplemented).length;
   const notImplemented = total - implemented;
   const notSupported = entries.length - filtered.length;
   return { pluginName, total, implemented, notImplemented, notSupported };

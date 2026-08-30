@@ -7,7 +7,10 @@ use serde::Deserialize;
 
 use oxc_ast::{
     AstKind,
-    ast::{Declaration, ExportAllDeclaration, ExportDefaultDeclaration, ExportNamedDeclaration},
+    ast::{
+        Declaration, ExportAllDeclaration, ExportDeclaration, ExportDefaultDeclaration,
+        ExportFromDeclaration, ExportNamedDeclaration, ExportSpecifier,
+    },
 };
 use oxc_diagnostics::OxcDiagnostic;
 use oxc_macros::declare_oxc_lint;
@@ -56,22 +59,102 @@ pub struct NoRestrictedExports(Box<NoRestrictedExportsConfig>);
 #[derive(Debug, Default, Clone, JsonSchema, Deserialize)]
 #[serde(rename_all = "camelCase", default, deny_unknown_fields)]
 pub struct NoRestrictedExportsConfig {
+    /// An array of strings, where each string is a name to be restricted.
+    ///
+    /// Example of **incorrect** code for `"restrictedNamedExports": ["foo"]`:
+    ///
+    /// ```ts
+    /// export const foo = 1;
+    /// ```
+    ///
+    /// Example of **correct** code for `"restrictedNamedExports": ["foo"]`:
+    ///
+    /// ```ts
+    /// export const bar = 1;
+    /// ```
+    ///
+    /// By design, this option doesn't disallow export default declarations. If
+    /// you configure `default` as a restricted name, that restriction will apply
+    /// only to named export declarations.
+    ///
+    /// Example of **incorrect** code for `"restrictedNamedExports": ["default"]`:
+    ///
+    /// ```ts
+    /// function foo() {}
+    /// export { foo as default };
+    ///
+    /// export { default } from "some_module";
+    /// ```
     restricted_named_exports: FxHashSet<String>,
+    /// A string representing a regular expression pattern. Named exports
+    /// matching this pattern will be restricted. This option does not apply to
+    /// default named exports.
+    ///
+    /// Example of **incorrect** code for `"restrictedNamedExportsPattern": "bar$":
+    ///
+    /// ```ts
+    /// export const foobar = 1;
+    /// ```
+    ///
+    /// Example of **correct** code for `"restrictedNamedExportsPattern": "bar$":
+    ///
+    /// ```ts
+    /// export const foo = 1;
+    /// ```
     #[serde(deserialize_with = "deserialize_regex_option")]
     restricted_named_exports_pattern: Option<Regex>,
+    /// An object with boolean properties to restrict certain default export
+    /// declarations. This option works only if the `restrictedNamedExports`
+    /// option does not contain the `"default"` value.
     restrict_default_exports: RestrictDefaultExports,
-
-    #[serde(skip_serializing)]
+    #[serde(skip)]
     has_default_restricted_named_export: bool,
 }
 
 #[derive(Debug, Default, Clone, JsonSchema, Deserialize)]
 #[serde(rename_all = "camelCase", default, deny_unknown_fields)]
 struct RestrictDefaultExports {
+    /// Whether to restrict `export { default } from` declarations.
+    ///
+    /// Example of **incorrect** code for `"restrictDefaultExports": { "defaultFrom": true }`:
+    ///
+    /// ```js
+    /// export { default } from 'foo';
+    /// ```
     default_from: bool,
+    /// Whether to restrict `export default` declarations.
+    ///
+    /// Example of **incorrect** code for `"restrictDefaultExports": { "direct": true }`:
+    ///
+    /// ```js
+    /// const foo = 123;
+    /// export default foo;
+    /// ```
     direct: bool,
+    /// Whether to restrict `export { foo as default }` declarations.
+    ///
+    /// Example of **incorrect** code for `"restrictDefaultExports": { "named": true }`:
+    ///
+    /// ```js
+    /// const foo = 123;
+    /// export { foo as default };
+    /// ```
     named: bool,
+    /// Whether to restrict `export { foo as default } from` declarations.
+    ///
+    /// Example of **incorrect** code for `"restrictDefaultExports": { "namedFrom": true }`:
+    ///
+    /// ```js
+    /// export { foo as default } from 'foo';
+    /// ```
     named_from: bool,
+    /// Whether to restrict `export * as default from` declarations.
+    ///
+    /// Example of **incorrect** code for `"restrictDefaultExports": { "namespaceFrom": true }`:
+    ///
+    /// ```js
+    /// export * as default from 'foo';
+    /// ```
     namespace_from: bool,
 }
 
@@ -94,129 +177,17 @@ declare_oxc_lint!(
     ///
     /// This rule disallows specified names from being used as exported names.
     ///
+    /// By default, this rule doesn’t disallow any names. Only the names you specify in the configuration will be disallowed.
+    ///
     /// ### Why is this bad?
     ///
     /// In a project, certain names may be disallowed from being used as exported names for various reasons.
-    ///
-    /// ### Options
-    ///
-    /// By default, this rule doesn’t disallow any names. Only the names you specify in the configuration will be disallowed.
-    ///
-    /// #### restrictedNamedExports
-    ///
-    /// This option is an array of strings, where each string is a name to be restricted.
-    ///
-    /// ```json
-    /// {"rules: {"no-restricted-exports": ["error", { "restrictedNamedExports": ["foo", "bar"] }]}}
-    /// ```
-    ///
-    /// Example of **incorrect** code for the "restrictedNamedExports" option:
-    ///
-    /// ```js
-    /// {"rules: {"no-restricted-exports": ["error", { "restrictedNamedExports": ["foo"] }]}}
-    ///
-    /// export const foo = 1;
-    /// ```
-    ///
-    /// ##### Default exports
-    ///
-    /// By design, the `restrictedNamedExports` option doesn’t disallow export default declarations. If you configure `default` as a restricted name, that restriction will apply only to named export declarations.
-    ///
-    /// Examples of additional **incorrect** code for the `"restrictedNamedExports": ["default"]` option:
-    ///
-    /// ```js
-    /// {"rules: {"no-restricted-exports": ["error", { "restrictedNamedExports": ["default"] }]}}
-    ///
-    /// function foo() {}
-    /// export { foo as default };
-    /// ```
-    ///
-    /// ```js
-    /// {"rules: {"no-restricted-exports": ["error", { "restrictedNamedExports": ["default"] }]}}
-    ///
-    /// export { default } from "some_module";
-    /// ```
-    ///
-    /// #### restrictedNamedExportsPattern
-    ///
-    /// This option is a string representing a regular expression pattern. Named exports matching this pattern will be restricted. This option does not apply to default named exports.
-    ///
-    /// Example of **incorrect** code for the "restrictedNamedExportsPattern" option:
-    ///
-    /// ```js
-    /// {"rules: {"no-restricted-exports": ["error", { "restrictedNamedExportsPattern": "bar$" }]}}
-    ///
-    /// export const foobar = 1;
-    /// ```
-    ///
-    /// #### restrictDefaultExports
-    ///
-    /// This option is an object option with boolean properties to restrict certain default export declarations. The option works only if the restrictedNamedExports option does not contain the "default" value.
-    ///
-    /// ##### direct
-    ///
-    /// Whether to restricts `export default` declarations.
-    ///
-    /// Example of **incorrect** code for the `"restrictDefaultExports": { "direct": true }` option:
-    ///
-    /// ```js
-    /// {"rules: {"no-restricted-exports": ["error", { "restrictDefaultExports": { "direct": true } }]}}
-    ///
-    /// export default foo;
-    /// ```
-    ///
-    /// ##### named
-    ///
-    /// Whether to restricts `export { foo as default };` declarations.
-    ///
-    /// Example of **incorrect** code for the `"restrictDefaultExports": { "named": true }` option:
-    ///
-    /// ```js
-    /// {"rules: {"no-restricted-exports": ["error", { "restrictDefaultExports": { "named": true } }]}}
-    ///
-    /// const foo = 123;
-    /// export { foo as default };
-    /// ```
-    ///
-    /// ##### defaultFrom
-    ///
-    /// Whether to restricts `export { default } from 'foo';` declarations.
-    ///
-    /// Example of **incorrect** code for the `"restrictDefaultExports": { "defaultFrom": true }` option:
-    ///
-    /// ```js
-    /// {"rules: {"no-restricted-exports": ["error", { "restrictDefaultExports": { "defaultFrom": true } }]}}
-    ///
-    /// export { default } from 'foo';
-    /// ```
-    ///
-    /// ##### namedFrom
-    ///
-    /// Whether to restricts `export { foo as default } from 'foo';` declarations.
-    ///
-    /// Example of **incorrect** code for the `"restrictDefaultExports": { "namedFrom": true }` option:
-    ///
-    /// ```js
-    /// {"rules: {"no-restricted-exports": ["error", { "restrictDefaultExports": { "namedFrom": true } }]}}
-    ///
-    /// export { foo as default } from 'foo';
-    /// ```
-    ///
-    /// ##### namespaceFrom
-    ///
-    /// Whether to restricts `export * as default from 'foo';` declarations.
-    ///
-    /// Example of **incorrect** code for the `"restrictDefaultExports": { "namespaceFrom": true }` option:
-    ///
-    /// ```js
-    /// {"rules: {"no-restricted-exports": ["error", { "restrictDefaultExports": { "namespaceFrom": true } }]}}
-    ///
-    /// export * as default from 'foo';
-    /// ```
     NoRestrictedExports,
     eslint,
     nursery, // TODO: change category to `restriction`
     config = NoRestrictedExportsConfig,
+    version = "1.59.0",
+    short_description = "Disallow specified names in exports.",
 );
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -228,21 +199,23 @@ enum LocalFromSpecifier {
 
 impl Rule for NoRestrictedExports {
     fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
-        serde_json::from_value::<DefaultRuleConfig<Self>>(value)
-            .map(DefaultRuleConfig::into_inner)
-            .map(|mut c| {
+        DefaultRuleConfig::<Self>::from_value(value).map(DefaultRuleConfig::into_inner).map(
+            |mut c| {
                 // Cache if "default" is in restricted_named_exports
                 c.has_default_restricted_named_export =
                     c.restricted_named_exports.contains("default");
                 c
-            })
+            },
+        )
     }
 
     fn run<'a>(&self, node: &AstNode<'a>, ctx: &LintContext<'a>) {
         match node.kind() {
             AstKind::ExportAllDeclaration(export) => self.check_export_all(export, ctx),
             AstKind::ExportDefaultDeclaration(export) => self.check_export_default(export, ctx),
+            AstKind::ExportDeclaration(export) => self.check_export_declaration(export, ctx),
             AstKind::ExportNamedDeclaration(export) => self.check_export_named(export, ctx),
+            AstKind::ExportFromDeclaration(export) => self.check_export_from(export, ctx),
             _ => {}
         }
     }
@@ -275,7 +248,21 @@ impl NoRestrictedExports {
     }
 
     fn check_export_named(&self, export: &ExportNamedDeclaration, ctx: &LintContext) {
-        let (named_exports, has_default_exports, local_specifiers) = export.specifiers.iter().fold(
+        self.check_export_specifiers(export.span, &export.specifiers, false, ctx);
+    }
+
+    fn check_export_from(&self, export: &ExportFromDeclaration, ctx: &LintContext) {
+        self.check_export_specifiers(export.span, &export.specifiers, true, ctx);
+    }
+
+    fn check_export_specifiers(
+        &self,
+        span: Span,
+        specifiers: &[ExportSpecifier<'_>],
+        has_source: bool,
+        ctx: &LintContext,
+    ) {
+        let (named_exports, has_default_exports, local_specifiers) = specifiers.iter().fold(
             (Vec::new(), false, Vec::new()),
             |(mut names, mut has_default, mut specifiers), spec| {
                 names.push(spec.exported.name().into_string());
@@ -293,41 +280,34 @@ impl NoRestrictedExports {
             },
         );
 
-        self.check_no_restricted_named_exports(ctx, export.span, named_exports);
+        self.check_no_restricted_named_exports(ctx, span, named_exports);
 
         if has_default_exports {
-            self.check_no_restricted_named_default_exports(
-                ctx,
-                export.span,
-                export.source.is_some(),
-                local_specifiers,
-            );
+            self.check_no_restricted_named_default_exports(ctx, span, has_source, local_specifiers);
         }
+    }
 
-        if let Some(declaration) = export.declaration.as_ref() {
-            match declaration {
-                Declaration::FunctionDeclaration(_) | Declaration::ClassDeclaration(_) => {
-                    if let Some(id) = declaration.id() {
-                        self.check_no_restricted_named_exports(
-                            ctx,
-                            export.span,
-                            std::iter::once(id.name.into_string()),
-                        );
-                    }
-                }
-                Declaration::VariableDeclaration(variable) => {
+    fn check_export_declaration(&self, export: &ExportDeclaration, ctx: &LintContext) {
+        match &export.declaration {
+            Declaration::FunctionDeclaration(_) | Declaration::ClassDeclaration(_) => {
+                if let Some(id) = export.declaration.id() {
                     self.check_no_restricted_named_exports(
                         ctx,
                         export.span,
-                        variable.declarations.iter().flat_map(|d| {
-                            d.id.get_binding_identifiers()
-                                .into_iter()
-                                .map(|id| id.name.into_string())
-                        }),
+                        std::iter::once(id.name.into_string()),
                     );
                 }
-                _ => {}
             }
+            Declaration::VariableDeclaration(variable) => {
+                self.check_no_restricted_named_exports(
+                    ctx,
+                    export.span,
+                    variable.declarations.iter().flat_map(|d| {
+                        d.id.get_binding_identifiers().into_iter().map(|id| id.name.into_string())
+                    }),
+                );
+            }
+            _ => {}
         }
     }
 

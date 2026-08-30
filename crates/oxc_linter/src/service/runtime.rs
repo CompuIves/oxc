@@ -19,7 +19,7 @@ use rustc_hash::{FxBuildHasher, FxHashMap, FxHashSet, FxHasher};
 use self_cell::self_cell;
 use smallvec::SmallVec;
 
-use oxc_allocator::{Allocator, AllocatorGuard, AllocatorPool, Box as ArenaBox};
+use oxc_allocator::{Allocator, AllocatorGuard, AllocatorPool, ArenaBox};
 use oxc_diagnostics::{DiagnosticSender, DiagnosticService, Error, OxcDiagnostic};
 use oxc_parser::{ParseOptions, Parser, Token, config::RuntimeParserConfig};
 use oxc_resolver::Resolver;
@@ -28,11 +28,12 @@ use oxc_span::{SourceType, VALID_EXTENSIONS};
 use oxc_str::CompactStr;
 
 use crate::{
-    Fixer, Linter, Message, PossibleFixes,
-    context::ContextSubHost,
+    Fixer, Linter, Message, PossibleFixes, RuleTimingStore,
+    context::{ContextSubHost, ContextSubHostOptions},
     disable_directives::DisableDirectives,
     loader::{JavaScriptSource, LINT_PARTIAL_LOADER_EXTENSIONS, PartialLoader},
     module_record::ModuleRecord,
+    suppression::DiffManager,
     utils::read_to_arena_str,
 };
 
@@ -118,7 +119,14 @@ struct ModuleContentDependent<'a> {
     section_contents: SectionContents<'a>,
 }
 
-// Safety: dependent borrows from owner. They're safe to be sent together.
+// SAFETY: `dependent` borrows from `owner` (the `Allocator`). They're safe to send together.
+//
+// One case doesn't fit that "sent together" picture: `ReplaceWith`'s panic path (in `oxc_allocator`)
+// writes a dummy backed by its own dedicated, global `'static` allocator, which does not travel with
+// this bundle. Sending is still sound, because each such dummy allocator is exclusively owned -
+// reachable only through the single value that holds it, and mutated only via `&mut` to that value -
+// so no two threads can touch one. The invariant this really rests on is single-ownership of each
+// referenced allocator, not co-location.
 unsafe impl Send for ModuleContent<'_> {}
 
 /// source text and semantic for each source section. They are in the same order as `ProcessedModule.section_module_records`
@@ -332,10 +340,11 @@ impl Runtime {
         }
 
         let file_result = file_system.read_to_arena_str(path, allocator).map_err(|e| {
-            Error::new(OxcDiagnostic::error(format!(
+            OxcDiagnostic::error(format!(
                 "Failed to open file {} with error \"{e}\"",
                 path.display()
-            )))
+            ))
+            .into()
         });
         Some(match file_result {
             Ok(source_text) => Ok((source_type, source_text)),
@@ -558,7 +567,7 @@ impl Runtime {
                     "This is an internal logic error. Please file an issue at https://github.com/oxc-project/oxc/issues",
                 );
                 for (record, requested_module_paths) in
-                    records.iter().zip(requested_module_paths.into_iter())
+                    records.iter().zip(requested_module_paths)
                 {
                     let mut loaded_modules = record.write_loaded_modules();
                     for request in requested_module_paths {
@@ -582,11 +591,24 @@ impl Runtime {
         }
     }
 
-    pub(super) fn run(
+    pub(super) fn run<const TIMINGS: bool>(
         &self,
         file_system: &(dyn RuntimeFileSystem + Sync + Send),
         paths: Vec<Arc<OsStr>>,
         tx_error: &DiagnosticSender,
+        diff_manager: &Arc<DiffManager>,
+        rule_timing_store: Option<&RuleTimingStore>,
+    ) {
+        self.run_impl::<TIMINGS>(file_system, paths, tx_error, diff_manager, rule_timing_store);
+    }
+
+    fn run_impl<const TIMINGS: bool>(
+        &self,
+        file_system: &(dyn RuntimeFileSystem + Sync + Send),
+        paths: Vec<Arc<OsStr>>,
+        tx_error: &DiagnosticSender,
+        diff_manager: &Arc<DiffManager>,
+        rule_timing_store: Option<&RuleTimingStore>,
     ) {
         self.modules_by_path.pin().reserve(paths.len());
         let paths_set: IndexSet<Arc<OsStr>, FxBuildHasher> = paths.into_iter().collect();
@@ -612,20 +634,24 @@ impl Runtime {
                             dep.section_contents.len()
                         );
 
+                        let respect_eslint_disable_directives =
+                            me.linter.respect_eslint_disable_directives();
                         let context_sub_hosts: Vec<ContextSubHost<'_>> = module_to_lint
                             .section_module_records
                             .into_iter()
                             .zip(dep.section_contents.drain(..))
                             .filter_map(|(record_result, section)| match record_result {
-                                Ok(module_record) => {
-                                    Some(ContextSubHost::new_with_framework_options(
-                                        section.semantic.unwrap(),
-                                        Arc::clone(&module_record),
-                                        section.source.start,
-                                        section.source.framework_options,
-                                        section.parser_tokens,
-                                    ))
-                                }
+                                Ok(module_record) => Some(ContextSubHost::new(
+                                    section.semantic.unwrap(),
+                                    Arc::clone(&module_record),
+                                    section.source.start,
+                                    ContextSubHostOptions {
+                                        framework_options: section.source.framework_options,
+                                        parser_tokens: section.parser_tokens,
+                                        respect_eslint_disable_directives,
+                                        ..Default::default()
+                                    },
+                                )),
                                 Err(messages) => {
                                     if !messages.is_empty() {
                                         let diagnostics = DiagnosticService::wrap_diagnostics(
@@ -646,11 +672,12 @@ impl Runtime {
                         }
 
                         let (mut messages, disable_directives) =
-                            me.linter.run_with_disable_directives(
+                            me.linter.run_with_disable_directives::<TIMINGS>(
                                 path,
                                 context_sub_hosts,
                                 allocator_guard,
                                 me.js_allocator_pool(),
+                                rule_timing_store,
                             );
 
                         // Store the disable directives for this file
@@ -678,7 +705,12 @@ impl Runtime {
                                     .to_mut()
                                     .replace_range(start..end, &fix_result.fixed_code);
                             }
+
                             messages = fix_result.messages;
+                        }
+
+                        if !diff_manager.skip() {
+                            messages = diff_manager.collect_file(path, &self.cwd, messages);
                         }
 
                         if !messages.is_empty() {
@@ -694,8 +726,18 @@ impl Runtime {
 
                         // If the new source text is owned, that means it was modified,
                         // so we write the new source text to the file.
-                        if let Cow::Owned(new_source_text) = &new_source_text {
-                            file_system.write_file(path, new_source_text).unwrap();
+                        if let Cow::Owned(new_source_text) = &new_source_text
+                            && let Err(error) = file_system.write_file(path, new_source_text)
+                        {
+                            tx_error
+                                .send(vec![
+                                    OxcDiagnostic::error(format!(
+                                        "Failed to write file {} with error \"{error}\"",
+                                        path.display()
+                                    ))
+                                    .into(),
+                                ])
+                                .unwrap();
                         }
                     });
                 },
@@ -726,61 +768,69 @@ impl Runtime {
                 None,
                 |me, mut module_to_lint| {
                     module_to_lint.content.with_dependent_mut(
-                    |allocator_guard, ModuleContentDependent { source_text: _, section_contents }| {
-                        assert_eq!(
-                            module_to_lint.section_module_records.len(),
-                            section_contents.len()
-                        );
+                        |allocator_guard,
+                         ModuleContentDependent { source_text: _, section_contents }| {
+                            assert_eq!(
+                                module_to_lint.section_module_records.len(),
+                                section_contents.len()
+                            );
 
-                        let context_sub_hosts: Vec<ContextSubHost<'_>> = module_to_lint
-                            .section_module_records
-                            .into_iter()
-                            .zip(section_contents.drain(..))
-                            .filter_map(|(record_result, section)| match record_result {
-                                Ok(module_record) => {
-                                    Some(ContextSubHost::new_with_framework_options(
+                            let respect_eslint_disable_directives =
+                                me.linter.respect_eslint_disable_directives();
+                            let context_sub_hosts: Vec<ContextSubHost<'_>> = module_to_lint
+                                .section_module_records
+                                .into_iter()
+                                .zip(section_contents.drain(..))
+                                .filter_map(|(record_result, section)| match record_result {
+                                    Ok(module_record) => Some(ContextSubHost::new(
                                         section.semantic.unwrap(),
                                         Arc::clone(&module_record),
                                         section.source.start,
-                                        section.source.framework_options,
-                                        section.parser_tokens,
-                                    ))
-                                }
-                                Err(diagnostics) => {
-                                    if !diagnostics.is_empty() {
-                                        messages.lock().unwrap().extend(
-                                            diagnostics.into_iter().map(|diagnostic| {
-                                                Message::new(diagnostic, PossibleFixes::None)
-                                            }),
-                                        );
+                                        ContextSubHostOptions {
+                                            framework_options: section.source.framework_options,
+                                            parser_tokens: section.parser_tokens,
+                                            respect_eslint_disable_directives,
+                                            ..Default::default()
+                                        },
+                                    )),
+                                    Err(diagnostics) => {
+                                        if !diagnostics.is_empty() {
+                                            messages.lock().unwrap().extend(
+                                                diagnostics.into_iter().map(|diagnostic| {
+                                                    Message::new(diagnostic, PossibleFixes::None)
+                                                }),
+                                            );
+                                        }
+                                        None
                                     }
-                                    None
-                                }
-                            })
-                            .collect();
+                                })
+                                .collect();
 
-                        if context_sub_hosts.is_empty() {
-                            return;
-                        }
+                            if context_sub_hosts.is_empty() {
+                                return;
+                            }
 
-                        let path = Path::new(&module_to_lint.path);
+                            let path = Path::new(&module_to_lint.path);
 
-                        let (section_messages, disable_directives) = me
-                            .linter
-                            .run_with_disable_directives(path, context_sub_hosts, allocator_guard, me.js_allocator_pool());
+                            let (section_messages, disable_directives) =
+                                me.linter.run_with_disable_directives::<false>(
+                                    path,
+                                    context_sub_hosts,
+                                    allocator_guard,
+                                    me.js_allocator_pool(),
+                                    None,
+                                );
 
-                        if let Some(disable_directives) = disable_directives {
-                            me.disable_directives_map
-                                .lock()
-                                .expect("disable_directives_map mutex poisoned")
-                                .insert(path.to_path_buf(), disable_directives);
-                        }
+                            if let Some(disable_directives) = disable_directives {
+                                me.disable_directives_map
+                                    .lock()
+                                    .expect("disable_directives_map mutex poisoned")
+                                    .insert(path.to_path_buf(), disable_directives);
+                            }
 
-                        messages.lock().unwrap().extend(
-                            section_messages
-                        );
-                    },
-                );
+                            messages.lock().unwrap().extend(section_messages);
+                        },
+                    );
                 },
             );
         });
@@ -855,32 +905,44 @@ impl Runtime {
 
         let messages = Mutex::new(Vec::<Message>::new());
         rayon::scope(|scope| {
-            self.resolve_modules(file_system, &paths_set, scope, check_syntax_errors, Some(tx_error), |me, mut module| {
-                module.content.with_dependent_mut(
-                    |allocator_guard, ModuleContentDependent { source_text: _, section_contents }| {
+            self.resolve_modules(
+                file_system,
+                &paths_set,
+                scope,
+                check_syntax_errors,
+                Some(tx_error),
+                |me, mut module| {
+                    module.content.with_dependent_mut(|allocator_guard, ModuleContentDependent {
+                        source_text: _,
+                        section_contents,
+                    }| {
                         assert_eq!(module.section_module_records.len(), section_contents.len());
 
+                        let respect_eslint_disable_directives =
+                            me.linter.respect_eslint_disable_directives();
                         let context_sub_hosts: Vec<ContextSubHost<'_>> = module
                             .section_module_records
                             .into_iter()
                             .zip(section_contents.drain(..))
                             .filter_map(|(record_result, section)| match record_result {
-                                Ok(module_record) => Some(ContextSubHost::new_with_framework_options(
+                                Ok(module_record) => Some(ContextSubHost::new(
                                     section.semantic.unwrap(),
                                     Arc::clone(&module_record),
                                     section.source.start,
-                                    section.source.framework_options,
-                                    section.parser_tokens,
+                                    ContextSubHostOptions {
+                                        framework_options: section.source.framework_options,
+                                        parser_tokens: section.parser_tokens,
+                                        respect_eslint_disable_directives,
+                                        ..Default::default()
+                                    },
                                 )),
                                 Err(errors) => {
                                     if !errors.is_empty() {
-                                        messages
-                                            .lock()
-                                            .unwrap()
-                                            .extend(errors
-                                        .into_iter()
-                                        .map(|err| Message::new(err, PossibleFixes::None))
-                                    );
+                                        messages.lock().unwrap().extend(
+                                            errors.into_iter().map(|err| {
+                                                Message::new(err, PossibleFixes::None)
+                                            }),
+                                        );
                                     }
                                     None
                                 }
@@ -892,16 +954,11 @@ impl Runtime {
                         }
 
                         messages.lock().unwrap().extend(
-                            me.linter.run(
-                                Path::new(&module.path),
-                                context_sub_hosts,
-                                allocator_guard
-                            )
-                            ,
+                            me.linter.run(Path::new(&module.path), context_sub_hosts, allocator_guard),
                         );
-                    },
-                );
-            });
+                    });
+                },
+            );
         });
         messages.into_inner().unwrap()
     }
@@ -1046,12 +1103,8 @@ impl Runtime {
                     let err: Vec<OxcDiagnostic> = err
                         .into_iter()
                         .map(|mut diagnostic| {
-                            if let Some(labels) = &mut diagnostic.labels {
-                                for label in labels.iter_mut() {
-                                    label.set_span_offset(
-                                        label.offset() + section_source.start as usize,
-                                    );
-                                }
+                            for label in &mut diagnostic.labels {
+                                label.set_span_offset(label.offset() + section_source.start);
                             }
                             diagnostic
                         })
@@ -1091,17 +1144,16 @@ impl Runtime {
             .with_config(RuntimeParserConfig::new(collect_tokens))
             .parse();
 
-        if !ret.errors.is_empty() {
-            return Err(if ret.is_flow_language { vec![] } else { ret.errors });
+        if !ret.diagnostics.is_empty() {
+            return Err(if ret.is_flow_language { vec![] } else { ret.diagnostics.into() });
         }
 
-        let semantic_ret = SemanticBuilder::new()
-            .with_cfg(true)
+        let semantic_ret = SemanticBuilder::new_linter()
             .with_check_syntax_error(check_syntax_errors)
             .build(allocator.alloc(ret.program));
 
-        if !semantic_ret.errors.is_empty() {
-            return Err(semantic_ret.errors);
+        if !semantic_ret.diagnostics.is_empty() {
+            return Err(semantic_ret.diagnostics.into());
         }
 
         let mut semantic = semantic_ret.semantic;

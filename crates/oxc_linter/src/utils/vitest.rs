@@ -6,6 +6,10 @@ use super::{ParsedExpectFnCall, ParsedJestFnCallNew, PossibleJestNode, parse_jes
 
 pub mod valid_vitest_fn;
 
+pub fn is_vitest_import_source(source: &str) -> bool {
+    matches!(source, "vitest" | "vite-plus/test" | "@effect/vitest")
+}
+
 pub fn parse_expect_and_typeof_vitest_fn_call<'a>(
     call_expr: &'a CallExpression<'a>,
     possible_jest_node: &PossibleJestNode<'a, '_>,
@@ -16,6 +20,6 @@ pub fn parse_expect_and_typeof_vitest_fn_call<'a>(
     match jest_fn_call {
         ParsedJestFnCallNew::Expect(jest_fn_call)
         | ParsedJestFnCallNew::ExpectTypeOf(jest_fn_call) => Some(jest_fn_call),
-        ParsedJestFnCallNew::GeneralJest(_) => None,
+        ParsedJestFnCallNew::GeneralJest(_) | ParsedJestFnCallNew::Fixture(_) => None,
     }
 }

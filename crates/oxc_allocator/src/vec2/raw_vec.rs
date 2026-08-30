@@ -21,7 +21,6 @@
     clippy::needless_pass_by_value,
     clippy::inline_always
 )]
-#![allow(unstable_name_collisions)]
 #![allow(dead_code)]
 
 use std::{
@@ -132,10 +131,7 @@ impl<'a, T, A: Alloc> RawVec<'a, T, A> {
     /// If all these values came from a `Vec` created in allocator `a`, then these requirements
     /// are guaranteed to be fulfilled.
     #[inline(always)]
-    pub unsafe fn from_raw_parts_in(ptr: *mut T, len: usize, cap: usize, alloc: &'a A) -> Self {
-        // SAFETY: Caller guarantees `ptr` was allocated, which implies it's not null
-        let ptr = unsafe { NonNull::new_unchecked(ptr) };
-
+    pub unsafe fn from_raw_parts_in(ptr: NonNull<T>, len: usize, cap: usize, alloc: &'a A) -> Self {
         // Caller guarantees `cap` and `len` are `<= u32::MAX`, so `as u32` cannot truncate them
         #[expect(clippy::cast_possible_truncation)]
         let len = len as u32;
@@ -203,13 +199,13 @@ impl<'a, T, A: Alloc> RawVec<'a, T, A> {
     ///
     /// This method is hazardous.
     ///
-    /// `Vec` is `Sync`, but `Bump` is not, because it utilizes interior mutability.
-    /// It is possible to make allocations into the arena while holding only a `&Bump`.
+    /// `Vec` is `Sync`, but `Arena` is not, because it utilizes interior mutability.
+    /// It is possible to make allocations into the arena while holding only a `&Arena`.
     /// Because `Vec` is `Sync`, it's possible for multiple `&Vec` references to the same `Vec`,
-    /// or references to multiple `Vec`s attached to the same `Bump`, to exist simultaneously
+    /// or references to multiple `Vec`s attached to the same `Arena`, to exist simultaneously
     /// on different threads.
     ///
-    /// So this method could be used to obtain 2 `&Bump` references simultaneously on different threads.
+    /// So this method could be used to obtain 2 `&Arena` references simultaneously on different threads.
     /// Utilizing those references to allocate into the arena simultaneously from different threads
     /// would be UB.
     ///
@@ -240,7 +236,7 @@ impl<'a, T, A: Alloc> RawVec<'a, T, A> {
     /// for the duration that the reference returned by this method is held.
     /// See text above for further detail.
     #[inline(always)]
-    pub unsafe fn bump(&self) -> &'a A {
+    pub unsafe fn arena(&self) -> &'a A {
         self.alloc
     }
 
@@ -806,7 +802,7 @@ impl<T, A: Alloc> RawVec<'_, T, A> {
                 ) -> NonNull<u8> {
                     alloc.grow(ptr, old_layout, new_layout)
                 }
-                debug_assert!(new_layout.align() == layout.align());
+                debug_assert_eq!(new_layout.align(), layout.align());
                 grow(self.alloc, self.ptr.cast(), layout, new_layout)
             },
             None => self.alloc.alloc(new_layout),
@@ -878,13 +874,13 @@ fn handle_error(error: AllocError) -> ! {
 
 #[cfg(test)]
 mod tests {
-    use crate::bump::Bump;
+    use crate::arena::Arena;
 
     use super::*;
 
     #[test]
     fn reserve_does_not_overallocate() {
-        let arena = Bump::new();
+        let arena = Arena::new();
         {
             let mut v: RawVec<u32, _> = RawVec::new_in(&arena);
             // First `reserve` allocates like `reserve_exact`

@@ -65,8 +65,7 @@ impl Default for Yoda {
 declare_oxc_lint!(
     /// ### What it does
     ///
-    /// Require or disallow "Yoda" conditions.
-    /// This rule aims to enforce consistent style of conditions which compare a variable to a literal value.
+    /// Require or disallow "Yoda" conditions. This rule aims to enforce consistent style of conditions which compare a variable to a literal value.
     ///
     /// ### Why is this bad?
     ///
@@ -217,6 +216,8 @@ declare_oxc_lint!(
     style,
     fix,
     config = Yoda,
+    version = "0.14.1",
+    short_description = "Require or disallow \"Yoda\" conditions.",
 );
 
 impl Rule for Yoda {
@@ -280,25 +281,13 @@ fn do_diagnostic_with_fix(expr: &BinaryExpression, ctx: &LintContext, never: boo
         let right_span = expr.right.span();
 
         let operator_str = expr.operator.as_str();
-        let str_between_left_and_right = ctx.source_range(
-            Span::new(left_span.end, right_span.start)
-        );
-
-        let (operator_start, operator_end) = str_between_left_and_right
-            .as_bytes()
-            .windows(operator_str.len())
-            .enumerate()
-            .find_map(|(index, chunk)| {
-                if chunk == operator_str.as_bytes() {
-                    let pos_start = index as u32 + left_span.end;
-                    let pos_end = pos_start + operator_str.len() as u32;
-                    if !ctx.comments().iter().any(|comment| comment.span.start <= pos_start && pos_end <= comment.span.end) {
-                        return Some((pos_start, pos_end));
-                    }
-                }
-                None
-            })
-            .unwrap();
+        let Some(operator_offset) =
+            ctx.find_next_token_within(left_span.end, right_span.start, operator_str)
+        else {
+            return fix.noop();
+        };
+        let operator_start = left_span.end + operator_offset;
+        let operator_end = operator_start + operator_str.len() as u32;
 
         let str_between_left_and_operator = ctx.source_range(Span::new(left_span.end, operator_start));
         let str_between_operator_and_right = ctx.source_range(Span::new(operator_end, right_span.start));

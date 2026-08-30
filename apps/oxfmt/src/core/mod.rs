@@ -1,26 +1,31 @@
 mod config;
+pub mod embed;
 mod format;
+pub mod options;
 pub mod oxfmtrc;
 mod support;
 pub mod utils;
 
 #[cfg(feature = "napi")]
-mod external_formatter;
-#[cfg(feature = "napi")]
-mod js_config;
+mod external_services;
 
-#[cfg(feature = "napi")]
-pub use config::all_config_file_names;
-#[cfg(feature = "napi")]
-pub use config::resolve_options_from_value;
-pub use config::{ConfigResolver, ResolvedOptions, resolve_editorconfig_path};
-pub use format::{FormatResult, SourceFormatter};
-pub use support::FormatFileStrategy;
-
-#[cfg(feature = "napi")]
-pub use external_formatter::{
-    ExternalFormatter, JsFormatEmbeddedCb, JsFormatEmbeddedDocCb, JsFormatFileCb,
-    JsInitExternalFormatterCb, JsSortTailwindClassesCb,
+pub use config::{
+    ConfigResolver, NestedConfigCtx, ResolveOutcome, resolve_editorconfig_path,
+    resolve_file_scope_config,
 };
+// `config_discovery` is consumed only by LSP code paths (napi-gated).
 #[cfg(feature = "napi")]
-pub use js_config::{JsConfigLoaderCb, JsLoadJsConfigCb, create_js_config_loader};
+pub use config::config_discovery;
+#[cfg(feature = "napi")]
+pub use config::{
+    EmbeddedCallbackResolved, JsConfigLoaderCb, JsLoadJsConfigCb, create_js_config_loader,
+    resolve_for_api, resolve_for_embedded_js,
+};
+pub use format::{FormatResult, FormatStrategy, SourceFormatter};
+pub use support::classify_file_kind;
+
+#[cfg(feature = "napi")]
+pub use external_services::{
+    ExternalServices, JsFormatEmbeddedCb, JsFormatEmbeddedDocCb, JsFormatFileCb,
+    JsInitExternalServicesCb, JsSortTailwindClassesCb,
+};

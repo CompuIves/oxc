@@ -87,11 +87,13 @@ declare_oxc_lint!(
     react,
     correctness,
     config = NoUnsafeConfig,
+    version = "1.35.0",
+    short_description = "This rule identifies and restricts the use of unsafe React lifecycle methods.",
 );
 
 impl Rule for NoUnsafe {
     fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
-        serde_json::from_value::<DefaultRuleConfig<Self>>(value).map(DefaultRuleConfig::into_inner)
+        DefaultRuleConfig::<Self>::from_value(value).map(DefaultRuleConfig::into_inner)
     }
 
     fn run<'a>(&self, node: &AstNode<'a>, ctx: &LintContext<'a>) {

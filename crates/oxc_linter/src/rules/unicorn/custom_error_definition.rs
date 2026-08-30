@@ -125,6 +125,8 @@ declare_oxc_lint!(
     unicorn,
     style,
     pending,
+    version = "1.57.0",
+    short_description = "Enforce correct `Error` subclassing.",
 );
 
 impl Rule for CustomErrorDefinition {
@@ -301,7 +303,8 @@ fn get_class_name(name: &str) -> String {
 
 fn strip_suffix_case_insensitive<'a>(value: &'a str, suffix: &str) -> Option<&'a str> {
     let start = value.len().checked_sub(suffix.len())?;
-    value[start..].eq_ignore_ascii_case(suffix).then_some(&value[..start])
+    let (prefix, value_suffix) = value.split_at_checked(start)?;
+    value_suffix.eq_ignore_ascii_case(suffix).then_some(prefix)
 }
 
 fn is_name_property_definition(prop: &PropertyDefinition) -> bool {
@@ -334,7 +337,7 @@ fn is_valid_super_class_name(name: &str) -> bool {
 }
 
 fn has_valid_super_class(class: &Class) -> bool {
-    let Some(super_class) = &class.super_class else {
+    let Some(super_class) = class.heritage_expression() else {
         return false;
     };
     let name = match super_class.get_inner_expression() {
@@ -532,6 +535,7 @@ fn test() {
                 this.name = 'fooerror';
             }
         }",
+        r"class ºrror extends Error {}",
         r"class FooError extends Error {
             constructor() { }
         }",

@@ -68,11 +68,13 @@ declare_oxc_lint!(
     style,
     pending,
     config = NoEmptyInterface,
+    version = "0.0.6",
+    short_description = "Disallow the declaration of empty interfaces.",
 );
 
 impl Rule for NoEmptyInterface {
     fn from_configuration(value: Value) -> Result<Self, serde_json::error::Error> {
-        serde_json::from_value::<DefaultRuleConfig<Self>>(value).map(DefaultRuleConfig::into_inner)
+        DefaultRuleConfig::<Self>::from_value(value).map(DefaultRuleConfig::into_inner)
     }
 
     fn run<'a>(&self, node: &AstNode<'a>, ctx: &LintContext<'a>) {

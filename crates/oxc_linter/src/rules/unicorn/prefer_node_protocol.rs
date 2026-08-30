@@ -10,9 +10,11 @@ use oxc_span::Span;
 use crate::{AstNode, context::LintContext, rule::Rule};
 
 fn prefer_node_protocol_diagnostic(span: Span, module_name: &str) -> OxcDiagnostic {
-    OxcDiagnostic::warn("Prefer using the `node:` protocol when importing Node.js builtin modules.")
-        .with_help(format!("Prefer `node:{module_name}` over `{module_name}`."))
-        .with_label(span)
+    OxcDiagnostic::warn(
+        "Prefer using the `node:` protocol when importing Node.js built-in modules.",
+    )
+    .with_help(format!("Prefer `node:{module_name}` over `{module_name}`."))
+    .with_label(span)
 }
 
 #[derive(Debug, Default, Clone)]
@@ -21,11 +23,11 @@ pub struct PreferNodeProtocol;
 declare_oxc_lint!(
     /// ### What it does
     ///
-    /// Prefer using the `node:protocol` when importing Node.js builtin modules.
+    /// Prefer using the `node:` protocol when importing Node.js built-in modules.
     ///
     /// ### Why is this bad?
     ///
-    /// Node.js builtin modules should be imported using the `node:` protocol to avoid ambiguity with local modules.
+    /// Node.js built-in modules should be imported using the `node:` protocol to avoid ambiguity with local modules.
     ///
     /// ### Examples
     ///
@@ -41,7 +43,9 @@ declare_oxc_lint!(
     PreferNodeProtocol,
     unicorn,
     restriction,
-    fix
+    fix,
+    version = "0.0.19",
+    short_description = "Prefer using the `node:` protocol when importing Node.js built-in modules.",
 );
 
 impl Rule for PreferNodeProtocol {
@@ -61,20 +65,15 @@ impl Rule for PreferNodeProtocol {
                 call.common_js_require().map(|s| (s.value, s.span))
             }
             AstKind::ImportDeclaration(import) => Some((import.source.value, import.source.span)),
-            AstKind::ExportNamedDeclaration(export) => {
-                export.source.as_ref().map(|item| (item.value, item.span))
+            AstKind::ExportFromDeclaration(export) => {
+                Some((export.source.value, export.source.span))
             }
             _ => return,
         };
         let Some((string_lit_value, span)) = string_lit_value_with_span else {
             return;
         };
-        let module_name = if let Some((prefix, postfix)) = string_lit_value.split_once('/') {
-            // `e.g. ignore "assert/"`
-            if postfix.is_empty() { string_lit_value.as_str() } else { prefix }
-        } else {
-            string_lit_value.as_str()
-        };
+        let module_name = string_lit_value.as_str();
         if module_name.starts_with("node:") || !is_nodejs_builtin_module(module_name) {
             return;
         }
@@ -103,6 +102,7 @@ fn test() {
         r#"import unicorn from "unicorn";"#,
         r#"import fs from "./fs";"#,
         r#"import fs from "unknown-builtin-module";"#,
+        r#"import { ADMIN_PATH } from "constants/url";"#,
         r#"import fs from "node:fs";"#,
         r#"import * as fs from "node:fs";"#,
         r#"import "punycode / ";"#,

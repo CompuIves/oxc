@@ -113,7 +113,6 @@ pub static NOT_SUPPORTED_ERROR_CODES: phf::Set<&'static str> = phf::phf_set![
     "1064", // The return type of an async function or method must be the global Promise<T> type. Did you mean to write 'Promise<string>'?
     "1065", // The return type of an async function or method must be the global Promise<T> type.
     "1084", // Invalid 'reference' directive syntax.
-    "1147", // Import declarations in a namespace cannot reference a module.
     "1148", // Cannot use imports, exports, or module augmentations when '--module' is 'none'.
     "1166", // A computed property name in a class property declaration must have a simple literal type or a 'unique symbol' type.
     "1169", // A computed property name in an interface must refer to an expression whose type is a literal type or a 'unique symbol' type.
@@ -126,6 +125,7 @@ pub static NOT_SUPPORTED_ERROR_CODES: phf::Set<&'static str> = phf::phf_set![
     "1216", // Identifier expected. '__esModule' is reserved as an exported marker when transforming ECMAScript modules.
     "1218", // Export assignment is not supported when '--module' flag is 'system'.
     "1238", // Unable to resolve signature of class decorator when called as an expression.
+    "1239", // Unable to resolve signature of parameter decorator when called as an expression.
     "1240", // Unable to resolve signature of property decorator when called as an expression.
     "1241", // Unable to resolve signature of method decorator when called as an expression.
     "1250", // Function declarations are not allowed inside blocks in strict mode when targeting 'ES5'.

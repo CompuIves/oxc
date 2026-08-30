@@ -37,11 +37,12 @@ use std::mem;
 
 use rustc_hash::FxHashMap;
 
-use oxc_allocator::{Address, Box as ArenaBox, GetAddress, TakeIn, Vec as ArenaVec};
-use oxc_ast::{NONE, ast::*};
+use oxc_allocator::{Address, ArenaBox, ArenaVec, GetAddress, ReplaceWith, TakeIn};
+use oxc_ast::ast::*;
 use oxc_ecmascript::BoundNames;
-use oxc_semantic::{ScopeFlags, ScopeId, SymbolFlags};
+use oxc_semantic::{NodeId, ScopeFlags, ScopeId, SymbolFlags, SymbolId};
 use oxc_span::{SPAN, Span};
+use oxc_str::static_ident;
 use oxc_traverse::{BoundIdentifier, Traverse};
 
 use crate::{
@@ -83,13 +84,12 @@ impl<'a> Traverse<'a, TransformState<'a>> for ExplicitResourceManagement<'a> {
         decl.kind = VariableDeclarationKind::Const;
 
         let variable_declarator = decl.declarations.first_mut().unwrap();
-        variable_declarator.kind = VariableDeclarationKind::Const;
 
         let variable_declarator_binding_ident =
             variable_declarator.id.get_binding_identifier().unwrap();
+        let variable_declarator_binding_name = variable_declarator_binding_ident.name;
 
         let for_of_init_symbol_id = variable_declarator_binding_ident.symbol_id();
-        let for_of_init_name = variable_declarator_binding_ident.name;
 
         let temp_id = ctx.generate_uid_based_on_node(
             variable_declarator.id.get_binding_identifier().unwrap(),
@@ -101,40 +101,72 @@ impl<'a> Traverse<'a, TransformState<'a>> for ExplicitResourceManagement<'a> {
             mem::replace(&mut variable_declarator.id, temp_id.create_binding_pattern(ctx));
 
         // `using x = _x;`
-        let using_stmt = Statement::from(ctx.ast.declaration_variable(
+        let using_stmt = Statement::new_variable_declaration(
             SPAN,
             variable_decl_kind,
-            ctx.ast.vec1(ctx.ast.variable_declarator(
+            [VariableDeclarator::new(
                 SPAN,
-                variable_decl_kind,
                 binding_pattern,
-                NONE,
+                None,
                 Some(temp_id.create_read_expression(ctx)),
                 false,
-            )),
+                ctx,
+            )],
             false,
-        ));
-
-        let scope_id = match &mut for_of_stmt.body {
-            Statement::BlockStatement(block) => block.scope_id(),
-            _ => ctx.insert_scope_below_statement_from_scope_id(
-                &for_of_stmt.body,
-                for_of_stmt.scope_id(),
-                ScopeFlags::empty(),
-            ),
-        };
-        ctx.scoping_mut().set_symbol_scope_id(for_of_init_symbol_id, scope_id);
-        ctx.scoping_mut().move_binding(for_of_stmt_scope_id, scope_id, for_of_init_name);
+            ctx,
+        );
 
         if let Statement::BlockStatement(body) = &mut for_of_stmt.body {
+            let body_scope_id = body.scope_id();
+            // If the `for` loop body declares a binding with the same name as the `using` declaration,
+            // the `for` loop body must be wrapped in a new block to avoid having two bindings with
+            // the same name in the same scope, which would cause redeclaration errors.
+            // `for (using x of y) { const x = z; }` -> `for (const _x of y) { using x = _x; { const x = z; } }`
+            if ctx.scoping().get_binding(body_scope_id, variable_declarator_binding_name).is_some()
+            {
+                let scope_id = ctx.insert_scope_between(
+                    for_of_stmt_scope_id,
+                    body_scope_id,
+                    ScopeFlags::empty(),
+                );
+                ctx.scoping_mut().move_binding_by_symbol_id(
+                    for_of_stmt_scope_id,
+                    scope_id,
+                    for_of_init_symbol_id,
+                );
+
+                for_of_stmt.body.replace_with(|old_body| {
+                    let new_body = ArenaVec::from_array_in([using_stmt, old_body], ctx);
+                    Statement::new_block_statement_with_scope_id(SPAN, new_body, scope_id, ctx)
+                });
+                return;
+            }
+
+            ctx.scoping_mut().move_binding_by_symbol_id(
+                for_of_stmt_scope_id,
+                body_scope_id,
+                for_of_init_symbol_id,
+            );
+
             // `for (const _x of y) { x(); }` -> `for (const _x of y) { using x = _x; x(); }`
             body.body.insert(0, using_stmt);
         } else {
             // `for (const _x of y) x();` -> `for (const _x of y) { using x = _x; x(); }`
-            let old_body = for_of_stmt.body.take_in(ctx.ast);
+            let scope_id = ctx.insert_scope_below_statement_from_scope_id(
+                &for_of_stmt.body,
+                for_of_stmt.scope_id(),
+                ScopeFlags::empty(),
+            );
+            ctx.scoping_mut().move_binding_by_symbol_id(
+                for_of_stmt_scope_id,
+                scope_id,
+                for_of_init_symbol_id,
+            );
 
-            let new_body = ctx.ast.vec_from_array([using_stmt, old_body]);
-            for_of_stmt.body = ctx.ast.statement_block_with_scope_id(SPAN, new_body, scope_id);
+            for_of_stmt.body.replace_with(|old_body| {
+                let new_body = ArenaVec::from_array_in([using_stmt, old_body], ctx);
+                Statement::new_block_statement_with_scope_id(SPAN, new_body, scope_id, ctx)
+            });
         }
     }
 
@@ -169,19 +201,25 @@ impl<'a> Traverse<'a, TransformState<'a>> for ExplicitResourceManagement<'a> {
                 ScopeFlags::ClassStaticBlock,
             );
 
-            ctx.scoping_mut().set_symbol_scope_id(using_ctx.symbol_id, static_block_new_scope_id);
-            ctx.scoping_mut().move_binding(scope_id, static_block_new_scope_id, using_ctx.name);
+            ctx.scoping_mut().move_binding_by_symbol_id(
+                scope_id,
+                static_block_new_scope_id,
+                using_ctx.symbol_id,
+            );
             *ctx.scoping_mut().scope_flags_mut(scope_id) = ScopeFlags::StrictMode;
 
             block.set_scope_id(static_block_new_scope_id);
-            block.body = ctx.ast.vec1(Self::create_try_stmt(
-                ctx.ast.block_statement_with_scope_id(SPAN, new_stmts, scope_id),
-                &using_ctx,
-                static_block_new_scope_id,
-                needs_await,
-                SPAN,
+            block.body = ArenaVec::from_value_in(
+                Self::create_try_stmt(
+                    BlockStatement::boxed_with_scope_id(SPAN, new_stmts, scope_id, ctx),
+                    &using_ctx,
+                    static_block_new_scope_id,
+                    needs_await,
+                    SPAN,
+                    ctx,
+                ),
                 ctx,
-            ));
+            );
         }
     }
 
@@ -209,21 +247,44 @@ impl<'a> Traverse<'a, TransformState<'a>> for ExplicitResourceManagement<'a> {
         if let Some((new_stmts, needs_await, using_ctx)) =
             self.transform_statements(&mut body.statements, ctx.current_hoist_scope_id(), ctx)
         {
-            // FIXME: this creates the scopes in the correct place, however we never move the bindings contained
-            // within `new_stmts` to the new scope.
+            let current_scope_id = ctx.current_scope_id();
             let block_stmt_scope_id =
                 ctx.insert_scope_below_statements(&new_stmts, ScopeFlags::empty());
 
-            let current_scope_id = ctx.current_scope_id();
+            // `insert_scope_below_statements` moves child scopes from `current_scope_id` (the
+            // function body) onto `block_stmt_scope_id` (the generated `try` body), but direct
+            // bindings stay on `current_scope_id`. Move block-scoped variable and class bindings
+            // into the new scope so the binding map matches the AST shape. Function parameters and
+            // `var` bindings such as `_usingCtx` are not block-scoped and remain in the function
+            // body scope.
+            let to_move: Vec<SymbolId> = ctx
+                .scoping()
+                .iter_bindings_in(current_scope_id)
+                .filter(|&id| {
+                    ctx.scoping()
+                        .symbol_flags(id)
+                        .intersects(SymbolFlags::BlockScopedVariable | SymbolFlags::Class)
+                })
+                .collect();
+            for symbol_id in to_move {
+                ctx.scoping_mut().move_binding_by_symbol_id(
+                    current_scope_id,
+                    block_stmt_scope_id,
+                    symbol_id,
+                );
+            }
 
-            body.statements = ctx.ast.vec1(Self::create_try_stmt(
-                ctx.ast.block_statement_with_scope_id(SPAN, new_stmts, block_stmt_scope_id),
-                &using_ctx,
-                current_scope_id,
-                needs_await,
-                SPAN,
+            body.statements = ArenaVec::from_value_in(
+                Self::create_try_stmt(
+                    BlockStatement::boxed_with_scope_id(SPAN, new_stmts, block_stmt_scope_id, ctx),
+                    &using_ctx,
+                    current_scope_id,
+                    needs_await,
+                    SPAN,
+                    ctx,
+                ),
                 ctx,
-            ));
+            );
         }
     }
 
@@ -276,19 +337,25 @@ impl<'a> Traverse<'a, TransformState<'a>> for ExplicitResourceManagement<'a> {
                 ScopeFlags::empty(),
             );
 
-            node.block.body = ctx.ast.vec1(Self::create_try_stmt(
-                ctx.ast.block_statement_with_scope_id(SPAN, new_stmts, scope_id),
-                &using_ctx,
-                block_stmt_scope_id,
-                needs_await,
-                SPAN,
+            node.block.body = ArenaVec::from_value_in(
+                Self::create_try_stmt(
+                    BlockStatement::boxed_with_scope_id(SPAN, new_stmts, scope_id, ctx),
+                    &using_ctx,
+                    block_stmt_scope_id,
+                    needs_await,
+                    SPAN,
+                    ctx,
+                ),
                 ctx,
-            ));
+            );
 
             let current_hoist_scope_id = ctx.current_hoist_scope_id();
             node.block.set_scope_id(block_stmt_scope_id);
-            ctx.scoping_mut().set_symbol_scope_id(using_ctx.symbol_id, current_hoist_scope_id);
-            ctx.scoping_mut().move_binding(scope_id, current_hoist_scope_id, using_ctx.name);
+            ctx.scoping_mut().move_binding_by_symbol_id(
+                scope_id,
+                current_hoist_scope_id,
+                using_ctx.symbol_id,
+            );
 
             ctx.scoping_mut().change_scope_parent_id(scope_id, Some(block_stmt_scope_id));
         }
@@ -308,214 +375,220 @@ impl<'a> Traverse<'a, TransformState<'a>> for ExplicitResourceManagement<'a> {
             return;
         }
 
-        let program_body = program.body.take_in(ctx.ast);
-
-        let (mut program_body, inner_block): (
-            ArenaVec<'a, Statement<'a>>,
-            ArenaVec<'a, Statement<'a>>,
-        ) = program_body.into_iter().fold(
-            (ctx.ast.vec(), ctx.ast.vec()),
-            |(mut program_body, mut inner_block), mut stmt| {
-                let address = stmt.address();
-                match stmt {
-                    Statement::FunctionDeclaration(_)
-                    | Statement::ImportDeclaration(_)
-                    | Statement::ExportAllDeclaration(_) => {
-                        program_body.push(stmt);
-                    }
-                    Statement::ExportDefaultDeclaration(ref mut export_default_decl) => {
-                        let (var_id, span) = match &mut export_default_decl.declaration {
-                            ExportDefaultDeclarationKind::ClassDeclaration(class_decl)
-                                if class_decl.id.is_some() =>
-                            {
-                                let id = class_decl.id.take().unwrap();
-
-                                *ctx.scoping_mut().symbol_flags_mut(id.symbol_id()) =
-                                    SymbolFlags::FunctionScopedVariable;
-
-                                (BoundIdentifier::from_binding_ident(&id), id.span)
-                            }
-                            ExportDefaultDeclarationKind::FunctionDeclaration(_) => {
-                                program_body.push(stmt);
-                                return (program_body, inner_block);
-                            }
-                            _ => (
-                                ctx.generate_binding_in_current_scope(
-                                    ctx.ast.ident("_default"),
-                                    SymbolFlags::FunctionScopedVariable,
+        program.body.replace_with(|program_body| {
+            let (mut program_body, inner_block): (
+                ArenaVec<'a, Statement<'a>>,
+                ArenaVec<'a, Statement<'a>>,
+            ) = program_body.into_iter().fold(
+                (ArenaVec::new_in(ctx), ArenaVec::new_in(ctx)),
+                |(mut program_body, mut inner_block), mut stmt| {
+                    let address = stmt.address();
+                    match stmt {
+                        Statement::FunctionDeclaration(_)
+                        | Statement::ImportDeclaration(_)
+                        | Statement::ExportAllDeclaration(_) => {
+                            program_body.push(stmt);
+                        }
+                        Statement::ExportDefaultDeclaration(ref mut export_default_decl) => {
+                            let (var_id, span) = match &mut export_default_decl.declaration {
+                                ExportDefaultDeclarationKind::ClassDeclaration(class_decl)
+                                    if class_decl.id.is_some() =>
+                                {
+                                    Self::preserve_class_expression_name(class_decl, ctx)
+                                }
+                                ExportDefaultDeclarationKind::FunctionDeclaration(_) => {
+                                    program_body.push(stmt);
+                                    return (program_body, inner_block);
+                                }
+                                _ => (
+                                    ctx.generate_binding_in_current_scope(
+                                        static_ident!("_default"),
+                                        SymbolFlags::FunctionScopedVariable,
+                                    ),
+                                    SPAN,
                                 ),
-                                SPAN,
-                            ),
-                        };
+                            };
 
-                        let decl = mem::replace(
-                            &mut export_default_decl.declaration,
-                            ExportDefaultDeclarationKind::NullLiteral(
-                                ctx.ast.alloc_null_literal(SPAN),
-                            ),
-                        );
+                            let decl = mem::replace(
+                                &mut export_default_decl.declaration,
+                                ExportDefaultDeclarationKind::new_null_literal(SPAN, ctx),
+                            );
 
-                        let expr = match decl {
-                            ExportDefaultDeclarationKind::FunctionDeclaration(decl) => {
-                                Expression::FunctionExpression(decl)
-                            }
-                            ExportDefaultDeclarationKind::ClassDeclaration(mut decl) => {
-                                decl.r#type = ClassType::ClassExpression;
-                                Expression::ClassExpression(decl)
-                            }
-                            _ => decl.into_expression(),
-                        };
+                            let expr = match decl {
+                                ExportDefaultDeclarationKind::FunctionDeclaration(decl) => {
+                                    Expression::FunctionExpression(decl)
+                                }
+                                ExportDefaultDeclarationKind::ClassDeclaration(mut decl) => {
+                                    decl.r#type = ClassType::ClassExpression;
+                                    Expression::ClassExpression(decl)
+                                }
+                                _ => decl.into_expression(),
+                            };
 
-                        inner_block.push(Statement::VariableDeclaration(
-                            ctx.ast.alloc_variable_declaration(
+                            inner_block.push(Statement::new_variable_declaration(
                                 span,
                                 VariableDeclarationKind::Var,
-                                ctx.ast.vec1(ctx.ast.variable_declarator(
+                                [VariableDeclarator::new(
                                     span,
-                                    VariableDeclarationKind::Var,
-                                    var_id.create_binding_pattern(ctx),
-                                    NONE,
+                                    var_id.create_spanned_binding_pattern(span, ctx),
+                                    None,
                                     Some(expr),
                                     false,
-                                )),
+                                    ctx,
+                                )],
                                 false,
-                            ),
-                        ));
+                                ctx,
+                            ));
 
-                        program_body.push(Statement::ExportNamedDeclaration(
-                            ctx.ast.alloc_export_named_declaration(
+                            program_body.push(Statement::new_export_named_declaration(
                                 SPAN,
-                                None,
-                                ctx.ast.vec1(ctx.ast.export_specifier(
+                                [ExportSpecifier::new(
                                     SPAN,
                                     ModuleExportName::IdentifierReference(
                                         var_id.create_read_reference(ctx),
                                     ),
-                                    ctx.ast.module_export_name_identifier_name(SPAN, "default"),
+                                    ModuleExportName::new_identifier_name(SPAN, "default", ctx),
                                     ImportOrExportKind::Value,
-                                )),
-                                None,
+                                    ctx,
+                                )],
                                 ImportOrExportKind::Value,
-                                NONE,
-                            ),
-                        ));
-                    }
-                    Statement::ExportNamedDeclaration(ref mut export_named_declaration) => {
-                        let Some(ref mut decl) = export_named_declaration.declaration else {
-                            program_body.push(stmt);
+                                ctx,
+                            ));
+                        }
+                        Statement::ExportNamedDeclaration(export_named_declaration) => {
+                            program_body
+                                .push(Statement::ExportNamedDeclaration(export_named_declaration));
                             return (program_body, inner_block);
-                        };
-                        if matches!(
-                            decl,
-                            Declaration::FunctionDeclaration(_)
+                        }
+                        Statement::ExportFromDeclaration(export_from_declaration) => {
+                            program_body
+                                .push(Statement::ExportFromDeclaration(export_from_declaration));
+                            return (program_body, inner_block);
+                        }
+                        Statement::ExportDeclaration(export_declaration) => {
+                            let decl = &export_declaration.declaration;
+
+                            if matches!(
+                                decl,
+                                Declaration::FunctionDeclaration(_)
                                 | Declaration::TSTypeAliasDeclaration(_)
                                 | Declaration::TSInterfaceDeclaration(_)
                                 | Declaration::TSEnumDeclaration(_)
-                                | Declaration::TSModuleDeclaration(_)
+                                | Declaration::TSExternalModuleDeclaration(_)
+                                | Declaration::TSNamespaceDeclaration(_)
                                 // Note: `TSGlobalDeclaration` cannot be exported
                                 | Declaration::TSImportEqualsDeclaration(_)
-                        ) {
-                            program_body.push(stmt);
+                            ) {
+                                program_body.push(Statement::ExportDeclaration(export_declaration));
 
-                            return (program_body, inner_block);
-                        }
-
-                        let export_specifiers = match decl.take_in(ctx.ast) {
-                            Declaration::ClassDeclaration(class_decl) => {
-                                let class_binding = class_decl.id.as_ref().unwrap();
-                                let class_binding_name = class_binding.name;
-
-                                let xx = BoundIdentifier::from_binding_ident(class_binding)
-                                    .create_read_reference(ctx);
-
-                                inner_block.push(Self::transform_class_decl(class_decl, ctx));
-
-                                let local = ModuleExportName::IdentifierReference(xx);
-                                let exported = ctx
-                                    .ast
-                                    .module_export_name_identifier_name(SPAN, class_binding_name);
-                                ctx.ast.vec1(ctx.ast.export_specifier(
-                                    SPAN,
-                                    local,
-                                    exported,
-                                    ImportOrExportKind::Value,
-                                ))
+                                return (program_body, inner_block);
                             }
-                            Declaration::VariableDeclaration(mut var_decl) => {
-                                var_decl.kind = VariableDeclarationKind::Var;
-                                let mut export_specifiers = ctx.ast.vec();
 
-                                for decl in &mut var_decl.declarations {
-                                    decl.kind = VariableDeclarationKind::Var;
+                            let export_kind = export_declaration.export_kind();
+
+                            let decl = export_declaration.unbox().declaration;
+                            let export_specifiers = match decl {
+                                Declaration::ClassDeclaration(class_decl) => {
+                                    let class_binding = class_decl.id.as_ref().unwrap();
+                                    let class_binding_name = class_binding.name;
+
+                                    let class_binding_reference =
+                                        BoundIdentifier::from_binding_ident(class_binding)
+                                            .create_read_reference(ctx);
+
+                                    inner_block.push(Self::transform_class_decl(class_decl, ctx));
+
+                                    let local = ModuleExportName::IdentifierReference(
+                                        class_binding_reference,
+                                    );
+                                    let exported = ModuleExportName::new_identifier_name(
+                                        SPAN,
+                                        class_binding_name,
+                                        ctx,
+                                    );
+                                    ArenaVec::from_value_in(
+                                        ExportSpecifier::new(
+                                            SPAN,
+                                            local,
+                                            exported,
+                                            ImportOrExportKind::Value,
+                                            ctx,
+                                        ),
+                                        ctx,
+                                    )
                                 }
+                                Declaration::VariableDeclaration(mut var_decl) => {
+                                    var_decl.kind = VariableDeclarationKind::Var;
+                                    let mut export_specifiers = ArenaVec::new_in(ctx);
 
-                                var_decl.bound_names(&mut |ident| {
-                                    *ctx.scoping_mut().symbol_flags_mut(ident.symbol_id()) =
-                                        SymbolFlags::FunctionScopedVariable;
+                                    var_decl.bound_names(&mut |ident| {
+                                        *ctx.scoping_mut().symbol_flags_mut(ident.symbol_id()) =
+                                            SymbolFlags::FunctionScopedVariable;
 
-                                    export_specifiers.push(
-                                        ctx.ast.export_specifier(
+                                        export_specifiers.push(ExportSpecifier::new(
                                             SPAN,
                                             ModuleExportName::IdentifierReference(
                                                 BoundIdentifier::from_binding_ident(ident)
                                                     .create_read_reference(ctx),
                                             ),
-                                            ctx.ast.module_export_name_identifier_name(
-                                                SPAN, ident.name,
+                                            ModuleExportName::new_identifier_name(
+                                                SPAN, ident.name, ctx,
                                             ),
                                             ImportOrExportKind::Value,
-                                        ),
-                                    );
-                                });
-                                inner_block.push(Statement::VariableDeclaration(var_decl));
-                                export_specifiers
-                            }
-                            _ => unreachable!(),
-                        };
+                                            ctx,
+                                        ));
+                                    });
+                                    inner_block.push(Statement::VariableDeclaration(var_decl));
+                                    export_specifiers
+                                }
+                                _ => unreachable!(),
+                            };
 
-                        program_body.push(Statement::ExportNamedDeclaration(
-                            ctx.ast.alloc_export_named_declaration(
+                            program_body.push(Statement::new_export_named_declaration(
                                 SPAN,
-                                None,
                                 export_specifiers,
-                                None,
-                                export_named_declaration.export_kind,
-                                NONE,
-                            ),
-                        ));
-                    }
-                    Statement::ClassDeclaration(class_decl) => {
-                        inner_block.push(Self::transform_class_decl(class_decl, ctx));
-                    }
-                    Statement::VariableDeclaration(ref mut var_declaration) => {
-                        if var_declaration.kind == VariableDeclarationKind::Using {
-                            self.top_level_using.insert(address, false);
-                        } else if var_declaration.kind == VariableDeclarationKind::AwaitUsing {
-                            self.top_level_using.insert(address, true);
+                                export_kind,
+                                ctx,
+                            ));
                         }
-                        var_declaration.kind = VariableDeclarationKind::Var;
-
-                        for decl in &mut var_declaration.declarations {
-                            decl.kind = VariableDeclarationKind::Var;
-                            decl.id.bound_names(&mut |c| {
-                                *ctx.scoping_mut().symbol_flags_mut(c.symbol_id()) =
-                                    SymbolFlags::FunctionScopedVariable;
-                            });
+                        Statement::ClassDeclaration(class_decl) => {
+                            inner_block.push(Self::transform_class_decl(class_decl, ctx));
                         }
+                        Statement::VariableDeclaration(ref mut var_declaration) => {
+                            if var_declaration.kind == VariableDeclarationKind::Using {
+                                self.top_level_using.insert(address, false);
+                            } else if var_declaration.kind == VariableDeclarationKind::AwaitUsing {
+                                self.top_level_using.insert(address, true);
+                            }
+                            var_declaration.kind = VariableDeclarationKind::Var;
 
-                        inner_block.push(stmt);
+                            for decl in &mut var_declaration.declarations {
+                                decl.id.bound_names(&mut |c| {
+                                    *ctx.scoping_mut().symbol_flags_mut(c.symbol_id()) =
+                                        SymbolFlags::FunctionScopedVariable;
+                                });
+                            }
+
+                            inner_block.push(stmt);
+                        }
+                        _ => inner_block.push(stmt),
                     }
-                    _ => inner_block.push(stmt),
-                }
 
-                (program_body, inner_block)
-            },
-        );
+                    (program_body, inner_block)
+                },
+            );
 
-        let block_scope_id = ctx.insert_scope_below_statements(&inner_block, ScopeFlags::empty());
-        program_body.push(ctx.ast.statement_block_with_scope_id(SPAN, inner_block, block_scope_id));
+            let block_scope_id =
+                ctx.insert_scope_below_statements(&inner_block, ScopeFlags::empty());
+            program_body.push(Statement::new_block_statement_with_scope_id(
+                SPAN,
+                inner_block,
+                block_scope_id,
+                ctx,
+            ));
 
-        std::mem::swap(&mut program.body, &mut program_body);
+            program_body
+        });
     }
 }
 
@@ -549,7 +622,7 @@ impl<'a> ExplicitResourceManagement<'a> {
             let current_scope_id = ctx.current_scope_id();
 
             *stmt = Self::create_try_stmt(
-                ctx.ast.block_statement_with_scope_id(SPAN, new_stmts, block_stmt.scope_id()),
+                BlockStatement::boxed_with_scope_id(SPAN, new_stmts, block_stmt.scope_id(), ctx),
                 &using_ctx,
                 current_scope_id,
                 needs_await,
@@ -621,28 +694,31 @@ impl<'a> ExplicitResourceManagement<'a> {
 
                 for decl in &mut var_decl.declarations {
                     if let Some(old_init) = decl.init.take() {
-                        decl.init = Some(
-                            ctx.ast.expression_call(
+                        decl.init = Some(Expression::new_call_expression(
+                            SPAN,
+                            Expression::new_static_member_expression(
                                 SPAN,
-                                Expression::from(
-                                    ctx.ast.member_expression_static(
-                                        SPAN,
-                                        using_ctx
-                                            .as_ref()
-                                            .expect("`using_ctx` should have been set")
-                                            .create_read_expression(ctx),
-                                        ctx.ast.identifier_name(
-                                            SPAN,
-                                            if needs_await { "a" } else { "u" },
-                                        ),
-                                        false,
-                                    ),
+                                using_ctx
+                                    .as_ref()
+                                    .expect("`using_ctx` should have been set")
+                                    .create_read_expression(ctx),
+                                IdentifierName::new(
+                                    SPAN,
+                                    if needs_await {
+                                        static_ident!("a")
+                                    } else {
+                                        static_ident!("u")
+                                    },
+                                    ctx,
                                 ),
-                                NONE,
-                                ctx.ast.vec1(Argument::from(old_init)),
                                 false,
+                                ctx,
                             ),
-                        );
+                            None,
+                            [Argument::from(old_init)],
+                            false,
+                            ctx,
+                        ));
                     }
                 }
             }
@@ -656,30 +732,44 @@ impl<'a> ExplicitResourceManagement<'a> {
 
         let callee = helper_load(Helper::UsingCtx, ctx);
 
-        let block = {
-            let vec = ctx.ast.vec_from_array([
-                Statement::from(ctx.ast.declaration_variable(
-                    SPAN,
-                    VariableDeclarationKind::Var,
-                    ctx.ast.vec1(ctx.ast.variable_declarator(
-                        SPAN,
-                        VariableDeclarationKind::Var,
-                        using_ctx.create_binding_pattern(ctx),
-                        NONE,
-                        Some(ctx.ast.expression_call(SPAN, callee, NONE, ctx.ast.vec(), false)),
-                        false,
-                    )),
-                    false,
-                )),
-                stmt.take_in(ctx.ast),
-            ]);
+        stmt.replace_with(|stmt| {
+            let block = {
+                let vec = ArenaVec::from_array_in(
+                    [
+                        Statement::new_variable_declaration(
+                            SPAN,
+                            VariableDeclarationKind::Var,
+                            [VariableDeclarator::new(
+                                SPAN,
+                                using_ctx.create_binding_pattern(ctx),
+                                None,
+                                Some(Expression::new_call_expression(
+                                    SPAN,
+                                    callee,
+                                    None,
+                                    [],
+                                    false,
+                                    ctx,
+                                )),
+                                false,
+                                ctx,
+                            )],
+                            false,
+                            ctx,
+                        ),
+                        stmt,
+                    ],
+                    ctx,
+                );
 
-            ctx.ast.block_statement_with_scope_id(SPAN, vec, block_stmt_sid)
-        };
+                BlockStatement::boxed_with_scope_id(SPAN, vec, block_stmt_sid, ctx)
+            };
 
-        let catch = Self::create_catch_clause(&using_ctx, current_scope_id, ctx);
-        let finally = Self::create_finally_block(&using_ctx, current_scope_id, needs_await, ctx);
-        *stmt = ctx.ast.statement_try(span, block, Some(catch), Some(finally));
+            let catch = Self::create_catch_clause(&using_ctx, current_scope_id, ctx);
+            let finally =
+                Self::create_finally_block(&using_ctx, current_scope_id, needs_await, ctx);
+            Statement::new_try_statement(span, block, Some(catch), Some(finally), ctx)
+        });
     }
 
     /// Transforms:
@@ -748,17 +838,27 @@ impl<'a> ExplicitResourceManagement<'a> {
             // `await using foo = bar;` -> `const foo = _usingCtx.a(bar);`
             for decl in &mut variable_declaration.declarations {
                 if let Some(old_init) = decl.init.take() {
-                    decl.init = Some(ctx.ast.expression_call(
+                    decl.init = Some(Expression::new_call_expression(
                         SPAN,
-                        Expression::from(ctx.ast.member_expression_static(
+                        Expression::new_static_member_expression(
                             SPAN,
                             using_ctx.as_ref().unwrap().create_read_expression(ctx),
-                            ctx.ast.identifier_name(SPAN, if is_await_using { "a" } else { "u" }),
+                            IdentifierName::new(
+                                SPAN,
+                                if is_await_using {
+                                    static_ident!("a")
+                                } else {
+                                    static_ident!("u")
+                                },
+                                ctx,
+                            ),
                             false,
-                        )),
-                        NONE,
-                        ctx.ast.vec1(Argument::from(old_init)),
+                            ctx,
+                        ),
+                        None,
+                        [Argument::from(old_init)],
                         false,
+                        ctx,
                     ));
                 }
             }
@@ -766,22 +866,23 @@ impl<'a> ExplicitResourceManagement<'a> {
 
         let using_ctx = using_ctx?;
 
-        let mut stmts = stmts.take_in(ctx.ast);
+        let mut stmts = stmts.take_in(ctx);
 
         // `var _usingCtx = babelHelpers.usingCtx();`
         let callee = helper_load(Helper::UsingCtx, ctx);
-        let helper = ctx.ast.declaration_variable(
+        let helper = Declaration::new_variable_declaration(
             SPAN,
             VariableDeclarationKind::Var,
-            ctx.ast.vec1(ctx.ast.variable_declarator(
+            [VariableDeclarator::new(
                 SPAN,
-                VariableDeclarationKind::Var,
                 using_ctx.create_binding_pattern(ctx),
-                NONE,
-                Some(ctx.ast.expression_call(SPAN, callee, NONE, ctx.ast.vec(), false)),
+                None,
+                Some(Expression::new_call_expression(SPAN, callee, None, [], false, ctx)),
                 false,
-            )),
+                ctx,
+            )],
             false,
+            ctx,
         );
         stmts.insert(0, Statement::from(helper));
 
@@ -789,7 +890,7 @@ impl<'a> ExplicitResourceManagement<'a> {
     }
 
     fn create_try_stmt(
-        body: BlockStatement<'a>,
+        body: ArenaBox<'a, BlockStatement<'a>>,
         using_ctx: &BoundIdentifier<'a>,
         parent_scope_id: ScopeId,
         needs_await: bool,
@@ -798,7 +899,7 @@ impl<'a> ExplicitResourceManagement<'a> {
     ) -> Statement<'a> {
         let catch = Self::create_catch_clause(using_ctx, parent_scope_id, ctx);
         let finally = Self::create_finally_block(using_ctx, parent_scope_id, needs_await, ctx);
-        ctx.ast.statement_try(span, body, Some(catch), Some(finally))
+        Statement::new_try_statement(span, body, Some(catch), Some(finally), ctx)
     }
 
     /// `catch (_) { _usingCtx.e = _; }`
@@ -816,36 +917,40 @@ impl<'a> ExplicitResourceManagement<'a> {
         // We can skip using `generate_uid` here as no code within the `catch` block which can use a
         // binding called `_`. `using_ctx` is a UID with prefix `_usingCtx`.
         let ident = ctx.generate_binding(
-            ctx.ast.ident("_"),
+            static_ident!("_"),
             block_scope_id,
             SymbolFlags::CatchVariable | SymbolFlags::FunctionScopedVariable,
         );
 
         let catch_parameter =
-            ctx.ast.catch_parameter(SPAN, ident.create_binding_pattern(ctx), NONE);
+            CatchParameter::new(SPAN, ident.create_binding_pattern(ctx), None, ctx);
 
         // `_usingCtx.e = _;`
-        let stmt = ctx.ast.statement_expression(
+        let stmt = Statement::new_expression_statement(
             SPAN,
-            ctx.ast.expression_assignment(
+            Expression::new_assignment_expression(
                 SPAN,
                 AssignmentOperator::Assign,
-                AssignmentTarget::from(ctx.ast.member_expression_static(
+                AssignmentTarget::new_static_member_expression(
                     SPAN,
                     using_ctx.create_read_expression(ctx),
-                    ctx.ast.identifier_name(SPAN, "e"),
+                    IdentifierName::new(SPAN, "e", ctx),
                     false,
-                )),
+                    ctx,
+                ),
                 ident.create_read_expression(ctx),
+                ctx,
             ),
+            ctx,
         );
 
         // `catch (_) { _usingCtx.e = _; }`
-        ctx.ast.alloc_catch_clause_with_scope_id(
+        CatchClause::boxed_with_scope_id(
             SPAN,
             Some(catch_parameter),
-            ctx.ast.block_statement_with_scope_id(SPAN, ctx.ast.vec1(stmt), block_scope_id),
+            BlockStatement::boxed_with_scope_id(SPAN, [stmt], block_scope_id, ctx),
             catch_scope_id,
+            ctx,
         )
     }
 
@@ -859,52 +964,84 @@ impl<'a> ExplicitResourceManagement<'a> {
         let finally_scope_id = ctx.create_child_scope(parent_scope_id, ScopeFlags::empty());
 
         // `_usingCtx.d()`
-        let expr = ctx.ast.expression_call(
+        let expr = Expression::new_call_expression(
             SPAN,
-            Expression::from(ctx.ast.member_expression_static(
+            Expression::new_static_member_expression(
                 SPAN,
                 using_ctx.create_read_expression(ctx),
-                ctx.ast.identifier_name(SPAN, "d"),
+                IdentifierName::new(SPAN, "d", ctx),
                 false,
-            )),
-            NONE,
-            ctx.ast.vec(),
+                ctx,
+            ),
+            None,
+            [],
             false,
+            ctx,
         );
 
-        let stmt = if needs_await { ctx.ast.expression_await(SPAN, expr) } else { expr };
+        let stmt =
+            if needs_await { Expression::new_await_expression(SPAN, expr, ctx) } else { expr };
 
-        ctx.ast.alloc_block_statement_with_scope_id(
+        BlockStatement::boxed_with_scope_id(
             SPAN,
-            ctx.ast.vec1(ctx.ast.statement_expression(SPAN, stmt)),
+            [Statement::new_expression_statement(SPAN, stmt, ctx)],
             finally_scope_id,
+            ctx,
         )
     }
 
-    /// `class C {}` -> `var C = class {};`
+    /// `class C {}` -> `var C = class C {};`
     fn transform_class_decl(
         mut class_decl: ArenaBox<'a, Class<'a>>,
         ctx: &mut TraverseCtx<'a>,
     ) -> Statement<'a> {
-        let id = class_decl.id.take().expect("ClassDeclaration should have an id");
+        let (binding, original_span) = Self::preserve_class_expression_name(&class_decl, ctx);
 
         class_decl.r#type = ClassType::ClassExpression;
         let class_expr = Expression::ClassExpression(class_decl);
 
-        *ctx.scoping_mut().symbol_flags_mut(id.symbol_id()) = SymbolFlags::FunctionScopedVariable;
-
-        Statement::VariableDeclaration(ctx.ast.alloc_variable_declaration(
+        Statement::new_variable_declaration(
             SPAN,
             VariableDeclarationKind::Var,
-            ctx.ast.vec1(ctx.ast.variable_declarator(
+            [VariableDeclarator::new(
                 SPAN,
-                VariableDeclarationKind::Var,
-                BindingPattern::BindingIdentifier(ctx.ast.alloc(id)),
-                NONE,
+                binding.create_spanned_binding_pattern(original_span, ctx),
+                None,
                 Some(class_expr),
                 false,
-            )),
+                ctx,
+            )],
             false,
-        ))
+            ctx,
+        )
+    }
+
+    /// Move the original class id symbol to a new `var`-style outer binding, and create a fresh
+    /// `Class`-flagged symbol in the class scope for the named class expression's inner binding.
+    ///
+    /// Returns the outer `BoundIdentifier` (reusing the original symbol id) for the surrounding
+    /// `var` declarator, along with the original `id.span` so the caller can emit the outer
+    /// `BindingIdentifier` with the correct span. Mirrors the swap in
+    /// `decorator::legacy::transform_class_declaration_with_class_decorators`.
+    fn preserve_class_expression_name(
+        class_decl: &Class<'a>,
+        ctx: &mut TraverseCtx<'a>,
+    ) -> (BoundIdentifier<'a>, Span) {
+        let id = class_decl.id.as_ref().expect("ClassDeclaration should have an id");
+        let original_span = id.span;
+        let class_scope_id = class_decl.scope_id();
+        let scoping = ctx.scoping_mut();
+        let inner_symbol_id = scoping.create_symbol(
+            original_span,
+            id.name,
+            SymbolFlags::Class,
+            class_scope_id,
+            NodeId::DUMMY,
+        );
+        scoping.add_binding(class_scope_id, id.name, inner_symbol_id);
+        let outer_symbol_id =
+            id.symbol_id.replace(Some(inner_symbol_id)).expect("class always has a symbol id");
+        *scoping.symbol_flags_mut(outer_symbol_id) = SymbolFlags::FunctionScopedVariable;
+        (BoundIdentifier::new(id.name, outer_symbol_id), original_span)
     }
 }

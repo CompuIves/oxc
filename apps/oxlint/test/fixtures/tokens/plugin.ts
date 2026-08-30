@@ -19,8 +19,13 @@ const rule: Rule = {
     for (const tokenOrComment of tokensAndComments) {
       // Check getting `range` / `loc` properties twice results in same objects
       const { range, loc } = tokenOrComment;
-      assert(range === tokenOrComment.range);
-      assert(loc === tokenOrComment.loc);
+      assert(tokenOrComment.range === range);
+      assert(tokenOrComment.loc === loc);
+
+      // Cloning comment with spread should include `loc` and it should be the same object
+      const clone = { ...tokenOrComment };
+      assert(Object.hasOwn(clone, "loc"));
+      assert(clone.loc === loc);
 
       // Check `getRange` and `getLoc` return the same objects too
       assert(sourceCode.getRange(tokenOrComment) === range);
@@ -34,8 +39,8 @@ const rule: Rule = {
     // `ast.tokens` does not include comments
     context.report({
       message:
-        `Tokens:\n` +
-        ast.tokens
+        `Tokens:\n`
+        + ast.tokens
           .map((token) => {
             const { range } = token;
             assert(token.start === range[0]);
@@ -44,10 +49,10 @@ const rule: Rule = {
             const { start, end } = token.loc;
 
             return (
-              `${token.type.padEnd(17)} ` +
-              `loc= ${start.line}:${start.column} - ${end.line}:${end.column} `.padEnd(18) +
-              `range= ${range[0]}-${range[1]} `.padEnd(15) +
-              `${JSON.stringify(token.value)}`
+              `${token.type.padEnd(17)} `
+              + `loc= ${start.line}:${start.column} - ${end.line}:${end.column} `.padEnd(18)
+              + `range= ${range[0]}-${range[1]} `.padEnd(15)
+              + `${JSON.stringify(token.value)}`
             );
           })
           .join("\n"),
@@ -57,8 +62,8 @@ const rule: Rule = {
     // `sourceCode.tokensAndComments` does include comments
     context.report({
       message:
-        `Tokens and comments:\n` +
-        tokensAndComments
+        `Tokens and comments:\n`
+        + tokensAndComments
           .map((token) => {
             const { range } = token;
             assert(token.start === range[0]);
@@ -67,10 +72,10 @@ const rule: Rule = {
             const { start, end } = token.loc;
 
             return (
-              `${token.type.padEnd(17)} ` +
-              `loc= ${start.line}:${start.column} - ${end.line}:${end.column} `.padEnd(18) +
-              `range= ${range[0]}-${range[1]} `.padEnd(15) +
-              `${JSON.stringify(token.value)}`
+              `${token.type.padEnd(17)} `
+              + `loc= ${start.line}:${start.column} - ${end.line}:${end.column} `.padEnd(18)
+              + `range= ${range[0]}-${range[1]} `.padEnd(15)
+              + `${JSON.stringify(token.value)}`
             );
           })
           .join("\n"),

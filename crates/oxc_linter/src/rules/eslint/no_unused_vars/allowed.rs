@@ -5,7 +5,8 @@ use oxc_semantic::{NodeId, Semantic};
 
 use super::{NoUnusedVars, Symbol, options::ArgsOption};
 use crate::{
-    ModuleRecord,
+    LintContext, ModuleRecord,
+    ast_util::variable_declaration_kind,
     rules::eslint::no_unused_vars::binding_pattern::{BindingContext, HasAnyUsedBinding},
 };
 
@@ -75,7 +76,10 @@ impl Symbol<'_, '_> {
             .map(|scope_id| scopes.get_node_id(scope_id))
             .map(|node_id| nodes.get_node(node_id))
             .any(|node| match node.kind() {
-                AstKind::TSModuleDeclaration(namespace) => {
+                AstKind::TSExternalModuleDeclaration(module) => {
+                    is_ambient_external_module_without_explicit_exports(module)
+                }
+                AstKind::TSNamespaceDeclaration(namespace) => {
                     is_ambient_namespace_without_explicit_exports(namespace)
                 }
                 // No need to check `declare` field, as `global` is only valid in ambient context
@@ -86,31 +90,55 @@ impl Symbol<'_, '_> {
 }
 
 #[inline]
-fn is_ambient_namespace_without_explicit_exports(namespace: &TSModuleDeclaration) -> bool {
+fn is_ambient_external_module_without_explicit_exports(
+    module: &TSExternalModuleDeclaration,
+) -> bool {
     // Must be declared (ambient context)
+    if !module.declare {
+        return false;
+    }
+
+    module.body.as_ref().is_none_or(|block| !has_explicit_exports(block))
+}
+
+#[inline]
+fn is_ambient_namespace_without_explicit_exports(namespace: &TSNamespaceDeclaration) -> bool {
     if !namespace.declare {
         return false;
     }
 
-    // If the module has explicit exports, unused types should still be checked
-    // For modules with string literal names (like `declare module 'foo'`), if they have
-    // an export statement, then only exported items are available externally
-    if let Some(TSModuleDeclarationBody::TSModuleBlock(block)) = &namespace.body {
-        let has_export = block.body.iter().any(|stmt| {
-            matches!(
-                stmt,
-                Statement::ExportAllDeclaration(_)
-                    | Statement::ExportDefaultDeclaration(_)
-                    | Statement::ExportNamedDeclaration(_)
-                    | Statement::TSExportAssignment(_)
-            )
-        });
-        if has_export {
-            return false;
+    match &namespace.body {
+        TSNamespaceDeclarationBody::TSNamespaceDeclaration(_) => true,
+        TSNamespaceDeclarationBody::TSModuleBlock(block) => !has_explicit_exports(block),
+    }
+}
+
+fn has_explicit_exports(block: &TSModuleBlock) -> bool {
+    block.body.iter().any(|stmt| {
+        matches!(
+            stmt,
+            Statement::ExportAllDeclaration(_)
+                | Statement::ExportDefaultDeclaration(_)
+                | Statement::ExportDeclaration(_)
+                | Statement::ExportNamedDeclaration(_)
+                | Statement::ExportFromDeclaration(_)
+                | Statement::TSExportAssignment(_)
+        )
+    })
+}
+
+pub(super) enum FunctionParameterKind<'a> {
+    Normal(&'a FormalParameter<'a>),
+    Rest(&'a FormalParameterRest<'a>),
+}
+
+impl FunctionParameterKind<'_> {
+    pub fn node_id(&self) -> NodeId {
+        match self {
+            FunctionParameterKind::Normal(param) => param.node_id(),
+            FunctionParameterKind::Rest(param) => param.node_id(),
         }
     }
-
-    true
 }
 
 impl NoUnusedVars {
@@ -118,9 +146,18 @@ impl NoUnusedVars {
     pub(super) fn is_allowed_ts_namespace<'a>(
         &self,
         symbol: &Symbol<'_, 'a>,
-        namespace: &TSModuleDeclaration<'a>,
+        namespace: &TSNamespaceDeclaration<'a>,
     ) -> bool {
-        namespace.declare || symbol.is_in_declared_module()
+        if namespace.declare || symbol.is_in_declared_module() {
+            return true;
+        }
+        // Segments of a dotted namespace declaration (`namespace A.B.C {}`) are
+        // parsed as nested `TSNamespaceDeclaration`s. Don't flag any segment as unused.
+        matches!(&namespace.body, TSNamespaceDeclarationBody::TSNamespaceDeclaration(_))
+            || matches!(
+                symbol.nodes().parent_kind(symbol.declaration().id()),
+                AstKind::TSNamespaceDeclaration(_)
+            )
     }
 
     /// Returns `true` if this unused variable declaration should be allowed
@@ -129,8 +166,10 @@ impl NoUnusedVars {
         &self,
         symbol: &Symbol<'_, 'a>,
         decl: &VariableDeclarator<'a>,
+        ctx: &LintContext<'a>,
     ) -> bool {
-        if decl.kind.is_var() && self.vars.is_local() && symbol.is_root() {
+        if variable_declaration_kind(decl, ctx).is_var() && self.vars.is_local() && symbol.is_root()
+        {
             return true;
         }
 
@@ -139,7 +178,7 @@ impl NoUnusedVars {
             return true;
         }
 
-        if self.ignore_using_declarations && decl.kind.is_using() {
+        if self.ignore_using_declarations && variable_declaration_kind(decl, ctx).is_using() {
             return true;
         }
 
@@ -183,8 +222,10 @@ impl NoUnusedVars {
         if scope_flags.is_ts_module_block() {
             // get declaration node for the parent scope
             let parent_node_id = scoping.get_node_id(parent_scope_id);
-            if let AstKind::TSModuleDeclaration(namespace) = nodes.get_node(parent_node_id).kind() {
-                return namespace.declare;
+            match nodes.get_node(parent_node_id).kind() {
+                AstKind::TSExternalModuleDeclaration(module) => return module.declare,
+                AstKind::TSNamespaceDeclaration(namespace) => return namespace.declare,
+                _ => {}
             }
         }
 
@@ -198,24 +239,28 @@ impl NoUnusedVars {
         semantic: &Semantic<'a>,
         module_record: &ModuleRecord,
         symbol: &Symbol<'_, 'a>,
-        param: &FormalParameter<'a>,
+        argument: &FunctionParameterKind<'a>,
     ) -> bool {
         // early short-circuit when no argument checking should be performed
         if self.args.is_none() {
             return true;
         }
 
-        // find FormalParameters. Should be the next parent of param, but this
-        // is safer.
-        let Some((params, params_id)) = symbol.iter_parents().find_map(|p| {
-            let params = p.kind().as_formal_parameters()?;
-            Some((params, p.id()))
-        }) else {
+        let Some(params) = symbol.nodes().parent_kind(argument.node_id()).as_formal_parameters()
+        else {
             debug_assert!(false, "FormalParameter should always have a parent FormalParameters");
             return false;
         };
 
-        if Self::is_allowed_param_because_of_method(semantic, param, params_id) {
+        if let FunctionParameterKind::Normal(param) = argument
+            && Self::is_allowed_param_because_of_method(semantic, param)
+        {
+            return true;
+        }
+
+        if matches!(argument, FunctionParameterKind::Rest(_))
+            && Self::is_allowed_binding_rest_element(symbol)
+        {
             return true;
         }
 
@@ -227,6 +272,11 @@ impl NoUnusedVars {
         }
 
         debug_assert_eq!(self.args, ArgsOption::AfterUsed);
+
+        let FunctionParameterKind::Normal(param) = argument else {
+            // Rest parameters are always last, so `after-used` checks them.
+            return false;
+        };
 
         // from eslint rule documentation:
         // after-used - unused positional arguments that occur before the last
@@ -267,17 +317,17 @@ impl NoUnusedVars {
             .any(|p| p.has_modifier() || p.pattern.has_any_used_binding(ctx))
     }
 
-    /// `params_id` is the [`NodeId`] to a [`AstKind::FormalParameters`] node.
-    ///
     /// The following allowed conditions are handled:
     /// 1. setter parameters - removing them causes a syntax error.
     /// 2. TS constructor property definitions - they declare class members.
     fn is_allowed_param_because_of_method<'a>(
         semantic: &Semantic<'a>,
         param: &FormalParameter<'a>,
-        params_id: NodeId,
     ) -> bool {
-        let mut parents_iter = semantic.nodes().ancestor_kinds(params_id);
+        let mut parents_iter = semantic.nodes().ancestor_kinds(param.node_id());
+
+        // skip `FormalParameter`s parent, which is always a `FormalParameters` node
+        parents_iter.next();
 
         // in function declarations, the parent immediately before the
         // FormalParameters is a TSDeclareBlock

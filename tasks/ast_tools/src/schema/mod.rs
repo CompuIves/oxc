@@ -32,6 +32,7 @@ pub mod extensions {
 define_index_type! {
     /// ID of type in the AST
     pub struct TypeId = u32;
+    MAX_INDEX = u32::MAX as usize;
 }
 
 impl TypeId {
@@ -41,11 +42,13 @@ impl TypeId {
 define_index_type! {
     /// ID of source file
     pub struct FileId = u32;
+    MAX_INDEX = u32::MAX as usize;
 }
 
 define_index_type! {
     /// ID of meta type
     pub struct MetaId = u32;
+    MAX_INDEX = u32::MAX as usize;
 }
 
 /// Schema of all AST types.
@@ -77,6 +80,7 @@ impl Schema {
     ///
     /// # Panics
     /// Panics if no type with supplied name.
+    #[expect(dead_code)]
     pub fn type_by_name_mut(&mut self, name: &str) -> &mut TypeDef {
         let type_id = self.type_names[name];
         &mut self.types[type_id]
@@ -104,6 +108,11 @@ impl Schema {
     /// Get iterator over all structs as mutable references.
     pub fn structs_mut(&mut self) -> StructsMut<'_> {
         StructsMut::new(self)
+    }
+
+    /// Get iterator over all enums.
+    pub fn enums(&self) -> Enums<'_> {
+        Enums::new(self)
     }
 }
 
@@ -331,3 +340,33 @@ impl<'s> Iterator for StructsMut<'s> {
 }
 
 impl FusedIterator for StructsMut<'_> {}
+
+/// Iterator over enums.
+pub struct Enums<'s> {
+    iter: slice::Iter<'s, TypeDef>,
+}
+
+impl<'s> Enums<'s> {
+    fn new(schema: &'s Schema) -> Self {
+        Self { iter: schema.types.iter() }
+    }
+}
+
+impl<'s> Iterator for Enums<'s> {
+    type Item = &'s EnumDef;
+
+    fn next(&mut self) -> Option<&'s EnumDef> {
+        for type_def in &mut self.iter {
+            match type_def {
+                TypeDef::Enum(enum_def) => return Some(enum_def),
+                TypeDef::Struct(_) => {}
+                // Structs and enums are always first in `Schema::types`,
+                // so if we encounter a different type, iteration is done
+                _ => break,
+            }
+        }
+        None
+    }
+}
+
+impl FusedIterator for Enums<'_> {}

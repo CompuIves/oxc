@@ -1,13 +1,13 @@
 use std::{
     borrow::Cow,
-    cell::{Cell, RefCell},
+    cell::{Cell, OnceCell, RefCell},
     ffi::OsStr,
     path::Path,
     rc::Rc,
     sync::Arc,
 };
 
-use oxc_allocator::Box as ArenaBox;
+use oxc_allocator::{Allocator, ArenaBox};
 use oxc_diagnostics::{OxcDiagnostic, Severity};
 use oxc_parser::Token;
 use oxc_semantic::Semantic;
@@ -15,16 +15,23 @@ use oxc_span::{SourceType, Span};
 
 use crate::{
     AllowWarnDeny, FrameworkFlags,
-    config::{LintConfig, LintPlugins, OxlintEnv, OxlintGlobals, OxlintSettings},
+    config::{
+        LintConfig, LintPlugins, OxlintEnv, OxlintGlobals, OxlintSettings,
+        plugins::plugin_display_name,
+    },
     disable_directives::{DisableDirectives, DisableDirectivesBuilder, RuleCommentType},
     fixer::{Fix, FixKind, Message, PossibleFixes},
-    frameworks::{self, FrameworkOptions},
+    frameworks::FrameworkOptions,
     module_record::ModuleRecord,
     options::LintOptions,
     rules::RuleEnum,
+    utils::ReactCompilerResults,
 };
 
-use super::{LintContext, plugin_name_to_prefix};
+#[cfg(not(test))]
+use crate::frameworks::{has_jest_imports, has_vitest_imports, is_jestlike_file};
+
+use super::LintContext;
 
 /// Stores shared information about a script block being linted.
 pub struct ContextSubHost<'a> {
@@ -46,28 +53,17 @@ pub struct ContextSubHost<'a> {
 }
 
 impl<'a> ContextSubHost<'a> {
-    pub fn new(
-        semantic: Semantic<'a>,
-        module_record: Arc<ModuleRecord>,
-        source_text_offset: u32,
-    ) -> Self {
-        Self::new_with_framework_options(
-            semantic,
-            module_record,
-            source_text_offset,
-            FrameworkOptions::Default,
-            ArenaBox::new_empty_boxed_slice(),
-        )
+    pub(crate) fn source_text_offset(&self) -> u32 {
+        self.source_text_offset
     }
 
     /// # Panics
     /// If `semantic.cfg()` is `None`.
-    pub fn new_with_framework_options(
+    pub fn new(
         semantic: Semantic<'a>,
         module_record: Arc<ModuleRecord>,
         source_text_offset: u32,
-        frameworks_options: FrameworkOptions,
-        parser_tokens: ArenaBox<'a, [Token]>,
+        options: ContextSubHostOptions<'a>,
     ) -> Self {
         // We should always check for `semantic.cfg()` being `Some` since we depend on it and it is
         // unwrapped without any runtime checks after construction.
@@ -76,16 +72,17 @@ impl<'a> ContextSubHost<'a> {
             "`LintContext` depends on `Semantic::cfg`, Build your semantic with cfg enabled(`SemanticBuilder::with_cfg`)."
         );
 
-        let disable_directives =
-            DisableDirectivesBuilder::new().build(semantic.source_text(), semantic.comments());
+        let disable_directives = DisableDirectivesBuilder::new()
+            .with_respect_eslint_disable_directives(options.respect_eslint_disable_directives)
+            .build(semantic.source_text(), semantic.comments());
 
         Self {
             semantic,
             module_record,
             source_text_offset,
             disable_directives,
-            framework_options: frameworks_options,
-            parser_tokens,
+            framework_options: options.framework_options,
+            parser_tokens: options.parser_tokens,
         }
     }
 
@@ -109,6 +106,29 @@ impl<'a> ContextSubHost<'a> {
     /// Shared reference to the [`FrameworkOptions`]
     pub fn framework_options(&self) -> FrameworkOptions {
         self.framework_options
+    }
+
+    /// Source text of this script block.
+    #[inline]
+    pub fn source_text(&self) -> &'a str {
+        self.semantic.source_text()
+    }
+}
+
+#[non_exhaustive]
+pub struct ContextSubHostOptions<'a> {
+    pub framework_options: FrameworkOptions,
+    pub parser_tokens: ArenaBox<'a, [Token]>,
+    pub respect_eslint_disable_directives: bool,
+}
+
+impl Default for ContextSubHostOptions<'_> {
+    fn default() -> Self {
+        Self {
+            framework_options: FrameworkOptions::Default,
+            parser_tokens: ArenaBox::new_empty_boxed_slice(),
+            respect_eslint_disable_directives: true,
+        }
     }
 }
 
@@ -136,6 +156,8 @@ pub struct ContextHost<'a> {
     /// A file can have multiple script entries.
     /// Some rules (like vue) need the information of the other entries.
     pub(super) sub_hosts: Vec<ContextSubHost<'a>>,
+    /// Allocator that owns the parsed AST and related semantic data.
+    pub(super) allocator: &'a Allocator,
     /// The current index which will be linted.
     current_sub_host_index: Cell<usize>,
     /// Diagnostics reported by the linter.
@@ -157,6 +179,12 @@ pub struct ContextHost<'a> {
     pub(super) config: Arc<LintConfig>,
     /// Front-end frameworks that might be in use in the target file.
     pub(super) frameworks: FrameworkFlags,
+    /// If true, the linter will create "ignore this section / line" fixes for all diagnostics
+    with_ignore_fixes: bool,
+    /// Lazily-computed shared result of the React Compiler lint run, reused by
+    /// every rule in the React Compiler family (`react/hooks`, `react/refs`, …).
+    /// Stays empty until the first such rule runs on this file.
+    pub(super) react_compiler_results: OnceCell<ReactCompilerResults>,
 }
 
 impl std::fmt::Debug for ContextHost<'_> {
@@ -171,10 +199,11 @@ impl<'a> ContextHost<'a> {
     pub fn new<P: AsRef<Path>>(
         file_path: P,
         sub_hosts: Vec<ContextSubHost<'a>>,
+        allocator: &'a Allocator,
         options: LintOptions,
         config: Arc<LintConfig>,
     ) -> Self {
-        const DIAGNOSTICS_INITIAL_CAPACITY: usize = 512;
+        const DIAGNOSTICS_INITIAL_CAPACITY: usize = 16;
 
         assert!(
             !sub_hosts.is_empty(),
@@ -186,6 +215,7 @@ impl<'a> ContextHost<'a> {
 
         Self {
             sub_hosts,
+            allocator,
             current_sub_host_index: Cell::new(0),
             diagnostics: RefCell::new(Vec::with_capacity(DIAGNOSTICS_INITIAL_CAPACITY)),
             fix: options.fix,
@@ -193,6 +223,8 @@ impl<'a> ContextHost<'a> {
             file_extension,
             config,
             frameworks: options.framework_hints,
+            with_ignore_fixes: options.with_ignore_fixes,
+            react_compiler_results: OnceCell::new(),
         }
         .sniff_for_frameworks()
     }
@@ -200,6 +232,12 @@ impl<'a> ContextHost<'a> {
     /// The current [`ContextSubHost`]
     pub fn current_sub_host(&self) -> &ContextSubHost<'a> {
         &self.sub_hosts[self.current_sub_host_index.get()]
+    }
+
+    /// Allocator that owns the parsed AST and semantic data.
+    #[inline]
+    pub fn allocator(&self) -> &'a Allocator {
+        self.allocator
     }
 
     /// Get mutable reference to the current [`ContextSubHost`]
@@ -287,10 +325,19 @@ impl<'a> ContextHost<'a> {
         &self.config.env
     }
 
+    #[inline]
+    pub fn source_text(&self) -> &'a str {
+        self.current_sub_host().source_text()
+    }
+
     /// Add a diagnostic message to the end of the list of diagnostics. Can be used
     /// by any rule to report issues.
     #[inline]
     pub(crate) fn push_diagnostic(&self, mut diagnostic: Message) {
+        if self.with_ignore_fixes {
+            let source_text = self.source_text();
+            diagnostic.add_ignore_fix(self.current_sub_host().source_text_offset, source_text);
+        }
         if self.current_sub_host().source_text_offset != 0 {
             diagnostic.move_offset(self.current_sub_host().source_text_offset);
         }
@@ -299,6 +346,12 @@ impl<'a> ContextHost<'a> {
 
     // Append a list of diagnostics. Only used in report_unused_directives.
     fn append_diagnostics(&self, mut diagnostics: Vec<Message>) {
+        if self.with_ignore_fixes {
+            let source_text = self.source_text();
+            for diagnostic in &mut diagnostics {
+                diagnostic.add_ignore_fix(self.current_sub_host().source_text_offset, source_text);
+            }
+        }
         if self.current_sub_host().source_text_offset != 0 {
             let offset = self.current_sub_host().source_text_offset;
             for diagnostic in &mut diagnostics {
@@ -306,6 +359,11 @@ impl<'a> ContextHost<'a> {
             }
         }
         self.diagnostics.borrow_mut().extend(diagnostics);
+    }
+
+    // move the context back to the first sub host, so they can be iterated over again
+    pub fn rewind_sub_hosts(&self) {
+        self.current_sub_host_index.set(0);
     }
 
     // move the context to the next sub host
@@ -324,20 +382,20 @@ impl<'a> ContextHost<'a> {
         // report unused disable
         // relate to lint result, check after linter run finish
         let unused_disable_comments = self.disable_directives().collect_unused_disable_comments();
-        let message_for_disable = "Unused eslint-disable directive (no problems were reported).";
         let fix_message = "remove unused disable directive";
-        let source_text = self.semantic().source_text();
+        let source_text = self.source_text();
 
         for unused_disable_comment in unused_disable_comments {
             let span = unused_disable_comment.span;
             let fix_span = unused_disable_comment.fix_span;
             match &unused_disable_comment.r#type {
                 RuleCommentType::All => {
-                    // eslint-disable
                     self.push_diagnostic(Message::new(
-                        OxcDiagnostic::error(message_for_disable)
-                            .with_label(span)
-                            .with_severity(rule_severity),
+                        OxcDiagnostic::error(
+                            unused_disable_comment.directive_prefix.unused_disable_message(),
+                        )
+                        .with_label(span)
+                        .with_severity(rule_severity),
                         PossibleFixes::Single(
                             Fix::delete(fix_span)
                                 .with_kind(FixKind::Suggestion)
@@ -347,10 +405,9 @@ impl<'a> ContextHost<'a> {
                 }
                 RuleCommentType::Single(rules_vec) => {
                     for rule in rules_vec {
-                        let rule_message = Cow::<str>::Owned(format!(
-                            "Unused eslint-disable directive (no problems were reported from {}).",
-                            rule.rule_name
-                        ));
+                        let rule_message = Cow::<str>::Owned(
+                            rule.directive_prefix.unused_disable_rule_message(&rule.rule_name),
+                        );
 
                         let fix = rule.create_fix(source_text, span).with_message(fix_message);
 
@@ -370,15 +427,12 @@ impl<'a> ContextHost<'a> {
             Vec::with_capacity(unused_enable_comments.len());
         // report unused enable
         // not relate to lint result, check during comment directives' construction
-        let message_for_enable =
-            "Unused eslint-enable directive (no matching eslint-disable directives were found).";
-        for (rule_name, enable_comment_span) in self.disable_directives().unused_enable_comments() {
+        for (directive_prefix, rule_name, enable_comment_span) in unused_enable_comments {
             unused_directive_diagnostics.push((
-                rule_name.as_ref().map_or(Cow::Borrowed(message_for_enable), |name| {
-                    Cow::Owned(format!(
-                        "Unused eslint-enable directive (no matching eslint-disable directives were found for {name})."
-                    ))
-                }),
+                rule_name.as_ref().map_or_else(
+                    || Cow::Owned(directive_prefix.unused_enable_message()),
+                    |name| Cow::Owned(directive_prefix.unused_enable_rule_message(name)),
+                ),
                 *enable_comment_span,
             ));
         }
@@ -440,7 +494,7 @@ impl<'a> ContextHost<'a> {
             parent: self,
             current_rule_name: rule_name,
             current_plugin_name: plugin_name,
-            current_plugin_prefix: plugin_name_to_prefix(plugin_name),
+            current_plugin_display_name: plugin_display_name(plugin_name),
             #[cfg(debug_assertions)]
             current_rule_fix_capabilities: rule.fix(),
             severity: severity.into(),
@@ -454,7 +508,7 @@ impl<'a> ContextHost<'a> {
             parent: Rc::clone(&self),
             current_rule_name: "",
             current_plugin_name: "eslint",
-            current_plugin_prefix: "eslint",
+            current_plugin_display_name: "eslint",
             #[cfg(debug_assertions)]
             current_rule_fix_capabilities: crate::rule::RuleFixMeta::None,
             severity: oxc_diagnostics::Severity::Warning,
@@ -469,16 +523,32 @@ impl<'a> ContextHost<'a> {
     /// `package.json`` and look for relevant dependencies. This method builds
     /// on top of those hints, providing a more granular understanding of the
     /// frameworks in use.
+    #[cfg(not(test))]
     fn sniff_for_frameworks(mut self) -> Self {
         if self.plugins().has_test() {
             // let mut test_flags = FrameworkFlags::empty();
 
-            let vitest_like = frameworks::has_vitest_imports(self.module_record());
-            let jest_like = frameworks::is_jestlike_file(&self.file_path)
-                || frameworks::has_jest_imports(self.module_record());
+            let vitest_like = has_vitest_imports(self.module_record());
+            let jest_like =
+                is_jestlike_file(&self.file_path) || has_jest_imports(self.module_record());
 
             self.frameworks.set(FrameworkFlags::Vitest, vitest_like);
             self.frameworks.set(FrameworkFlags::Jest, jest_like);
+        }
+
+        self
+    }
+
+    /// Currently Oxlint isn't searching if Jest or Vitest is in `package.json`.
+    /// Once the method read the `package.json` we can discard this conditional flag,
+    /// and rely on the tester to create the correct `package.json` to have a reliable
+    /// sniff method.
+    #[cfg(test)]
+    fn sniff_for_frameworks(mut self) -> Self {
+        if self.plugins().has_test() {
+            self.frameworks.set(FrameworkFlags::Vitest, self.plugins().has_vitest());
+
+            self.frameworks.set(FrameworkFlags::Jest, self.plugins().has_jest());
         }
 
         self

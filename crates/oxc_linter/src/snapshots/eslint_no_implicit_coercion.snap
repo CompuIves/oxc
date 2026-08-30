@@ -25,13 +25,6 @@ source: crates/oxc_linter/src/tester.rs
 
   ⚠ eslint(no-implicit-coercion): Unexpected implicit coercion to boolean
    ╭─[no_implicit_coercion.tsx:1:1]
- 1 │ !!(foo + bar)
-   · ─────────────
-   ╰────
-  help: Use `Boolean(value)` instead
-
-  ⚠ eslint(no-implicit-coercion): Unexpected implicit coercion to boolean
-   ╭─[no_implicit_coercion.tsx:1:1]
  1 │ ~foo.indexOf(1)
    · ───────────────
    ╰────
@@ -179,15 +172,8 @@ source: crates/oxc_linter/src/tester.rs
 
   ⚠ eslint(no-implicit-coercion): Unexpected implicit coercion to string
    ╭─[no_implicit_coercion.tsx:1:1]
- 1 │ ╭─▶ `\\
- 2 │ ╰─▶             ${foo}`
-   ╰────
-  help: Use `String(value)` instead
-
-  ⚠ eslint(no-implicit-coercion): Unexpected implicit coercion to string
-   ╭─[no_implicit_coercion.tsx:1:1]
- 1 │ ╭─▶ `${foo}\\
- 2 │ ╰─▶             `
+ 1 │ ╭─▶ `\
+ 2 │ ╰─▶ ${foo}`
    ╰────
   help: Use `String(value)` instead
 

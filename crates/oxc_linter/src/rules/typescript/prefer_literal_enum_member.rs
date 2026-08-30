@@ -14,7 +14,7 @@ use crate::{
 
 fn prefer_literal_enum_member_diagnostic(span: Span) -> OxcDiagnostic {
     OxcDiagnostic::warn(
-        "Explicit enum value must only be a literal value (string, number, boolean, etc).",
+        "Explicit enum values must only be literal values (string, number, boolean, etc.).",
     )
     .with_help("Require all enum members to be literal values.")
     .with_label(span)
@@ -31,7 +31,7 @@ pub struct PreferLiteralEnumMember {
 declare_oxc_lint!(
     /// ### What it does
     ///
-    /// Explicit enum value must only be a literal value (string, number, boolean, etc).
+    /// Explicit enum values must only be literal values (string, number, boolean, etc.).
     ///
     /// ### Why is this bad?
     ///
@@ -54,12 +54,14 @@ declare_oxc_lint!(
     PreferLiteralEnumMember,
     typescript,
     restriction,
-    config = PreferLiteralEnumMember
+    config = PreferLiteralEnumMember,
+    version = "0.3.2",
+    short_description = "Explicit enum values must only be literal values (string, number, boolean, etc.).",
 );
 
 impl Rule for PreferLiteralEnumMember {
     fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
-        serde_json::from_value::<DefaultRuleConfig<Self>>(value).map(DefaultRuleConfig::into_inner)
+        DefaultRuleConfig::<Self>::from_value(value).map(DefaultRuleConfig::into_inner)
     }
 
     fn run<'a>(&self, node: &AstNode<'a>, ctx: &LintContext<'a>) {

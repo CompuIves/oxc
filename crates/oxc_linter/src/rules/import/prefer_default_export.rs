@@ -40,7 +40,7 @@ pub struct PreferDefaultExport {
 declare_oxc_lint!(
     /// ### What it does
     ///
-    /// In exporting files, this rule checks if there is default export or not.
+    /// Checks whether there is a default export.
     ///
     /// ### Why is this bad?
     ///
@@ -75,11 +75,13 @@ declare_oxc_lint!(
     import,
     style,
     config = PreferDefaultExport,
+    version = "1.4.0",
+    short_description = "Checks whether there is a default export.",
 );
 
 impl Rule for PreferDefaultExport {
     fn from_configuration(value: Value) -> Result<Self, serde_json::error::Error> {
-        serde_json::from_value::<DefaultRuleConfig<Self>>(value).map(DefaultRuleConfig::into_inner)
+        DefaultRuleConfig::<Self>::from_value(value).map(DefaultRuleConfig::into_inner)
     }
 
     fn run_once(&self, ctx: &LintContext<'_>) {

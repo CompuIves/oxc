@@ -4,6 +4,239 @@ All notable changes to this package will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0).
 
+## [0.144.0] - 2026-08-10
+
+### 💥 BREAKING CHANGES
+
+- a33788e ast: [**BREAKING**] Group class heritage into `ClassHeritage` (#25360) (camc314)
+- 6be314f ast: [**BREAKING**] Remove duplicated `VariableDeclarator::kind` (#25319) (camc314)
+- 44fd320 ast: [**BREAKING**] Split TS external modules & Namespace Declarations (#25284) (camc314)
+
+## [0.143.0] - 2026-08-03
+
+### 💥 BREAKING CHANGES
+
+- 1bdedd1 ast: [**BREAKING**] Introduce `ExportDeclaration`, `ExportFromDeclaration` (#25095) (camc314)
+- c917f20 ast: [**BREAKING**] Introduce `ArrowFunctionBody` enum (#24987) (camc314)
+- 7e1199c ast: [**BREAKING**] Remove conversion to `Box` from AST builder methods (#25038) (overlookmotel)
+
+### ⚡ Performance
+
+- 9fb1e3e transformer: Avoid large types on stack (#25035) (overlookmotel)
+
+## [0.142.0] - 2026-07-27
+
+### 🐛 Bug Fixes
+
+- 0126aba codegen: Preserve orphaned file coverage comments (#24815) (Dunqing)
+
+## [0.141.0] - 2026-07-20
+
+### 💥 BREAKING CHANGES
+
+- 54cc121 ast: [**BREAKING**] Split `MetaProperty` into `ImportMeta` and `NewTarget` (#24557) (camc314)
+
+### 🚀 Features
+
+- 7aa4739 syntax,transformer: Move JSX entity decoder to `oxc_syntax` (#24617) (camc314)
+
+### ⚡ Performance
+
+- a149e95 transformer: Outline rare expression exits (#24512) (camc314)
+
+## [0.140.0] - 2026-07-13
+
+### 🐛 Bug Fixes
+
+- 721eb0b transformer/decorator: Scope accessor class binding (#24330) (camc314)
+- af4922b transformer: Clear lowered namespace redeclarations (#24300) (camc314)
+- f05dfab transformer: Correct symbol flags for lowered namespaces (#24271) (Dunqing)
+- 84eeb55 transformer: Correct symbol flags for lowered enums (#24269) (Dunqing)
+- c3057da transformer: Preserve generated class binding spans (#24220) (camc314)
+- 8260096 transformer: Correct span for lowered namespace symbol (#24222) (camc314)
+
+### ⚡ Performance
+
+- ab22e80 transformer: Fix Rust 1.97 performance regression (#24354) (camc314)
+
+## [0.139.0] - 2026-07-06
+
+### 🐛 Bug Fixes
+
+- e8b50ee transformer: Clean up semantics for stripped TypeScript syntax (#24180) (camc314)
+- 4b16e1a transformer/async-to-generator: Preserve direct eval scope flags (#24136) (camc314)
+- 018c0e5 transformer: Hoist lowered async declarations (#22770) (camc314)
+
+### ⚡ Performance
+
+- c5ca77b transformer: Avoid cloning refresh options (#24191) (camc314)
+- abb44a0 transformer: Build fixed object-rest arguments (#24190) (camc314)
+- ff10855 transformer: Use `ReplaceWith` instead of `TakeIn` (#24015) (overlookmotel)
+- e6d48e1 transformer/nullish_coalescing: Move cold path into separate function (#23989) (overlookmotel)
+- c4e35b5 transformer/object_rest_spread: Pre-allocate capacity in `Vec` (#23988) (overlookmotel)
+- 527b8e5 transformer/decorators: Narrow type earlier (#23987) (overlookmotel)
+
+## [0.138.0] - 2026-06-29
+
+### 💥 BREAKING CHANGES
+
+- 94fbacb ast: [**BREAKING**] Only export `AstBuilder` and `NONE` in `builder` module (#23876) (overlookmotel)
+- dc0ef38 transformer: [**BREAKING**] Switch to new `AstBuilder` (#23831) (overlookmotel)
+- 36009dd allocator: [**BREAKING**] `GetAllocator::allocator` take `&self` (#23676) (overlookmotel)
+
+### 🚀 Features
+
+- f2091b3 ast: Unify old and new `AstBuilder`s (#23875) (overlookmotel)
+
+### ⚡ Performance
+
+- e1886a0 transformer, minifier: Use `static_ident!` macro to create static `Ident`s (#23727) (overlookmotel)
+- 5527bef transformer/object-rest-spread: Reduce iteration (#23720) (overlookmotel)
+- 680ffbc transformer: Allocate AST nodes in arena directly (#23711) (overlookmotel)
+
+### 📚 Documentation
+
+- 3d61dea all: Correct capitalization in comments (#23887) (overlookmotel)
+
+## [0.137.0] - 2026-06-18
+
+### 🐛 Bug Fixes
+
+- 20375f9 react_compiler: Keep imports referenced only by a computed key (#23586) (Boshen)
+
+### ⚡ Performance
+
+- dfb52b6 transformer: Pre-size statement vecs in TS enum & namespace lowering (#23516) (Yunfei He)
+- 3fa8051 transformer: Pre-size JSX props vec to attribute count (#23466) (Yunfei He)
+
+## [0.136.0] - 2026-06-15
+
+### 💥 BREAKING CHANGES
+
+- bb0ed44 transformer: [**BREAKING**] Disable styled-components transpileTemplateLiterals by default (#23171) (Boshen)
+
+### 🚀 Features
+
+- 6c0bdf0 transformer/react-refresh: Support `module.property.useHook()` (#23190) (Dunqing)
+- ec266bb transformer: Run React Compiler as a feature-gated transform pass (#23201) (Boshen)
+
+### 🐛 Bug Fixes
+
+- 2c28748 transformer/class: Parent generated constructors to class scope (#23222) (camc314)
+
+### 📚 Documentation
+
+- 09755ac transformer: Add `AGENTS.md` test guidance for agents (#23439) (camc314)
+
+## [0.135.0] - 2026-06-08
+
+### 💥 BREAKING CHANGES
+
+- 4c35362 ast: [**BREAKING**] Add `AstBuilder::template_element_escape_raw` and `template_element_escape_raw_with_lone_surrogates` methods (#23047) (overlookmotel)
+
+## [0.133.0] - 2026-05-26
+
+### 🚀 Features
+
+- ee659b6 transformer/legacy-decorator: Add `strictNullChecks` option for nullable-union design:type (#22266) (Kyle Cannon)
+
+### 🐛 Bug Fixes
+
+- e1d064e transformer/class-properties: Reparent lifted private method helpers (#22716) (Cameron)
+- 7baed9c transformer/private-method: Clear inherited strict flags (#22508) (camc314)
+- 69a6ba6 transformer/legacy-decorator: Emit Array for ReadonlyArray<T> in decorator metadata (#22265) (Kyle Cannon)
+- e421ef0 transformer/legacy-decorator: Return runtime binding for design:type (#22640) (Dunqing)
+
+## [0.132.0] - 2026-05-18
+
+### 🐛 Bug Fixes
+
+- e6090e7 transformer: Keep enum IIFE when a non-inlinable value reference remains (#22501) (Dunqing)
+- 931b7d6 transformer: Inline const enum members through type-cast wrappers (#22500) (Dunqing)
+- c73c159 transformer/async-to-generator: Reparent parameter initializer scopes (#22507) (camc314)
+- ecfd3ca transformer/async-to-generator: Move only parameter bindings (#22503) (camc314)
+- 3ce3431 transformer/explicit-resource-managment: Preserve shadowed for-head block (#22451) (camc314)
+
+## [0.131.0] - 2026-05-15
+
+### 🐛 Bug Fixes
+
+- b8fbc1f transformer/object-rest-spread: Correct scope id when moving bindings (#22419) (camc314)
+- dda33de transformer/explicit-resource-management: Align lexical binding scopes (#22320) (camc314)
+- 8e79de8 transformer: Preserve for-await statement bodies (#22361) (camc314)
+- 0cba210 transformer/class: Replace `new.target` in static blocks (#22360) (camc314)
+- 67ab1c9 transformer/es2018/for-await: Hoist for-await generated bindings (#22355) (camc314)
+- c3ceb4a transformer/object-rest-spread: Use hoisted scope for `for-of` temp refs (#22347) (camc314)
+
+### ⚡ Performance
+
+- 8b2f4f9 transformer/object-rest-spread: Collect `Vec<SymbolId` over `Vec<BindingIdentifier>` (#22418) (camc314)
+
+## [0.130.0] - 2026-05-11
+
+### 🚀 Features
+
+- 66c9b01 transformer/typescript: Debug_assert that `enum_eval` ran in semantic (#22252) (Dunqing)
+
+### 🐛 Bug Fixes
+
+- 4e880de transformer/object-rest-spread: Declare temp vars for computed keys (#22284) (camc314)
+- 5da9fda transformer/explicit-resource-management: Preserve class names (#22306) (Dunqing)
+- b5d970f transformer/explicit-resource-management: Preserve class names (#22290) (camc314)
+- dd88726 transformer/legacy-decorator: Preserve accessor type annotation for emitDecoratorMetadata (#21966) (Dunqing)
+- 0c7c01c transformer/typescript: Inline optional-chain enum member access (#21834) (Dunqing)
+
+## [0.129.0] - 2026-05-05
+
+### 🚀 Features
+
+- 9593ec8 transformer/jsx: Add jsxDEV source metadata for fragments (#21932) (Ido Rosenthal)
+
+### 🐛 Bug Fixes
+
+- e3399ec transformer/class-properties: Preserve RHS in logical-assignment to static private field (#21950) (Dunqing)
+- c59c199 transformer/typescript: Emit class fields for parameter properties (#21831) (Dunqing)
+
+## [0.128.0] - 2026-04-27
+
+### 🐛 Bug Fixes
+
+- c92bd3b transformer: Use SPAN for synthesized helper calls to prevent comment misattribution (#21578) (Dunqing)
+
+### 📚 Documentation
+
+- 295db8d transformer: Fix comment (#21717) (overlookmotel)
+
+## [0.127.0] - 2026-04-20
+
+### 🐛 Bug Fixes
+
+- 91e5bde transformer/typescript: Preserve computed-key static block when class has an empty constructor (#21562) (Dunqing)
+
+## [0.126.0] - 2026-04-15
+
+### 🐛 Bug Fixes
+
+- 56af2f4 transformer/async-to-generator: Correct scope of inferred named FE in async-to-generator (#21458) (Dunqing)
+- 4fb73a7 transformer/typescript: Preserve execution order for accessor with `useDefineForClassFields: false` (#21369) (Dunqing)
+
+## [0.125.0] - 2026-04-13
+
+### 💥 BREAKING CHANGES
+
+- 382958a span: [**BREAKING**] Remove re-exports of string types from `oxc_span` crate (#21246) (overlookmotel)
+
+### 🚀 Features
+
+- e7e1aea transformer/typescript: Add `optimize_enums` option for regular enum inlining (#20539) (Dunqing)
+- 679f57f transformer/typescript: Implement const enum inlining and declaration removal (#20508) (Dunqing)
+
+### 🐛 Bug Fixes
+
+- af1a586 transformer/class-properties: Use correct property name when converting parameter properties (#21268) (Amal Jossy)
+- eab13b3 transformer/decorators: Avoid accessor storage name collisions (#21106) (Dunqing)
+- 07e8a30 transformer/react-refresh: Handle parenthesized variable initializers (#21047) (camc314)
+
 ## [0.123.0] - 2026-03-30
 
 ### 🐛 Bug Fixes

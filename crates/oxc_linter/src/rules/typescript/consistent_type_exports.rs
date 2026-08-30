@@ -46,11 +46,13 @@ declare_oxc_lint!(
     typescript,
     style,
     config = ConsistentTypeExportsConfig,
+    version = "0.0.8",
+    short_description = "Enforce using `export type` for exports that are only used as types.",
 );
 
 impl Rule for ConsistentTypeExports {
     fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
-        serde_json::from_value::<DefaultRuleConfig<Self>>(value).map(DefaultRuleConfig::into_inner)
+        DefaultRuleConfig::<Self>::from_value(value).map(DefaultRuleConfig::into_inner)
     }
 
     fn to_configuration(&self) -> Option<Result<serde_json::Value, serde_json::Error>> {

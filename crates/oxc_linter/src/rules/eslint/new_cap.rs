@@ -412,11 +412,13 @@ declare_oxc_lint!(
     style,
     pending, // TODO: maybe?
     config = NewCapConfig,
+    version = "0.15.5",
+    short_description = "This rule requires constructor names to begin with a capital letter.",
 );
 
 impl Rule for NewCap {
     fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
-        serde_json::from_value::<DefaultRuleConfig<Self>>(value).map(DefaultRuleConfig::into_inner)
+        DefaultRuleConfig::<Self>::from_value(value).map(DefaultRuleConfig::into_inner)
     }
     fn run<'a>(&self, node: &AstNode<'a>, ctx: &LintContext<'a>) {
         match node.kind() {

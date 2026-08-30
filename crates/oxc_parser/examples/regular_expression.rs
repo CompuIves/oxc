@@ -3,7 +3,7 @@ use std::{env, fs, path::Path, sync::Arc};
 
 use oxc_allocator::Allocator;
 use oxc_ast::ast::*;
-use oxc_ast_visit::Visit;
+use oxc_ast_visit::VisitJs;
 use oxc_parser::{ParseOptions, Parser};
 use oxc_regular_expression::{ConstructorParser as RegExpParser, Options as RegExpParserOptions};
 use oxc_span::SourceType;
@@ -23,11 +23,10 @@ fn main() {
 
     let parser_ret =
         Parser::new(&allocator, source_text.as_ref(), source_type).with_options(options).parse();
-    if !parser_ret.errors.is_empty() {
+    if !parser_ret.diagnostics.is_empty() {
         println!("Parsing failed:");
-        for error in parser_ret.errors {
-            let error = error.with_source_code(Arc::clone(&source_text));
-            println!("{error:?}");
+        for error in parser_ret.diagnostics {
+            println!("{}", error.render_with_source_code(Arc::clone(&source_text)));
         }
         return;
     }
@@ -43,7 +42,7 @@ struct RegularExpressionVisitor {
     source_text: Arc<str>,
 }
 
-impl<'a> Visit<'a> for RegularExpressionVisitor {
+impl<'a> VisitJs<'a> for RegularExpressionVisitor {
     fn visit_reg_exp_literal(&mut self, re: &RegExpLiteral<'a>) {
         println!("🍀 {}", re.span.source_text(self.source_text.as_ref()));
 
@@ -52,12 +51,7 @@ impl<'a> Visit<'a> for RegularExpressionVisitor {
     }
 
     fn visit_new_expression(&mut self, new_expr: &NewExpression<'a>) {
-        if new_expr
-            .callee
-            .get_identifier_reference()
-            .filter(|ident| ident.name == "RegExp")
-            .is_some()
-        {
+        if new_expr.callee.get_identifier_reference().is_some_and(|ident| ident.name == "RegExp") {
             println!("🍀 {}", new_expr.span.source_text(&self.source_text));
 
             let pattern_span = match new_expr.arguments.first() {
@@ -83,8 +77,7 @@ impl<'a> Visit<'a> for RegularExpressionVisitor {
             .parse();
 
             if let Err(error) = parsed {
-                let error = error.with_source_code(Arc::clone(&self.source_text));
-                println!("{error:?}");
+                println!("{}", error.render_with_source_code(Arc::clone(&self.source_text)));
                 return;
             }
             println!("{parsed:#?}");

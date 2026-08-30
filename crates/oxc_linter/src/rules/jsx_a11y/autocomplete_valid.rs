@@ -29,7 +29,7 @@ fn autocomplete_valid_diagnostic(span: Span, autocomplete: &str) -> OxcDiagnosti
 pub struct AutocompleteValid(Box<AutocompleteValidConfig>);
 
 #[derive(Debug, Clone, PartialEq, Eq, JsonSchema, Deserialize)]
-#[serde(rename_all = "camelCase", default)]
+#[serde(rename_all = "camelCase", default, deny_unknown_fields)]
 pub struct AutocompleteValidConfig {
     /// List of custom component names that should be treated as input elements.
     input_components: FxHashSet<CompactStr>,
@@ -72,7 +72,9 @@ declare_oxc_lint!(
     AutocompleteValid,
     jsx_a11y,
     correctness,
-    config = AutocompleteValidConfig
+    config = AutocompleteValidConfig,
+    version = "0.2.0",
+    short_description = "Enforces that an element's autocomplete attribute must be a valid value.",
 );
 
 static VALID_AUTOCOMPLETE_VALUES: phf::Set<&'static str> = phf::phf_set![
@@ -155,7 +157,7 @@ fn is_valid_autocomplete_value(value: &str) -> bool {
 
 impl Rule for AutocompleteValid {
     fn from_configuration(value: Value) -> Result<Self, serde_json::error::Error> {
-        serde_json::from_value::<DefaultRuleConfig<Self>>(value).map(DefaultRuleConfig::into_inner)
+        DefaultRuleConfig::<Self>::from_value(value).map(DefaultRuleConfig::into_inner)
     }
 
     fn run<'a>(&self, node: &AstNode<'a>, ctx: &LintContext<'a>) {

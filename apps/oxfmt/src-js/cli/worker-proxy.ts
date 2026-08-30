@@ -1,5 +1,6 @@
 import Tinypool from "tinypool";
-import { resolvePlugins } from "../libs/apis";
+import { toFormatFileResult, toNullable } from "../libs/napi-callbacks";
+import type { FormatFileResult } from "../libs/napi-callbacks";
 import type {
   FormatFileParam,
   FormatEmbeddedCodeParam,
@@ -9,12 +10,29 @@ import type {
 
 // Worker pool for parallel Prettier formatting
 let pool: Tinypool | null = null;
+let poolSize: number | null = null;
 
-export async function initExternalFormatter(numThreads: number): Promise<string[]> {
-  pool = new Tinypool({
+export async function initExternalServices(numThreads: number): Promise<void> {
+  // In LSP mode, this can be called repeatedly for the lifetime of the process.
+  // e.g. on every workspace folder build, config-triggered rebuild, etc
+  // The process-wide pool must never be recreated or destroyed on re-init:
+  // that leaks the previous `child_process` workers, and other workspace folders may have formats in-flight.
+  // (https://github.com/oxc-project/oxc/issues/24147)
+  // NOTE: `numThreads` never changes within a single session, so the first value wins.
+  poolSize ??= numThreads;
+}
+
+// Create the pool lazily on first use,
+// so runs that never delegate to Prettier spawn no `child_process` workers at all.
+// (e.g. Rust-tier files only)
+async function getPool(): Promise<Tinypool> {
+  // Rust always calls `initExternalServices` before formatting, so this is defensive.
+  if (poolSize === null) throw new Error("External services are not initialized");
+
+  pool ??= new Tinypool({
     filename: new URL("./cli-worker.js", import.meta.url).href,
-    minThreads: numThreads,
-    maxThreads: numThreads,
+    minThreads: poolSize,
+    maxThreads: poolSize,
     // XXX: Use `child_process` instead of `worker_threads`.
     // Not sure why, but when using `worker_threads`,
     // calls from NAPI (CLI) -> worker threads -> NAPI (prettier-plugin-oxfmt) causes a hang...
@@ -23,76 +41,65 @@ export async function initExternalFormatter(numThreads: number): Promise<string[
     // `process.env` is not inherited (likely a bug), so it needs to be explicitly specified.
     env: process.env as Record<string, string>,
   });
-
-  return resolvePlugins();
+  return pool;
 }
 
-export async function disposeExternalFormatter(): Promise<void> {
+export async function disposeExternalServices(): Promise<void> {
   await pool?.destroy();
   pool = null;
+  poolSize = null;
 }
 
 // ---
 
-// Used for non-JS files formatting
-export async function formatFile(
+export function formatFile(
   options: FormatFileParam["options"],
   code: string,
-): Promise<string> {
-  return (
-    pool!
-      .run({ options, code } satisfies FormatFileParam, { name: "formatFile" })
-      // `tinypool` with `runtime: "child_process"` serializes Error as plain objects via IPC.
-      // (e.g. `{ name, message, stack, ... }`)
-      // And napi-rs converts unknown JS values to Rust Error by calling `String()` on them,
-      // which yields `"[object Object]"` for plain objects...
-      // So, this function reconstructs a proper `Error` instance so napi-rs can extract the message.
-      .catch((err) => {
-        if (err instanceof Error) throw err;
-        if (err !== null && typeof err === "object") {
-          const obj = err as { name: string; message: string };
-          const newErr = new Error(obj.message);
-          newErr.name = obj.name;
-          throw newErr;
-        }
-        throw new Error(String(err));
-      })
+): Promise<FormatFileResult> {
+  return toFormatFileResult(
+    getPool().then((pool) =>
+      pool.run({ options, code } satisfies FormatFileParam, { name: "formatFile" }),
+    ),
   );
 }
 
 // ---
 
-// All functions below are used for JS files with embedded code
-//
-// NOTE: These functions return `null` on error instead of throwing.
-// When errors were propagated as rejected JS promises, which become `napi::Error` values in Rust TSFN await paths.
-// In heavily concurrent runs, dropping those error values could reach `napi_reference_unref` during teardown and trigger V8 fatal checks.
-
-export async function formatEmbeddedCode(
+export function formatEmbeddedCode(
   options: FormatEmbeddedCodeParam["options"],
   code: string,
 ): Promise<string | null> {
-  return pool!
-    .run({ options, code } satisfies FormatEmbeddedCodeParam, { name: "formatEmbeddedCode" })
-    .catch(() => null);
+  return toNullable(
+    getPool().then((pool) =>
+      pool.run({ options, code } satisfies FormatEmbeddedCodeParam, {
+        name: "formatEmbeddedCode",
+      }),
+    ),
+  );
 }
 
-export async function formatEmbeddedDoc(
+export function formatEmbeddedDoc(
   options: FormatEmbeddedDocParam["options"],
-  texts: string[],
-): Promise<string[] | null> {
-  return pool!
-    .run({ options, texts } satisfies FormatEmbeddedDocParam, {
-      name: "formatEmbeddedDoc",
-    })
-    .catch(() => null);
+  code: string,
+): Promise<string | null> {
+  return toNullable(
+    getPool().then((pool) =>
+      pool.run({ options, code } satisfies FormatEmbeddedDocParam, {
+        name: "formatEmbeddedDoc",
+      }),
+    ),
+  );
 }
 
-export async function sortTailwindClasses(
+export function sortTailwindClasses(
   options: SortTailwindClassesArgs["options"],
   classes: string[],
 ): Promise<string[] | null> {
-  return pool!
-    .run({ classes, options } satisfies SortTailwindClassesArgs, { name: "sortTailwindClasses" })
-    .catch(() => null);
+  return toNullable(
+    getPool().then((pool) =>
+      pool.run({ classes, options } satisfies SortTailwindClassesArgs, {
+        name: "sortTailwindClasses",
+      }),
+    ),
+  );
 }

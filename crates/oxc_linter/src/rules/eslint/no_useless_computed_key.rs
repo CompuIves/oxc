@@ -117,18 +117,20 @@ declare_oxc_lint!(
     style,
     conditional_fix,
     config = NoUselessComputedKey,
+    version = "1.16.0",
+    short_description = "Disallow unnecessary computed property keys in objects and classes.",
 );
 
 impl Rule for NoUselessComputedKey {
     fn from_configuration(value: Value) -> Result<Self, serde_json::error::Error> {
-        serde_json::from_value::<DefaultRuleConfig<Self>>(value).map(DefaultRuleConfig::into_inner)
+        DefaultRuleConfig::<Self>::from_value(value).map(DefaultRuleConfig::into_inner)
     }
 
     fn run<'a>(&self, node: &AstNode<'a>, ctx: &LintContext<'a>) {
         match node.kind() {
             AstKind::ObjectProperty(property) if property.computed => {
                 if let Some(expr) =
-                    property.key.as_expression().map(Expression::get_inner_expression)
+                    property.key.as_expression().map(Expression::without_parentheses)
                 {
                     check_computed_class_member(
                         ctx,
@@ -143,7 +145,7 @@ impl Rule for NoUselessComputedKey {
             }
             AstKind::BindingProperty(binding_prop) if binding_prop.computed => {
                 if let Some(expr) =
-                    binding_prop.key.as_expression().map(Expression::get_inner_expression)
+                    binding_prop.key.as_expression().map(Expression::without_parentheses)
                 {
                     check_computed_class_member(
                         ctx,
@@ -160,7 +162,7 @@ impl Rule for NoUselessComputedKey {
                 if self.enforce_for_class_members && prop_def.computed =>
             {
                 if let Some(expr) =
-                    prop_def.key.as_expression().map(Expression::get_inner_expression)
+                    prop_def.key.as_expression().map(Expression::without_parentheses)
                 {
                     check_computed_class_member(
                         ctx,
@@ -177,7 +179,7 @@ impl Rule for NoUselessComputedKey {
                 if self.enforce_for_class_members && method_def.computed =>
             {
                 if let Some(expr) =
-                    method_def.key.as_expression().map(Expression::get_inner_expression)
+                    method_def.key.as_expression().map(Expression::without_parentheses)
                 {
                     check_computed_class_member(
                         ctx,
@@ -333,6 +335,7 @@ fn test() {
             Some(serde_json::json!([{ "enforceForClassMembers": true }])),
         ),
         ("({ [99999999999999999n]: 0 })", None), // { "ecmaVersion": 2020 }
+        ("({ ['myKey' as CustomType]: 2 })", None),
     ];
 
     let fail = vec![

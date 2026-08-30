@@ -3,6 +3,7 @@ import { join as pathJoin } from "node:path";
 import { fileURLToPath } from "node:url";
 import assert from "node:assert";
 import { RuleTester } from "../rule_tester.ts";
+import repos from "../../repos.json" with { type: "json" };
 
 import type { MockFn, TestGroup } from "../index.ts";
 import type {
@@ -30,6 +31,7 @@ const SNAPSHOTS_DIR = pathJoin(
 
 const group: TestGroup = {
   name: "regexp",
+  ...repos.regexp,
 
   submoduleName: "regexp",
   testFilesDirPath: "tests/lib/rules",
@@ -58,8 +60,8 @@ const group: TestGroup = {
 
     // Skip stand-alone tests that don't use `RuleTester` in test file for `no-useless-flag` rule
     if (
-      ruleName === "Don't conflict even if using the rules together." &&
-      err.message === "Test case was not run with `RuleTester`"
+      ruleName === "Don't conflict even if using the rules together."
+      && err.message === "Test case was not run with `RuleTester`"
     ) {
       return true;
     }
@@ -191,9 +193,9 @@ function parseSnapshot(ruleName: string): SnapshotCase[] {
     const firstLineExpected = `Test: ${ruleName} >> invalid`;
     const firstLine = lines[0];
     assert(
-      firstLine === firstLineExpected ||
-        (firstLine.startsWith(firstLineExpected) &&
-          firstLine.slice(firstLineExpected.length).startsWith(" >>> ")),
+      firstLine === firstLineExpected
+        || (firstLine.startsWith(firstLineExpected)
+          && firstLine.slice(firstLineExpected.length).startsWith(" >>> ")),
       "Invalid header",
     );
 

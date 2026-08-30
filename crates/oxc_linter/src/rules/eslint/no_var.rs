@@ -6,7 +6,7 @@ use oxc_diagnostics::OxcDiagnostic;
 use oxc_macros::declare_oxc_lint;
 use oxc_span::{GetSpan, Span};
 
-use crate::{AstNode, context::LintContext, rule::Rule};
+use crate::{AstNode, context::LintContext, rule::Rule, utils::has_ambient_typescript_ancestor};
 
 fn no_var_diagnostic(span: Span) -> OxcDiagnostic {
     OxcDiagnostic::warn("Unexpected var, use let or const instead.")
@@ -49,7 +49,9 @@ declare_oxc_lint!(
     NoVar,
     eslint,
     restriction,
-    conditional_fix
+    conditional_fix,
+    version = "0.1.1",
+    short_description = "Enforce using `let` or `const` over `var`.",
 );
 
 impl Rule for NoVar {
@@ -58,16 +60,13 @@ impl Rule for NoVar {
             && dec.kind == VariableDeclarationKind::Var
         {
             // Skip TypeScript ambient declarations (declare global/module/namespace)
-            if ctx.nodes().ancestors(node.id()).any(|ancestor| match ancestor.kind() {
-                AstKind::TSModuleDeclaration(module) => module.declare,
-                AstKind::TSGlobalDeclaration(_) => true,
-                _ => false,
-            }) {
+            if has_ambient_typescript_ancestor(node.id(), ctx.nodes()) {
                 return;
             }
 
             let is_written_to = dec.declarations.iter().any(|v| is_written_to(&v.id, ctx));
-            let var_offset = ctx.find_next_token_from(dec.span.start, "var").unwrap();
+            let var_offset =
+                ctx.find_next_token_within(dec.span.start, dec.span.end, "var").unwrap();
             let var_start = dec.span.start + var_offset;
             let var_keyword_span = Span::sized(var_start, 3);
             ctx.diagnostic_with_fix(no_var_diagnostic(var_keyword_span), |fixer| {

@@ -4,6 +4,35 @@ All notable changes to this package will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0).
 
+## [0.145.0] - 2026-08-18
+
+### ⚡ Performance
+
+- 63ff8ef linter: Outline diagnostic construction (#25762) (Boshen)
+- 621808e diagnostics: Measure graphemes lazily (#25723) (Boshen)
+- f62ed0e diagnostics: Optimize graphical number rendering (#25715) (Boshen)
+- 7152834 diagnostics: Reduce graphical formatting overhead (#25714) (Boshen)
+- 10fc4b7 diagnostics: Reduce graphical rendering allocations (#25711) (Boshen)
+- 9c8abab diagnostics: Batch graphical reports (#25710) (Boshen)
+
+## [0.141.0] - 2026-07-20
+
+### ⚡ Performance
+
+- d3f07a0 diagnostics: Box OxcDiagnosticInner to reduce binary size (#24665) (Boshen)
+
+## [0.136.0] - 2026-06-15
+
+### ⚡ Performance
+
+- da1a6c6 diagnostics: Migrate to allocation-optimized oxc-miette (#23094) (Boshen)
+
+## [0.131.0] - 2026-05-15
+
+### ⚡ Performance
+
+- 618bc76 diagnostics: Inline `OxcDiagnosticInner` to avoid heap allocation (#22406) (Boshen)
+
 ## [0.123.0] - 2026-03-30
 
 ### 🐛 Bug Fixes

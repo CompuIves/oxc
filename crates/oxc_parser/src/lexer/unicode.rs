@@ -3,7 +3,7 @@ use std::{borrow::Cow, fmt::Write};
 use cow_utils::CowUtils;
 
 use crate::{config::LexerConfig as Config, diagnostics};
-use oxc_allocator::StringBuilder;
+use oxc_allocator::ArenaStringBuilder;
 use oxc_syntax::{
     identifier::{
         FF, TAB, VT, is_identifier_part, is_identifier_start, is_identifier_start_unicode,
@@ -67,6 +67,7 @@ impl<'a, C: Config> Lexer<'a, C> {
     fn handle_irregular_line_terminator(&mut self, _c: char) -> Kind {
         self.consume_char();
         self.token.set_is_on_new_line(true);
+        self.trivia_builder.handle_newline();
         self.trivia_builder.add_irregular_whitespace(self.token.start(), self.offset());
         Kind::Skip
     }
@@ -83,7 +84,7 @@ impl<'a, C: Config> Lexer<'a, C> {
     ///   \u{ `CodePoint` }
     pub(super) fn identifier_unicode_escape_sequence(
         &mut self,
-        str: &mut StringBuilder<'a>,
+        str: &mut ArenaStringBuilder<'a>,
         check_identifier_start: bool,
     ) {
         let start = self.offset();
@@ -137,7 +138,7 @@ impl<'a, C: Config> Lexer<'a, C> {
     ///   \u{ `CodePoint` }
     fn string_unicode_escape_sequence(
         &mut self,
-        text: &mut StringBuilder<'a>,
+        text: &mut ArenaStringBuilder<'a>,
         is_valid_escape_sequence: &mut bool,
     ) {
         let value = match self.peek_byte() {
@@ -175,7 +176,7 @@ impl<'a, C: Config> Lexer<'a, C> {
     }
 
     /// Lone surrogate found in string.
-    fn string_lone_surrogate(&mut self, code_point: u32, text: &mut StringBuilder<'a>) {
+    fn string_lone_surrogate(&mut self, code_point: u32, text: &mut ArenaStringBuilder<'a>) {
         debug_assert!(code_point <= 0xFFFF);
 
         if !self.token.lone_surrogates() {
@@ -189,7 +190,7 @@ impl<'a, C: Config> Lexer<'a, C> {
             // But strings containing both lone surrogates and lossy replacement characters
             // should be vanishingly rare, so don't bother.
             if let Cow::Owned(replaced) = text.cow_replace("\u{FFFD}", "\u{FFFD}fffd") {
-                *text = StringBuilder::from_str_in(&replaced, self.allocator);
+                *text = ArenaStringBuilder::from_str_in(&replaced, self.allocator);
             }
         }
 
@@ -329,7 +330,7 @@ impl<'a, C: Config> Lexer<'a, C> {
     // EscapeSequence ::
     pub(super) fn read_string_escape_sequence(
         &mut self,
-        text: &mut StringBuilder<'a>,
+        text: &mut ArenaStringBuilder<'a>,
         in_template: bool,
         is_valid_escape_sequence: &mut bool,
     ) {

@@ -10,7 +10,7 @@ use oxc_syntax::operator::UnaryOperator;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::{AstNode, context::LintContext, rule::Rule};
+use crate::{AstNode, ast_util::variable_declaration_kind, context::LintContext, rule::Rule};
 
 enum NoMagicNumberReportReason {
     MustUseConst,
@@ -41,13 +41,14 @@ impl std::ops::Deref for NoMagicNumbers {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(untagged)]
 pub enum NoMagicNumbersNumber {
     Float(f64),
     BigInt(String),
 }
 
 #[derive(Debug, Default, Clone, JsonSchema)]
-#[serde(rename_all = "camelCase", default)]
+#[serde(rename_all = "camelCase", default, deny_unknown_fields)]
 pub struct NoMagicNumbersConfig {
     /// An array of numbers to ignore if used as magic numbers. Can include floats or BigInt strings.
     ignore: Vec<NoMagicNumbersNumber>,
@@ -243,7 +244,9 @@ declare_oxc_lint!(
     eslint,
     style,
     pending, // TODO: enforceConst, probably copy from https://github.com/oxc-project/oxc/pull/5144
-    config = NoMagicNumbersConfig
+    config = NoMagicNumbersConfig,
+    version = "0.9.3",
+    short_description = "Disallow magic numbers.",
 );
 
 #[derive(Debug)]
@@ -322,7 +325,7 @@ impl Rule for NoMagicNumbers {
         let parent_kind = nodes.parent_kind(config.node.id());
         let span = config.node.kind().span();
 
-        let Some(reason) = self.get_report_reason(&parent_kind) else {
+        let Some(reason) = self.get_report_reason(&parent_kind, ctx) else {
             return;
         };
 
@@ -514,11 +517,14 @@ impl NoMagicNumbers {
 
     fn get_report_reason<'a>(
         &self,
-        parent_kind: &'a AstKind<'a>,
+        parent_kind: &AstKind<'a>,
+        ctx: &LintContext<'a>,
     ) -> Option<NoMagicNumberReportReason> {
         match parent_kind {
             AstKind::VariableDeclarator(declarator) => {
-                if self.enforce_const && declarator.kind != VariableDeclarationKind::Const {
+                if self.enforce_const
+                    && variable_declaration_kind(declarator, ctx) != VariableDeclarationKind::Const
+                {
                     return Some(NoMagicNumberReportReason::MustUseConst);
                 }
 

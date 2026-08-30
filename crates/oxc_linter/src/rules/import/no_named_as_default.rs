@@ -68,13 +68,19 @@ declare_oxc_lint!(
     /// `tsconfig.json` files.
     NoNamedAsDefault,
     import,
-    suspicious
+    suspicious,
+    version = "0.2.3",
+    short_description = "Forbid using an exported name as the identifier of a default export.",
 );
 
 impl Rule for NoNamedAsDefault {
     fn run_once(&self, ctx: &LintContext<'_>) {
         let module_record = ctx.module_record();
         for import_entry in &module_record.import_entries {
+            if import_entry.is_type {
+                continue;
+            }
+
             let ImportImportName::Default(import_span) = &import_entry.import_name else {
                 continue;
             };
@@ -186,6 +192,8 @@ fn test() {
         // Import-then-export of the same named binding as both default and named.
         // Both refer to the same source binding, so this is allowed.
         r#"import userEvent from "./re-export-default-and-named-import-then-export""#,
+        // A disable directive for a conflicting local export is used, not unused.
+        "// eslint-disable-next-line import/no-named-as-default\nimport PortalPaywall from './portal-paywall'",
     ];
 
     let fail = vec![
@@ -205,10 +213,28 @@ fn test() {
         // When default and named exports are re-exported from the same source
         // but refer to different bindings, it should still report.
         r#"import userEvent from "./re-export-default-and-named-different-binding""#,
+        // Local exports are reported even when the default and named exports refer to the same
+        // binding, matching eslint-plugin-import.
+        r#"import PortalPaywall from "./portal-paywall""#,
+        r#"import Hls, { CMCDController } from "hls-default-class""#,
+        r#"import LocalHls from "./local-default-class-and-named""#,
     ];
 
     Tester::new(NoNamedAsDefault::NAME, NoNamedAsDefault::PLUGIN, pass, fail)
         .change_rule_path("index.js")
         .with_import_plugin(true)
         .test_and_snapshot();
+}
+
+#[test]
+fn test_type_import() {
+    use crate::tester::Tester;
+
+    let pass = vec![r#"import type Hls from "hls-default-class""#];
+    let fail: Vec<&str> = vec![];
+
+    Tester::new(NoNamedAsDefault::NAME, NoNamedAsDefault::PLUGIN, pass, fail)
+        .change_rule_path("index.ts")
+        .with_import_plugin(true)
+        .test();
 }

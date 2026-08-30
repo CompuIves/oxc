@@ -2,7 +2,7 @@ use oxc_ast::{
     AstKind,
     ast::{
         AssignmentTargetMaybeDefault, AssignmentTargetProperty, AssignmentTargetPropertyProperty,
-        BindingPattern, BindingProperty,
+        BindingPattern, BindingProperty, ImportOrExportKind,
     },
 };
 use oxc_diagnostics::OxcDiagnostic;
@@ -77,11 +77,13 @@ declare_oxc_lint!(
     correctness,
     fix,
     config = NoUselessRenameConfig,
+    version = "0.2.14",
+    short_description = "Disallow renaming import, export, and destructured assignments to the same name.",
 );
 
 impl Rule for NoUselessRename {
     fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
-        serde_json::from_value::<DefaultRuleConfig<Self>>(value).map(DefaultRuleConfig::into_inner)
+        DefaultRuleConfig::<Self>::from_value(value).map(DefaultRuleConfig::into_inner)
     }
 
     fn run<'a>(&self, node: &AstNode<'a>, ctx: &LintContext<'a>) {
@@ -147,25 +149,25 @@ impl Rule for NoUselessRename {
                     }
                 }
             }
-            AstKind::ImportSpecifier(import_specifier) => {
+            AstKind::ImportSpecifier(import_specifier)
                 if !self.ignore_import
                     && import_specifier.imported.span() != import_specifier.local.span
-                    && import_specifier.local.name == import_specifier.imported.name()
-                {
-                    ctx.diagnostic_with_fix(
-                        no_useless_rename_diagnostic(import_specifier.local.span),
-                        |fixer| {
-                            // Always replace the entire specifier with just the local identifier
-                            // The local identifier is the name that will be used in the code
-                            let local_text = import_specifier
-                                .local
-                                .span
-                                .source_text(ctx.source_text())
-                                .to_string();
-                            fixer.replace(import_specifier.span, local_text)
-                        },
-                    );
-                }
+                    && import_specifier.local.name == import_specifier.imported.name() =>
+            {
+                ctx.diagnostic_with_fix(
+                    no_useless_rename_diagnostic(import_specifier.local.span),
+                    |fixer| {
+                        let local_text =
+                            import_specifier.local.span.source_text(ctx.source_text()).to_string();
+                        let replacement =
+                            if import_specifier.import_kind == ImportOrExportKind::Type {
+                                format!("type {local_text}")
+                            } else {
+                                local_text
+                            };
+                        fixer.replace(import_specifier.span, replacement)
+                    },
+                );
             }
             AstKind::ExportNamedDeclaration(export_named_decl) => {
                 if self.ignore_export {
@@ -178,14 +180,48 @@ impl Rule for NoUselessRename {
                         ctx.diagnostic_with_fix(
                             no_useless_rename_diagnostic(specifier.local.span()),
                             |fixer| {
-                                // Always replace the entire specifier with just the local part
-                                // The local is what the variable is named inside the module
+                                // Always replace the entire specifier with just the local part.
+                                // The local is what the variable is named inside the module.
                                 let local_text = specifier
                                     .local
                                     .span()
                                     .source_text(ctx.source_text())
                                     .to_string();
-                                fixer.replace(specifier.span, local_text)
+                                let replacement =
+                                    if specifier.export_kind == ImportOrExportKind::Type {
+                                        format!("type {local_text}")
+                                    } else {
+                                        local_text
+                                    };
+                                fixer.replace(specifier.span, replacement)
+                            },
+                        );
+                    }
+                }
+            }
+            AstKind::ExportFromDeclaration(export_from_decl) => {
+                if self.ignore_export {
+                    return;
+                }
+                for specifier in &export_from_decl.specifiers {
+                    if specifier.local.span() != specifier.exported.span()
+                        && specifier.local.name() == specifier.exported.name()
+                    {
+                        ctx.diagnostic_with_fix(
+                            no_useless_rename_diagnostic(specifier.local.span()),
+                            |fixer| {
+                                let local_text = specifier
+                                    .local
+                                    .span()
+                                    .source_text(ctx.source_text())
+                                    .to_string();
+                                let replacement =
+                                    if specifier.export_kind == ImportOrExportKind::Type {
+                                        format!("type {local_text}")
+                                    } else {
+                                        local_text
+                                    };
+                                fixer.replace(specifier.span, replacement)
                             },
                         );
                     }
@@ -570,6 +606,10 @@ fn test() {
         ("import {foo as foo, bar as baz} from 'foo';", "import {foo, bar as baz} from 'foo';"),
         ("import {foo as bar, baz as baz} from 'foo';", "import {foo as bar, baz} from 'foo';"),
         ("import {foo as foo, bar as bar} from 'foo';", "import {foo, bar} from 'foo';"),
+        (
+            "export { type Foo as Foo } from 'mod'; import { type Bar as Bar } from 'mod'; type Baz = unknown; export { type Baz as Baz };",
+            "export { type Foo } from 'mod'; import { type Bar } from 'mod'; type Baz = unknown; export { type Baz };",
+        ),
         ("var foo = 0; export {foo as foo};", "var foo = 0; export {foo};"),
         ("var foo = 0; export {foo as 'foo'};", "var foo = 0; export {foo};"),
         ("export {foo as 'foo'} from 'bar';", "export {foo} from 'bar';"),

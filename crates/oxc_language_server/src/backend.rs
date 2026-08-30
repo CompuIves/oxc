@@ -3,7 +3,7 @@ use std::{borrow::Cow, sync::Arc};
 use futures::future::join_all;
 use rustc_hash::FxBuildHasher;
 use serde_json::Value;
-use tokio::sync::{OnceCell, RwLock, SetError};
+use tokio::sync::{OnceCell, SetError};
 use tower_lsp_server::{
     Client, LanguageServer,
     jsonrpc::{Error, ErrorCode, Result},
@@ -15,13 +15,13 @@ use tower_lsp_server::{
         DocumentDiagnosticReportKind, DocumentDiagnosticReportResult, DocumentFormattingParams,
         ExecuteCommandParams, FullDocumentDiagnosticReport, InitializeParams, InitializeResult,
         InitializedParams, MessageType, RelatedFullDocumentDiagnosticReport, ServerInfo,
-        TextDocumentContentChangeEvent, TextEdit, Uri,
+        TextDocumentContentChangeEvent, TextEdit, Uri, WorkspaceEdit,
     },
 };
 use tracing::{debug, error, info, warn};
 
 use crate::{
-    ConcurrentHashMap, LanguageId, ToolBuilder,
+    ClientMessage, ConcurrentHashMap, LanguageId,
     capabilities::{Capabilities, DiagnosticMode, server_capabilities},
     file_system::LSPFileSystem,
     options::WorkspaceOption,
@@ -68,8 +68,10 @@ pub struct Backend {
     capabilities: OnceCell<Capabilities>,
     // A simple in-memory file system to store the content of open files.
     // The client will send the content of in-memory files on `textDocument/didOpen` and `textDocument/didChange`.
-    // This is only needed when the client supports `textDocument/formatting` request.
-    file_system: Arc<RwLock<LSPFileSystem>>,
+    file_system: Arc<LSPFileSystem>,
+    // Messages collected during `initialize` that must be deferred until `initialized`,
+    // because the LSP spec forbids server-to-client communication before the initialize response is sent.
+    pending_initialization_messages: OnceCell<Vec<ClientMessage>>,
 }
 
 impl LanguageServer for Backend {
@@ -81,7 +83,7 @@ impl LanguageServer for Backend {
     #[expect(deprecated)] // `params.root_uri` is deprecated, we are only falling back to it if no workspace folder is provided
     async fn initialize(&self, params: InitializeParams) -> Result<InitializeResult> {
         // initialization_options can be anything, so we are requesting `workspace/configuration` when no initialize options are provided
-        let options = params.initialization_options.and_then(|value| {
+        let options = params.initialization_options.and_then(|mut value| {
             // the client supports the new settings object
             if let Ok(new_settings) = serde_json::from_value::<Vec<WorkspaceOption>>(value.clone())
             {
@@ -91,12 +93,13 @@ impl LanguageServer for Backend {
 
             // the client has deprecated settings and has a deprecated root uri.
             // handle all things like the old way
-            if let (Some(deprecated_settings), Some(root_uri)) =
-                (value.get("settings"), params.root_uri.as_ref())
+            if value.get("settings").is_some()
+                && let (Some(deprecated_settings), Some(root_uri)) =
+                    (value.get_mut("settings"), params.root_uri.as_ref())
             {
                 return Some(vec![WorkspaceOption {
                     workspace_uri: root_uri.clone(),
-                    options: deprecated_settings.clone(),
+                    options: deprecated_settings.take(),
                 }]);
             }
 
@@ -120,9 +123,8 @@ impl LanguageServer for Backend {
 
         // client sent workspace folders
         let workers = if let Some(workspace_folders) = params.workspace_folders {
-            let uris: Vec<Uri> =
-                workspace_folders.iter().map(|folder| folder.uri.clone()).collect();
-            WorkerManager::assert_workspaces_are_valid_paths(&uris)?;
+            let uris: Vec<&Uri> = workspace_folders.iter().map(|folder| &folder.uri).collect();
+            WorkerManager::assert_workspaces_are_valid_paths(uris)?;
 
             workspace_folders
                 .into_iter()
@@ -133,7 +135,7 @@ impl LanguageServer for Backend {
                 .collect()
         // client sent deprecated root uri
         } else if let Some(root_uri) = params.root_uri {
-            WorkerManager::assert_workspaces_are_valid_paths(std::slice::from_ref(&root_uri))?;
+            WorkerManager::assert_workspaces_are_valid_paths(vec![&root_uri])?;
 
             vec![self.worker_manager.create_worker(root_uri, capabilities.diagnostic_mode.clone())]
         // client is in single file mode, create no workers initially.
@@ -147,6 +149,7 @@ impl LanguageServer for Backend {
         // or the client does not support `workspace/configuration` request,
         // start the linter. We do not start the linter when the client support the request,
         // we will init the linter after requesting for the workspace configuration.
+        let mut client_messages = vec![];
         if !capabilities.workspace_configuration || options.is_some() {
             let options = options.unwrap_or_default();
 
@@ -160,11 +163,18 @@ impl LanguageServer for Backend {
                     .unwrap_or_default();
 
                 debug!("starting worker in initialize with options: {option:?}");
-                worker.start_worker(option).await;
+
+                client_messages.extend(worker.start_worker(option).await);
             }
         }
 
-        self.worker_manager.set_all_workers(workers).await;
+        client_messages.extend(
+            self.worker_manager.start_manager(workers, capabilities.diagnostic_mode.clone()).await,
+        );
+
+        if !client_messages.is_empty() {
+            let _ = self.pending_initialization_messages.set(client_messages);
+        }
 
         self.capabilities.set(capabilities).map_err(|err| {
             let message = match err {
@@ -192,15 +202,18 @@ impl LanguageServer for Backend {
     /// See: <https://microsoft.github.io/language-server-protocol/specifications/specification-current/#initialized>
     async fn initialized(&self, _params: InitializedParams) {
         debug!("oxc initialized.");
+
+        let mut client_messages =
+            self.pending_initialization_messages.get().cloned().unwrap_or_default();
         let Some(capabilities) = self.capabilities.get() else {
             return;
         };
 
-        let workers = &*self.worker_manager.read_workers().await;
+        let workspace_workers = &*self.worker_manager.read_workspace_workers().await;
         let needed_configurations =
-            ConcurrentHashMap::with_capacity_and_hasher(workers.len(), FxBuildHasher);
+            ConcurrentHashMap::with_capacity_and_hasher(workspace_workers.len(), FxBuildHasher);
         let needed_configurations = needed_configurations.pin_owned();
-        for worker in workers {
+        for worker in workspace_workers {
             if worker.needs_init_options().await {
                 needed_configurations.insert(worker.get_root_uri().clone(), worker);
             }
@@ -214,10 +227,8 @@ impl LanguageServer for Backend {
                 vec![serde_json::Value::Null; needed_configurations.len()]
             };
 
-            // Snapshot all open-file URIs in one read lock so we don't need to
-            // re-acquire the lock just to iterate the list of URIs. Individual
-            // document lookups still take their own read lock per URI.
-            let known_uris = self.file_system.read().await.keys();
+            // All open-file URIs
+            let known_uris = self.file_system.keys();
             // will only be filled when using push diagnostic model
             let mut new_diagnostics = Vec::new();
 
@@ -225,7 +236,7 @@ impl LanguageServer for Backend {
                 // get the configuration from the response and start the worker
                 let configuration = configurations.get(index).unwrap_or(&serde_json::Value::Null);
                 debug!("starting worker in initialize with options: {configuration:?}");
-                worker.start_worker(configuration.clone()).await;
+                client_messages.extend(worker.start_worker(configuration.clone()).await);
 
                 // run diagnostics for all known files in the workspace of the worker.
                 // This is necessary because the worker was not started before.
@@ -236,14 +247,10 @@ impl LanguageServer for Backend {
 
                 for uri in &known_uris {
                     // Check if this worker is the most specific one for this URI
-                    let responsible_worker = WorkerManager::find_worker_for_uri(workers, uri);
-                    if responsible_worker.is_none_or(|w| !std::ptr::eq(w, worker)) {
+                    let Some(worker) = self.worker_manager.get_worker_for_uri(uri).await else {
                         continue;
-                    }
-                    let document = {
-                        let fs_guard = self.file_system.read().await;
-                        fs_guard.get_document(uri)
                     };
+                    let document = self.file_system.get_document(uri);
                     let diagnostics = worker.run_diagnostic(&document).await;
                     match diagnostics {
                         Err(err) => {
@@ -251,9 +258,8 @@ impl LanguageServer for Backend {
                                 "running diagnostics for {} failed: {err}",
                                 document.uri.as_str()
                             );
-                            if self.capabilities.get().is_some_and(|cap| cap.show_message) {
-                                self.client.show_message(MessageType::ERROR, err).await;
-                            }
+                            client_messages
+                                .push(ClientMessage { r#type: MessageType::ERROR, message: err });
                         }
                         Ok(diagnostics) => new_diagnostics.extend(diagnostics),
                     }
@@ -271,19 +277,30 @@ impl LanguageServer for Backend {
                 );
 
                 // In pull diagnostic model, we ask the client to refresh diagnostics
-                if let Err(err) = self.client.workspace_diagnostic_refresh().await {
-                    warn!("sending workspace/diagnostic/refresh failed: {err}");
-                }
+                self.spawn_diagnostic_refresh();
             }
         }
+
+        self.send_client_messages(client_messages).await;
 
         let mut registrations = vec![];
 
         // init all file watchers
         if capabilities.dynamic_watchers {
-            for worker in workers {
+            for worker in workspace_workers {
                 registrations.extend(worker.init_watchers().await);
             }
+
+            // The watcher logic does handle per workspace, the dynamic worker is targeting the root (`file:///`).
+            // We do not want to include them, or the client will watch the whole file system, which can be very expensive.
+            // Current Assumption: The user does not modify files outside the workspace + the outside config file at the same session.
+            // If this becomes a problem in the future, we can consider adding dynamic watchers for the dynamic worker as well,
+            // but we need to optimize the logic.
+            // Example optimization: Only return registered config paths instead of watching the workspace root.
+            // Adding a "add" watcher for the root should still be applied.
+            // if let Some(dynamic_worker) = self.worker_manager.read_dynamic_worker().await {
+            //     registrations.extend(dynamic_worker.init_watchers().await);
+            // }
         }
 
         if registrations.is_empty() {
@@ -298,15 +315,7 @@ impl LanguageServer for Backend {
     ///
     /// See: <https://microsoft.github.io/language-server-protocol/specifications/specification-current/#shutdown>
     async fn shutdown(&self) -> Result<()> {
-        let mut clearing_diagnostics = Vec::new();
-
-        for worker in &*self.worker_manager.read_workers().await {
-            // shutdown each worker and collect the URIs to clear diagnostics.
-            // unregistering file watchers is not necessary, because the client will do it automatically on shutdown.
-            // some clients (`helix`) do not expect any requests after shutdown is sent.
-            let (uris, _) = worker.shutdown().await;
-            clearing_diagnostics.extend(uris);
-        }
+        let clearing_diagnostics = self.worker_manager.stop_manager().await;
 
         // only clear diagnostics when we are using push diagnostics
         if self.capabilities.get().is_some_and(|cap| cap.diagnostic_mode == DiagnosticMode::Push)
@@ -314,7 +323,7 @@ impl LanguageServer for Backend {
         {
             self.clear_diagnostics(clearing_diagnostics).await;
         }
-        self.file_system.write().await.clear();
+        self.file_system.clear();
 
         Ok(())
     }
@@ -326,10 +335,11 @@ impl LanguageServer for Backend {
     ///
     /// See: <https://microsoft.github.io/language-server-protocol/specifications/specification-current/#workspace_didChangeConfiguration>
     async fn did_change_configuration(&self, params: DidChangeConfigurationParams) {
-        let workers = self.worker_manager.read_workers().await;
+        let workers = self.worker_manager.read_workspace_workers().await;
         let mut new_diagnostics = Vec::new();
         let mut removing_registrations = vec![];
         let mut adding_registrations = vec![];
+        let mut client_messages = vec![];
 
         // when null, request configuration from client; otherwise, parse as per-workspace options or use as global configuration
         let options = if params.settings == Value::Null {
@@ -386,12 +396,11 @@ impl LanguageServer for Backend {
         let mut needs_diagnostics_refresh = false;
         let diagnostic_mode =
             self.capabilities.get().map(|cap| cap.diagnostic_mode.clone()).unwrap_or_default();
-        let fs_guard = if diagnostic_mode == DiagnosticMode::Push {
-            Some(self.file_system.read().await)
+        let fs = if diagnostic_mode == DiagnosticMode::Push {
+            Some(self.file_system.as_ref())
         } else {
             None
         };
-        let fs_ref = fs_guard.as_deref();
 
         for option in resolved_options {
             let Some(worker) =
@@ -400,16 +409,17 @@ impl LanguageServer for Backend {
                 continue;
             };
 
-            let (diagnostics, registrations, unregistrations) = worker
-                .did_change_configuration(option.options, &mut needs_diagnostics_refresh, fs_ref)
+            let result = worker
+                .did_change_configuration(option.options, &mut needs_diagnostics_refresh, fs)
                 .await;
 
-            if let Some(diagnostics) = diagnostics {
+            if let Some(diagnostics) = result.diagnostics {
                 new_diagnostics.extend(diagnostics);
             }
 
-            removing_registrations.extend(unregistrations);
-            adding_registrations.extend(registrations);
+            removing_registrations.extend(result.removed_watchers);
+            adding_registrations.extend(result.new_watchers);
+            client_messages.extend(result.client_messages);
         }
 
         if diagnostic_mode == DiagnosticMode::Push && !new_diagnostics.is_empty() {
@@ -418,9 +428,7 @@ impl LanguageServer for Backend {
 
         if diagnostic_mode == DiagnosticMode::Pull && needs_diagnostics_refresh {
             // In pull diagnostic model, we ask the client to refresh diagnostics
-            if let Err(err) = self.client.workspace_diagnostic_refresh().await {
-                warn!("sending workspace/diagnostic/refresh failed: {err}");
-            }
+            self.spawn_diagnostic_refresh();
         }
 
         if !removing_registrations.is_empty()
@@ -433,6 +441,8 @@ impl LanguageServer for Backend {
         {
             warn!("sending registerCapability.didChangeWatchedFiles failed: {err}");
         }
+
+        self.send_client_messages(client_messages).await;
     }
 
     /// This notification is sent when a configuration file of a tool changes (example: `.oxlintrc.json`).
@@ -440,40 +450,40 @@ impl LanguageServer for Backend {
     ///
     /// See: <https://microsoft.github.io/language-server-protocol/specifications/specification-current/#workspace_didChangeWatchedFiles>
     async fn did_change_watched_files(&self, params: DidChangeWatchedFilesParams) {
-        let workers = self.worker_manager.read_workers().await;
         // ToDo: what if an empty changes flag is passed?
         debug!("watched file did change");
 
         let mut new_diagnostics = Vec::new();
         let mut removing_registrations = vec![];
         let mut adding_registrations = vec![];
+        let mut client_messages = vec![];
 
         let mut needs_diagnostics_refresh = false;
         let diagnostic_mode =
             self.capabilities.get().map(|cap| cap.diagnostic_mode.clone()).unwrap_or_default();
-        let fs_guard = if diagnostic_mode == DiagnosticMode::Push {
-            Some(self.file_system.read().await)
+        let fs = if diagnostic_mode == DiagnosticMode::Push {
+            Some(self.file_system.as_ref())
         } else {
             None
         };
-        let fs_ref = fs_guard.as_deref();
 
         for file_event in &params.changes {
             // We do not expect multiple changes from the same workspace folder.
             // If we should consider it, we need to map the events to the workers first,
-            // to only restart the internal linter / diagnostics for once
-            let Some(worker) = WorkerManager::find_worker_for_uri(&workers, &file_event.uri) else {
-                continue;
-            };
-            let (diagnostics, registrations, unregistrations) = worker
-                .did_change_watched_files(file_event, &mut needs_diagnostics_refresh, fs_ref)
-                .await;
+            // to only restart the internal linter / diagnostics for once.
+            // A change can affect multiple workspaces if the file is in a shared location, for example a config file in the home directory.
+            for worker in self.worker_manager.read_workspace_workers().await.iter() {
+                let result = worker
+                    .did_change_watched_files(file_event, &mut needs_diagnostics_refresh, fs)
+                    .await;
 
-            if let Some(diagnostics) = diagnostics {
-                new_diagnostics.extend(diagnostics);
+                if let Some(diagnostics) = result.diagnostics {
+                    new_diagnostics.extend(diagnostics);
+                }
+                removing_registrations.extend(result.removed_watchers);
+                adding_registrations.extend(result.new_watchers);
+                client_messages.extend(result.client_messages);
             }
-            removing_registrations.extend(unregistrations);
-            adding_registrations.extend(registrations);
         }
 
         if diagnostic_mode == DiagnosticMode::Push && !new_diagnostics.is_empty() {
@@ -482,9 +492,7 @@ impl LanguageServer for Backend {
 
         if diagnostic_mode == DiagnosticMode::Pull && needs_diagnostics_refresh {
             // In pull diagnostic model, we ask the client to refresh diagnostics
-            if let Err(err) = self.client.workspace_diagnostic_refresh().await {
-                warn!("sending workspace/diagnostic/refresh failed: {err}");
-            }
+            self.spawn_diagnostic_refresh();
         }
 
         if self.capabilities.get().is_some_and(|capabilities| capabilities.dynamic_watchers) {
@@ -500,6 +508,8 @@ impl LanguageServer for Backend {
                 warn!("sending registerCapability.didChangeWatchedFiles failed: {err}");
             }
         }
+
+        self.send_client_messages(client_messages).await;
     }
 
     /// The server will start new [WorkspaceWorker]s for added workspace folders
@@ -527,6 +537,7 @@ impl LanguageServer for Backend {
         // === Phase 2: Shut down removed workers (no lock held) ===
         let mut cleared_diagnostics = vec![];
         let mut removed_registrations = vec![];
+        let mut client_messages = vec![];
         for worker in workers_to_shutdown {
             let (uris, unregistrations) = worker.shutdown().await;
             cleared_diagnostics.extend(uris);
@@ -548,7 +559,8 @@ impl LanguageServer for Backend {
         for (index, folder) in params.event.added.into_iter().enumerate() {
             let worker = self.worker_manager.create_worker(folder.uri, diagnostic_mode.clone());
             let options = configurations.get(index).unwrap_or(&serde_json::Value::Null);
-            worker.start_worker(options.clone()).await;
+
+            client_messages.extend(worker.start_worker(options.clone()).await);
             added_registrations.extend(worker.init_watchers().await);
             new_workers.push(worker);
         }
@@ -574,31 +586,31 @@ impl LanguageServer for Backend {
                 warn!("sending unregisterCapability.didChangeWatchedFiles failed: {err}");
             }
         }
+
+        // === Phase 6: Show messages to the client ===
+        self.send_client_messages(client_messages).await;
     }
 
-    /// It will remove the in-memory file content, because the file is saved to disk.
+    /// It will save the in-memory file content, because non file-system files needs to be keep tracked too, and can not be accessed by the OS file system.
     /// It will re-lint the file and send updated diagnostics, if necessary.
     ///
     /// See: <https://microsoft.github.io/language-server-protocol/specifications/specification-current/#textDocument_didSave>
     async fn did_save(&self, params: DidSaveTextDocumentParams) {
         debug!("oxc server did save");
         let uri = params.text_document.uri;
-        let Some(worker) = self.worker_manager.get_worker_for_uri(&uri).await else {
-            return;
-        };
-
         if let Some(content) = params.text {
-            self.file_system.write().await.set(uri.clone(), content);
+            self.file_system.set(uri.clone(), content);
         }
 
-        let document = self.file_system.read().await.get_document(&uri);
         if self.capabilities.get().is_some_and(|cap| cap.diagnostic_mode == DiagnosticMode::Push) {
+            let Some(worker) = self.worker_manager.get_worker_for_uri(&uri).await else {
+                return;
+            };
+            let document = self.file_system.get_document(&uri);
             match worker.run_diagnostic_on_save(&document).await {
                 Err(err) => {
                     error!("running diagnostics for {} failed: {err}", uri.as_str());
-                    if self.capabilities.get().is_some_and(|cap| cap.show_message) {
-                        self.client.show_message(MessageType::ERROR, err).await;
-                    }
+                    self.client.show_message(MessageType::ERROR, err).await;
                 }
                 Ok(diagnostics) => {
                     if !diagnostics.is_empty() {
@@ -615,20 +627,20 @@ impl LanguageServer for Backend {
     /// See: <https://microsoft.github.io/language-server-protocol/specifications/specification-current/#textDocument_didChange>
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
         let uri = params.text_document.uri;
-        let Some(worker) = self.worker_manager.get_worker_for_uri(&uri).await else {
-            return;
-        };
         if let Some(content) = params
             .content_changes
             .into_iter()
             .next()
             .map(|c: TextDocumentContentChangeEvent| c.text)
         {
-            self.file_system.write().await.set(uri.clone(), content);
+            self.file_system.set(uri.clone(), content);
         }
 
-        let document = self.file_system.read().await.get_document(&uri);
+        let document = self.file_system.get_document(&uri);
 
+        let Some(worker) = self.worker_manager.get_worker_for_uri(&uri).await else {
+            return;
+        };
         // Remove the internal cache for the document.
         // When the editor requests `textDocument/codeAction`, it may use its diagnostic cache to generate actions.
         // This could cause code actions to be generated with stale diagnostics if the cache is not cleared here.
@@ -640,9 +652,7 @@ impl LanguageServer for Backend {
             match worker.run_diagnostic_on_change(&document).await {
                 Err(err) => {
                     error!("running diagnostics for {} failed: {err}", uri.as_str());
-                    if self.capabilities.get().is_some_and(|cap| cap.show_message) {
-                        self.client.show_message(MessageType::ERROR, err).await;
-                    }
+                    self.client.show_message(MessageType::ERROR, err).await;
                 }
                 Ok(diagnostics) => {
                     if !diagnostics.is_empty() {
@@ -672,43 +682,44 @@ impl LanguageServer for Backend {
             let diagnostic_mode =
                 capabilities.map(|c| c.diagnostic_mode.clone()).unwrap_or_default();
             let dynamic_watchers = capabilities.is_some_and(|c| c.dynamic_watchers);
-            if let Some(registrations) = self
+            let (registrations, client_messages) = self
                 .worker_manager
                 .ensure_worker_for_file_uri(&uri, diagnostic_mode, dynamic_watchers)
-                .await
-                && !registrations.is_empty()
-                && let Err(err) = self.client.register_capability(registrations).await
+                .await;
+
+            if let Some(registrations) = registrations
+                && let Err(err) = self.client.register_capability(vec![registrations]).await
             {
                 warn!("registering file watchers for single-file workspace failed: {err}");
             }
-        }
 
-        let Some(worker) = self.worker_manager.get_worker_for_uri(&uri).await else {
-            return;
-        };
+            self.send_client_messages(client_messages).await;
+        }
 
         let content = params.text_document.text;
 
-        self.file_system.write().await.set_with_language(
+        self.file_system.set_with_language(
             uri.clone(),
             LanguageId::new(params.text_document.language_id),
             content,
         );
 
-        let document = self.file_system.read().await.get_document(&uri);
-
         if self.capabilities.get().is_some_and(|cap| cap.diagnostic_mode == DiagnosticMode::Push) {
+            let Some(worker) = self.worker_manager.get_worker_for_uri(&uri).await else {
+                return;
+            };
+
+            let document = self.file_system.get_document(&uri);
+
             match worker.run_diagnostic(&document).await {
                 Err(err) => {
                     error!("running diagnostics for {} failed: {err}", uri.as_str());
-                    if self.capabilities.get().is_some_and(|cap| cap.show_message) {
-                        self.client.show_message(MessageType::ERROR, err).await;
-                    }
+                    self.client.show_message(MessageType::ERROR, err).await;
                 }
                 Ok(diagnostics) => {
                     if !diagnostics.is_empty() {
                         let version_map = ConcurrentHashMap::default();
-                        version_map.pin().insert(uri.clone(), params.text_document.version);
+                        version_map.pin().insert(uri, params.text_document.version);
                         self.publish_all_diagnostics(diagnostics, version_map).await;
                     }
                 }
@@ -725,9 +736,13 @@ impl LanguageServer for Backend {
     /// See: <https://microsoft.github.io/language-server-protocol/specifications/specification-current/#textDocument_didClose>
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
         let uri = &params.text_document.uri;
+        self.file_system.remove(uri);
+
         let Some(worker) = self.worker_manager.get_worker_for_uri(uri).await else {
             return;
         };
+
+        worker.remove_uri_cache(&params.text_document.uri).await;
 
         // Clone the root URI now so we can use it after dropping the read lock.
         let worker_root_uri = if self.worker_manager.is_single_file_mode() {
@@ -736,15 +751,12 @@ impl LanguageServer for Backend {
             None
         };
 
-        self.file_system.write().await.remove(uri);
-        worker.remove_uri_cache(&params.text_document.uri).await;
-
         // Drop the read lock before potentially acquiring the write lock in
         // try_shutdown_empty_workspace.
         drop(worker);
 
         if let Some(root_uri) = worker_root_uri {
-            let open_uris = self.file_system.read().await.keys();
+            let open_uris = self.file_system.keys();
             let result =
                 self.worker_manager.try_shutdown_empty_workspace(&root_uri, &open_uris).await;
 
@@ -774,13 +786,21 @@ impl LanguageServer for Backend {
     ///
     /// See: <https://microsoft.github.io/language-server-protocol/specifications/specification-current/#textDocument_codeAction>
     async fn code_action(&self, params: CodeActionParams) -> Result<Option<CodeActionResponse>> {
-        let uri = &params.text_document.uri;
-        let Some(worker) = self.worker_manager.get_worker_for_uri(uri).await else {
+        let uri = params.text_document.uri;
+        let Some(worker) = self.worker_manager.get_worker_for_uri(&uri).await else {
             return Ok(None);
         };
 
-        let code_actions =
-            worker.get_code_actions_or_commands(uri, &params.range, &params.context).await;
+        let is_open_document = self.file_system.is_open(&uri);
+
+        let params = crate::CodeActionParams {
+            uri,
+            range: params.range,
+            context: params.context,
+            is_open_document,
+        };
+
+        let code_actions = worker.get_code_actions_or_commands(&params).await;
 
         if code_actions.is_empty() {
             return Ok(None);
@@ -797,22 +817,44 @@ impl LanguageServer for Backend {
         &self,
         params: ExecuteCommandParams,
     ) -> Result<Option<serde_json::Value>> {
-        for worker in self.worker_manager.read_workers().await.iter() {
-            match worker.execute_command(&params.command, params.arguments.clone()).await {
-                Ok(changes) => {
-                    let Some(edit) = changes else {
-                        continue;
-                    };
-
-                    if !self.capabilities.get().unwrap().workspace_apply_edit {
-                        return Err(Error::invalid_params(
-                            "client does not support workspace apply edit",
-                        ));
+        // at the moment we only support `fixAll` command, which returns text-edits.
+        // move this check when we support other type of commands
+        if !self.capabilities.get().unwrap().workspace_apply_edit {
+            return Err(Error::invalid_params("client does not support workspace apply edit"));
+        }
+        // Collect all edits under a brief read lock, then release it
+        // before performing client RPCs to avoid blocking writers.
+        // TODO: recheck if we should return the first found workspace edit instead of merging edits from all workers.
+        // This can cause edit conflicts when the same line/column on the same file is edited by different workers.
+        let edits: Vec<WorkspaceEdit> = {
+            let mut edits = Vec::new();
+            {
+                let workers = self.worker_manager.read_workspace_workers().await;
+                for worker in workers.iter() {
+                    match worker.execute_command(&params.command, params.arguments.clone()).await {
+                        Ok(Some(edit)) => edits.push(edit),
+                        Ok(None) => {}
+                        Err(err) => return Err(Error::new(err)),
                     }
-
-                    self.client.apply_edit(edit).await?;
                 }
-                Err(err) => return Err(Error::new(err)),
+            }
+
+            {
+                if let Some(worker) = self.worker_manager.read_dynamic_worker() {
+                    match worker.execute_command(&params.command, params.arguments.clone()).await {
+                        Ok(Some(edit)) => edits.push(edit),
+                        Ok(None) => {}
+                        Err(err) => return Err(Error::new(err)),
+                    }
+                }
+            }
+
+            edits
+        };
+
+        if !edits.is_empty() {
+            for edit in edits {
+                self.client.apply_edit(edit).await?;
             }
         }
 
@@ -830,7 +872,7 @@ impl LanguageServer for Backend {
             )));
         };
 
-        let document = self.file_system.read().await.get_document(uri);
+        let document = self.file_system.get_document(uri);
         let diagnostics = worker.run_diagnostic(&document).await;
 
         let diagnostics = match diagnostics {
@@ -893,7 +935,7 @@ impl LanguageServer for Backend {
             return Ok(None);
         };
 
-        let document = self.file_system.read().await.get_document(uri);
+        let document = self.file_system.get_document(uri);
         match worker.format_file(&document).await {
             Ok(edits) => {
                 if edits.is_empty() {
@@ -913,14 +955,37 @@ impl Backend {
     /// The Backend will manage multiple [WorkspaceWorker]s and their configurations.
     /// It also holds the capabilities of the language server and an in-memory file system.
     /// The client is used to communicate with the LSP client.
-    pub fn new(client: Client, server_info: ServerInfo, tool: Arc<dyn ToolBuilder>) -> Self {
+    pub fn new(client: Client, server_info: ServerInfo, worker_manager: WorkerManager) -> Self {
         Self {
             client,
             server_info,
-            worker_manager: WorkerManager::new(tool),
+            worker_manager,
             capabilities: OnceCell::new(),
-            file_system: Arc::new(RwLock::new(LSPFileSystem::default())),
+            file_system: Arc::new(LSPFileSystem::default()),
+            pending_initialization_messages: OnceCell::new(),
         }
+    }
+
+    /// Ask the client to refresh pull diagnostics, without awaiting its reply
+    /// inside the calling handler.
+    ///
+    /// `workspace/diagnostic/refresh` is a server-to-client *request*: the
+    /// client may do arbitrary work before responding — typically re-pulling
+    /// `textDocument/diagnostic` from this very server. Awaiting the reply
+    /// inside a notification handler therefore pins one of the transport's
+    /// concurrency slots (4 by default in tower-lsp-server) for the whole
+    /// round-trip. Once every slot is pinned this way, the server can no
+    /// longer service the diagnostic pulls the client is waiting on before it
+    /// replies: a circular wait with no timeout and no recovery. The refresh
+    /// is advisory and nothing depends on its result beyond logging, so it is
+    /// detached instead.
+    fn spawn_diagnostic_refresh(&self) {
+        let client = self.client.clone();
+        tokio::spawn(async move {
+            if let Err(err) = client.workspace_diagnostic_refresh().await {
+                warn!("sending workspace/diagnostic/refresh failed: {err}");
+            }
+        });
     }
 
     /// Request the workspace configuration from the client
@@ -968,6 +1033,34 @@ impl Backend {
             let version = version_map.pin().get(&uri).copied();
             self.client.publish_diagnostics(uri, diagnostics, version)
         }))
+        .await;
+    }
+
+    /// Send multiple messages to the client, if any.
+    /// Will cap the number of messages to 5, to avoid flooding the client.
+    async fn send_client_messages(&self, messages: Vec<ClientMessage>) {
+        let max_messages = 5;
+        let messages_to_send = if messages.len() > max_messages {
+            let extra_message = ClientMessage {
+                r#type: MessageType::WARNING,
+                message: format!(
+                    "{} more messages not shown. See LSP logs for details.",
+                    messages.len() - max_messages + 1
+                ),
+            };
+            let mut messages_to_send =
+                messages.into_iter().take(max_messages - 1).collect::<Vec<_>>();
+            messages_to_send.push(extra_message);
+            messages_to_send
+        } else {
+            messages
+        };
+
+        join_all(
+            messages_to_send
+                .into_iter()
+                .map(|message| self.client.show_message(message.r#type, message.message)),
+        )
         .await;
     }
 }

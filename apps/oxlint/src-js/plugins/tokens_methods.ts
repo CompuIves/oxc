@@ -103,8 +103,8 @@ export function getTokens<Options extends CountOptions | number | FilterFn | nul
 
   // Number of following tokens to additionally return
   afterCount =
-    (typeof countOptions === "number" || typeof countOptions === "undefined") &&
-    typeof afterCount === "number"
+    (typeof countOptions === "number" || typeof countOptions === "undefined")
+    && typeof afterCount === "number"
       ? afterCount
       : 0;
 
@@ -1266,10 +1266,10 @@ export function getTokenByRangeStart<Options extends RangeOptions | null | undef
   type Result = TokenResult<Options> | null;
 
   const includeComments =
-    typeof rangeOptions === "object" &&
-    rangeOptions !== null &&
-    "includeComments" in rangeOptions &&
-    !!rangeOptions.includeComments;
+    typeof rangeOptions === "object"
+    && rangeOptions !== null
+    && "includeComments" in rangeOptions
+    && !!rangeOptions.includeComments;
 
   let int32: Int32Array, len: number;
   if (includeComments === false) {
@@ -1288,7 +1288,7 @@ export function getTokenByRangeStart<Options extends RangeOptions | null | undef
   //
   // Note: Source text is limited to 1 GiB max, so offsets cannot exceed 2^30.
   // This makes it safe to use `>> 1` for division by 2 (which is faster than `>>> 1`).
-  for (let lo = 0, hi = len; lo < hi; ) {
+  for (let lo = 0, hi = len; lo < hi;) {
     const mid = (lo + hi) >> 1;
     const tokenStart = int32[mid << 2];
     if (tokenStart < offset) {
@@ -1421,8 +1421,10 @@ export function isSpaceBetweenTokens(first: NodeOrToken, second: NodeOrToken): b
     // Deserialize to check type/value for JSXText whitespace detection
     const token = getTokenOrComment(index);
     if (
-      tokenStart !== lastTokenEnd ||
-      (token.type === "JSXText" && JSX_WHITESPACE_REGEXP.test(token.value))
+      tokenStart !== lastTokenEnd
+      || (tokenStart < rangeEnd
+        && token.type === "JSXText"
+        && JSX_WHITESPACE_REGEXP.test(token.value))
     ) {
       return true;
     }
@@ -1442,10 +1444,10 @@ function getIncludeComments(
   options: SkipOptions | CountOptions | number | FilterFn | null | undefined,
 ): boolean {
   return (
-    typeof options === "object" &&
-    options !== null &&
-    "includeComments" in options &&
-    !!options.includeComments
+    typeof options === "object"
+    && options !== null
+    && "includeComments" in options
+    && !!options.includeComments
   );
 }
 
@@ -1546,7 +1548,7 @@ export function firstTokenAtOrAfter(
   startIndex: number,
   length: number,
 ): number {
-  for (let endIndex = length; startIndex < endIndex; ) {
+  for (let endIndex = length; startIndex < endIndex;) {
     const mid = (startIndex + endIndex) >> 1;
     if (int32[mid << 2] < offset) {
       startIndex = mid + 1;

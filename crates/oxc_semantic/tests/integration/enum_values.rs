@@ -8,9 +8,9 @@ fn get_enum_member_value(source: &str, member_name: &str) -> Option<ConstantValu
     let allocator = Allocator::default();
     let source_type = SourceType::ts();
     let parser_ret = Parser::new(&allocator, source, source_type).parse();
-    assert!(parser_ret.errors.is_empty(), "Parse errors: {:?}", parser_ret.errors);
+    assert!(parser_ret.diagnostics.is_empty(), "Parse errors: {:?}", parser_ret.diagnostics);
     let semantic_ret = SemanticBuilder::new().with_enum_eval(true).build(&parser_ret.program);
-    assert!(semantic_ret.errors.is_empty(), "Semantic errors: {:?}", semantic_ret.errors);
+    assert!(semantic_ret.diagnostics.is_empty(), "Semantic errors: {:?}", semantic_ret.diagnostics);
     let scoping = semantic_ret.semantic.into_scoping();
 
     for symbol_id in scoping.symbol_ids() {
@@ -70,6 +70,13 @@ fn cross_member_reference() {
 }
 
 #[test]
+fn enum_member_shadows_outer_binding() {
+    let source = "var X = 4; enum A { X = 1, Y = X + 1 }";
+    assert_eq!(get_enum_member_value(source, "X"), Some(ConstantValue::Number(1.0)));
+    assert_eq!(get_enum_member_value(source, "Y"), Some(ConstantValue::Number(2.0)));
+}
+
+#[test]
 fn infinity_nan() {
     let source = "enum A { X = Infinity, Y = NaN }";
     debug_assert_eq!(
@@ -80,6 +87,34 @@ fn infinity_nan() {
         Some(ConstantValue::Number(n)) => assert!(n.is_nan(), "Expected NaN, got {n}"),
         other => panic!("Expected Some(Number(NaN)), got {other:?}"),
     }
+}
+
+#[test]
+fn shadowed_infinity_nan_are_not_evaluated_as_globals() {
+    let source =
+        "function f() { const Infinity = 1; const NaN = 2; enum A { X = Infinity, Y = NaN } }";
+    assert_eq!(get_enum_member_value(source, "X"), None);
+    assert_eq!(get_enum_member_value(source, "Y"), None);
+}
+
+#[test]
+fn merged_enum_members_named_infinity_nan_take_precedence_over_globals() {
+    let source = "enum A { Infinity = 1, NaN = 2 } enum A { X = Infinity, Y = NaN }";
+    assert_eq!(get_enum_member_value(source, "X"), Some(ConstantValue::Number(1.0)));
+    assert_eq!(get_enum_member_value(source, "Y"), Some(ConstantValue::Number(2.0)));
+}
+
+#[test]
+fn unevaluated_merged_enum_member_shadows_global() {
+    let source = "enum A { Infinity = foo() } enum A { X = Infinity }";
+    assert_eq!(get_enum_member_value(source, "X"), None);
+}
+
+#[test]
+fn merged_enum_member_shadows_outer_binding() {
+    let source =
+        "function f() { const Infinity = 3; enum A { Infinity = 1 } enum A { X = Infinity } }";
+    assert_eq!(get_enum_member_value(source, "X"), Some(ConstantValue::Number(1.0)));
 }
 
 #[test]
@@ -115,6 +150,19 @@ fn auto_increment_after_string_fails() {
         Some(ConstantValue::String("hello".into()))
     );
     debug_assert_eq!(get_enum_member_value(source, "Y"), None);
+}
+
+#[test]
+fn auto_increment_after_unresolvable_fails() {
+    // Auto-increment must propagate the "unknown" state of the previous member,
+    // not silently restart at 0.
+    let source = "enum A { X = foo(), Y }";
+    debug_assert_eq!(get_enum_member_value(source, "X"), None);
+    debug_assert_eq!(get_enum_member_value(source, "Y"), None);
+
+    let source = "enum A { X = foo(), Y, Z }";
+    debug_assert_eq!(get_enum_member_value(source, "Y"), None);
+    debug_assert_eq!(get_enum_member_value(source, "Z"), None);
 }
 
 #[test]

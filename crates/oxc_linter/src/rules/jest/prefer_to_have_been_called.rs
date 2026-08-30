@@ -20,7 +20,6 @@ fn prefer_to_have_been_called_diagnostic(span: Span) -> OxcDiagnostic {
 #[derive(Debug, Default, Clone)]
 pub struct PreferToHaveBeenCalled;
 
-// See <https://github.com/oxc-project/oxc/issues/6050> for documentation details.
 declare_oxc_lint!(
     /// ### What it does
     ///
@@ -49,6 +48,8 @@ declare_oxc_lint!(
     jest,
     style,
     fix,
+    version = "1.34.0",
+    short_description = "Suggests using `toHaveBeenCalled()` or `not.toHaveBeenCalled()` over `toHaveBeenCalledTimes(0)` or `toBeCalledTimes(0)`.",
 );
 
 impl Rule for PreferToHaveBeenCalled {
@@ -101,8 +102,8 @@ impl PreferToHaveBeenCalled {
 
         ctx.diagnostic_with_fix(prefer_to_have_been_called_diagnostic(call_expr.span), |fixer| {
             // check if there is a `not` modifier
-            let binding = parsed_expect_call.modifiers();
-            let not_modifier = binding.iter().find(|modifier| modifier.is_name_equal("not"));
+            let not_modifier =
+                parsed_expect_call.modifiers().find(|modifier| modifier.is_name_equal("not"));
 
             if let Some(not_modifier) = not_modifier {
                 // if has `not` modifier, remove not and replace with toHaveBeenCalled()

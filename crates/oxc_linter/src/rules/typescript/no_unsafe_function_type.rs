@@ -1,6 +1,6 @@
 use oxc_ast::{
     AstKind,
-    ast::{Expression, IdentifierReference, TSTypeName},
+    ast::{IdentifierReference, TSTypeName},
 };
 use oxc_diagnostics::OxcDiagnostic;
 use oxc_macros::declare_oxc_lint;
@@ -10,7 +10,6 @@ use oxc_span::Span;
 use crate::{AstNode, context::LintContext, rule::Rule};
 
 fn no_unsafe_function_type_diagnostic(span: Span) -> OxcDiagnostic {
-    // See <https://oxc.rs/docs/contribute/linter/adding-rules.html#diagnostics> for details
     OxcDiagnostic::warn("The `Function` type accepts any function-like value.")
         .with_help("Prefer explicitly defining any function parameters and return type.")
         .with_label(span)
@@ -56,6 +55,8 @@ declare_oxc_lint!(
     NoUnsafeFunctionType,
     typescript,
     pedantic,
+    version = "0.11.1",
+    short_description = "Disallow using the unsafe built-in Function type.",
 );
 
 impl Rule for NoUnsafeFunctionType {
@@ -72,8 +73,8 @@ impl Rule for NoUnsafeFunctionType {
                 }
             }
             AstKind::TSInterfaceHeritage(heritage) => {
-                if let Expression::Identifier(ident) = &heritage.expression {
-                    handle_function_type(ident, ctx);
+                if let TSTypeName::IdentifierReference(ident_ref) = &heritage.type_name {
+                    handle_function_type(ident_ref, ctx);
                 }
             }
             _ => {}

@@ -1,10 +1,11 @@
-use oxc_allocator::{Allocator, CloneIn};
+use oxc_allocator::{Allocator, ArenaVec, CloneIn};
 use oxc_ast::{
-    AstBuilder, AstKind,
+    AstKind,
     ast::{
         ArrayExpression, ArrayExpressionElement, CallExpression, Expression, NewExpression,
         ObjectExpression, ObjectPropertyKind, SpreadElement,
     },
+    builder::AstBuilder,
 };
 use oxc_diagnostics::OxcDiagnostic;
 use oxc_macros::declare_oxc_lint;
@@ -142,7 +143,9 @@ declare_oxc_lint!(
     NoUselessSpread,
     unicorn,
     correctness,
-    fix_dangerous
+    fix_dangerous,
+    version = "0.0.19",
+    short_description = "Disallow unnecessary spread.",
 );
 
 impl Rule for NoUselessSpread {
@@ -281,10 +284,8 @@ fn diagnose_array_in_array_spread<'a>(
             ctx.diagnostic_with_fix(diagnostic, |fixer| {
                 let mut codegen = fixer.codegen();
                 codegen.print_ascii_byte(b'[');
-                let elements =
-                    spreads.iter().flat_map(|arr| arr.elements.iter()).collect::<Vec<_>>();
-                let n = elements.len();
-                for (i, el) in elements.into_iter().enumerate() {
+                let n = spreads.iter().map(|arr| arr.elements.len()).sum::<usize>();
+                for (i, el) in spreads.iter().flat_map(|arr| arr.elements.iter()).enumerate() {
                     match el {
                         ArrayExpressionElement::Elision(_) => {
                             if i == n - 1 {
@@ -319,7 +320,7 @@ fn check_useless_iterable_to_array<'a>(
         return false;
     };
 
-    let span = Span::new(spread_elem.span.start, spread_elem.span.start + 3);
+    let span = Span::sized(spread_elem.span.start, 3);
 
     match parent.kind() {
         AstKind::ForOfStatement(for_of_stmt) => {
@@ -395,7 +396,7 @@ fn check_useless_clone<'a>(
     spread_elem: &SpreadElement<'a>,
     ctx: &LintContext<'a>,
 ) {
-    let span = Span::new(spread_elem.span.start, spread_elem.span.start + 3);
+    let span = Span::sized(spread_elem.span.start, 3);
     let target = spread_elem.argument.get_inner_expression();
 
     // already diagnosed by first check
@@ -473,7 +474,7 @@ fn fix_by_removing_object_spread<'a>(
 ) -> RuleFix {
     let alloc = Allocator::default();
     let ast = AstBuilder::new(&alloc);
-    let mut new_properties = ast.vec();
+    let mut new_properties = ArenaVec::new_in(&ast);
     for prop in &outer_obj.properties {
         match prop {
             ObjectPropertyKind::SpreadProperty(s) if s.span == spread.span => {
@@ -486,7 +487,7 @@ fn fix_by_removing_object_spread<'a>(
             }
         }
     }
-    let new_obj = ast.expression_object(SPAN, new_properties);
+    let new_obj = Expression::new_object_expression(SPAN, new_properties, &ast);
     let mut codegen = fixer.codegen();
     codegen.print_expression(&new_obj);
     fixer.replace(outer_obj.span, codegen.into_source_text())
@@ -611,6 +612,30 @@ fn test() {
         // Issue: <https://github.com/oxc-project/oxc/issues/7936>
         "[ ...Uint8Array([ 1, 2, 3 ]) ].map(byte => byte.toString())",
         "[ ...new Uint8Array([ 1, 2, 3 ]) ].map(byte => byte.toString())",
+        // Issue: <https://github.com/oxc-project/oxc/issues/25868>
+        // A clone method on a typed array returns a typed array, so the
+        // surrounding spread converts to a plain array rather than cloning one.
+        "[...new Uint8Array(buf).slice(0, 12)].map((b) => b.toString(16))",
+        "[...new Uint8Array(buf).map(f)]",
+        "[...new Uint8Array(buf).filter(f)]",
+        "[...new Uint8Array(buf).toReversed()]",
+        "[...new Uint8Array(buf).toSorted()]",
+        "[...new Uint8Array(buf).with(0, 1)]",
+        "[...Uint8Array.from([1, 2, 3])]",
+        "[...Uint8Array.from([1, 2, 3]).slice(0)]",
+        // the typed-array hint survives a chain of clone methods
+        "[...new Uint8Array(buf).slice(0, 12).map(f)]",
+        // every typed array constructor
+        "[...new Int8Array(buf).slice(0)]",
+        "[...new Uint8ClampedArray(buf).slice(0)]",
+        "[...new Int16Array(buf).slice(0)]",
+        "[...new Uint16Array(buf).slice(0)]",
+        "[...new Int32Array(buf).slice(0)]",
+        "[...new Uint32Array(buf).slice(0)]",
+        "[...new Float32Array(buf).slice(0)]",
+        "[...new Float64Array(buf).slice(0)]",
+        "[...new BigInt64Array(buf).slice(0)]",
+        "[...new BigUint64Array(buf).slice(0)]",
     ];
 
     #[expect(clippy::literal_string_with_formatting_args)]
@@ -765,7 +790,6 @@ fn test() {
         (r"[...await Promise.all(foo)]", r"await Promise.all(foo)"),
         (r"[...Array.from(iterable)]", r"Array.from(iterable)"),
         ("[...((0, []))]", "((0, []))"),
-        ("[...arr.reduce((a, b) => a.push(b), [])]", "arr.reduce((a, b) => a.push(b), [])"),
         ("[...arr.reduce((a, b) => a.push(b), [])]", "arr.reduce((a, b) => a.push(b), [])"),
         // Issue: <https://github.com/oxc-project/oxc/issues/8115>
         ("setupServer(...[...importHandlers])", "setupServer(...importHandlers)"),

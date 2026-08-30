@@ -175,6 +175,8 @@ declare_oxc_lint!(
     pedantic,
     fix = conditional_fix_dangerous,
     config = Eqeqeq,
+    version = "0.0.3",
+    short_description = "Requires the use of the `===` and `!==` operators, disallowing the use of `==` and `!=`.",
 );
 
 impl Eqeqeq {
@@ -253,8 +255,9 @@ impl Rule for Eqeqeq {
 fn get_operator_span(binary_expr: &BinaryExpression, operator: &str, ctx: &LintContext) -> Span {
     let left_end = binary_expr.left.span().end;
     let right_start = binary_expr.right.span().start;
-    let between_text = Span::new(left_end, right_start).source_text(ctx.source_text());
-    let offset = between_text.find(operator).unwrap_or(0) as u32;
+    let offset = ctx
+        .find_next_token_within(left_end, right_start, operator)
+        .expect("operator token must exist");
 
     let operator_start = left_end + offset;
     let operator_end = operator_start + operator.len() as u32;
@@ -337,9 +340,7 @@ fn test() {
         ("a === b", Some(serde_json::json!(["always"]))),
         ("typeof a == 'number'", Some(serde_json::json!(["smart"]))),
         ("'string' != typeof a", Some(serde_json::json!(["smart"]))),
-        ("'hello' != 'world'", Some(serde_json::json!(["smart"]))),
         ("2 == 3", Some(serde_json::json!(["smart"]))),
-        ("true == true", Some(serde_json::json!(["smart"]))),
         ("null == a", Some(serde_json::json!(["smart"]))),
         ("a == null", Some(serde_json::json!(["smart"]))),
         // We intentionally do not support this option because it is deprecated in ESLint.

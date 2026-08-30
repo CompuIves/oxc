@@ -1,9 +1,5 @@
-use oxc_allocator::Vec as AllocatorVec;
-use oxc_ast::ast::{
-    ArrowFunctionExpression, Expression, Function, FunctionBody, ReturnStatement, Statement,
-    UnaryOperator,
-};
-use oxc_ast_visit::Visit;
+use oxc_ast::ast::{ArrowFunctionExpression, Function, FunctionBody, ReturnStatement};
+use oxc_ast_visit::VisitJs;
 use oxc_cfg::{
     EdgeType, InstructionKind, ReturnInstructionKind,
     graph::{Direction, visit::EdgeRef},
@@ -14,7 +10,7 @@ use oxc_span::{GetSpan, Span};
 use rustc_hash::FxHashSet;
 
 /// `StatementReturnStatus` describes whether the CFG corresponding to
-/// the statement is termitated by return statement in all/some/nome of
+/// the statement is terminated by return statement in all/some/nome of
 /// its exit blocks.
 ///
 /// For example, an "if" statement is terminated by explicit return if and only if either:
@@ -160,6 +156,13 @@ pub fn check_function_body(function_node_id: NodeId, semantic: &Semantic) -> Sta
         }
 
         if !has_successor {
+            // Only treat dead ends as function exits if the path is already carrying a
+            // return/throw from an earlier block (e.g. through `finally`), or if this
+            // terminal block has instructions of its own. CFG lowering can otherwise
+            // leave behind empty helper blocks that are not observable callback exits.
+            if matches!(state_after_block, PendingExit::None) && block.instructions().is_empty() {
+                continue;
+            }
             terminal_states.push(state_after_block);
         }
     }
@@ -206,13 +209,13 @@ struct ReturnStatementFinder {
     has_void_expression: bool,
 }
 
-impl Visit<'_> for ReturnStatementFinder {
+impl VisitJs<'_> for ReturnStatementFinder {
     fn visit_return_statement(&mut self, return_statement: &ReturnStatement) {
         let Some(argument) = &return_statement.argument else {
             return;
         };
 
-        if is_expression_void(argument) {
+        if argument.is_void() {
             self.has_void_expression = true;
             if !self.allow_void {
                 self.spans.push(argument.span());
@@ -225,33 +228,4 @@ impl Visit<'_> for ReturnStatementFinder {
     fn visit_function(&mut self, _func: &Function<'_>, _flags: ScopeFlags) {}
 
     fn visit_arrow_function_expression(&mut self, _it: &ArrowFunctionExpression<'_>) {}
-}
-
-pub fn is_void_arrow_return(statements: &AllocatorVec<'_, Statement>) -> bool {
-    if statements.is_empty() {
-        return false;
-    }
-
-    if statements.len() > 1 {
-        return false;
-    }
-
-    let Some(statement_return) = statements.first() else {
-        return false;
-    };
-
-    let Statement::ExpressionStatement(expression_return) = statement_return else {
-        return false;
-    };
-
-    is_expression_void(&expression_return.expression)
-}
-
-fn is_expression_void(statement_expression: &Expression<'_>) -> bool {
-    match statement_expression {
-        Expression::UnaryExpression(void_expression) => {
-            void_expression.operator == UnaryOperator::Void
-        }
-        _ => false,
-    }
 }

@@ -4,6 +4,7 @@ use oxc_ast::{
     ast::{BindingPattern, VariableDeclarationKind},
 };
 use oxc_diagnostics::OxcDiagnostic;
+use oxc_ecmascript::BoundNames;
 use oxc_macros::declare_oxc_lint;
 use oxc_semantic::Scoping;
 use oxc_span::{GetSpan, Span};
@@ -123,6 +124,8 @@ declare_oxc_lint!(
     BlockScopedVar,
     eslint,
     suspicious,
+    version = "0.16.9",
+    short_description = "Enforce the use of variables within the scope they are defined.",
 );
 
 impl Rule for BlockScopedVar {
@@ -198,10 +201,10 @@ fn run_for_all_redeclarations(
 
 fn run_for_declaration(pattern: &BindingPattern, node_scope_id: ScopeId, ctx: &LintContext) {
     // e.g. "var [a, b] = [1, 2]"
-    for ident in pattern.get_binding_identifiers() {
+    pattern.bound_names(&mut |ident| {
         let name = ident.name;
         let Some(symbol) = ctx.scoping().find_binding(node_scope_id, name) else {
-            continue;
+            return;
         };
 
         let binding = (pattern, name, &symbol);
@@ -213,7 +216,7 @@ fn run_for_declaration(pattern: &BindingPattern, node_scope_id: ScopeId, ctx: &L
 
         // e.g. "var a = 4; console.log(a);"
         run_for_all_references(binding, node_scope_id, ctx);
-    }
+    });
 }
 
 /// Returns true if the reference is outside the declaration scope
@@ -222,16 +225,8 @@ fn check_if_has_reference_outside_scope(
     reference_scope_id: ScopeId,
     scoping: &Scoping,
 ) -> bool {
-    // Walk up the scope chain from the reference scope to see if we reach the declaration scope,
-    // if we do, then the reference is inside the scope, otherwise it's outside
-    for ancestor_scope_id in scoping.scope_ancestors(reference_scope_id) {
-        // Already reached the declaration scope, so the reference is inside the scope
-        if ancestor_scope_id == declare_scope_id {
-            return false;
-        }
-    }
-
-    true
+    reference_scope_id != declare_scope_id
+        && !scoping.scope_is_descendant_of(reference_scope_id, declare_scope_id)
 }
 
 #[test]
@@ -248,7 +243,6 @@ fn test() {
         "function f() { } f(); var exports = { f: f };",
         "var f = () => {}; f(); var exports = { f: f };",
         "!function f(){ f; }",
-        "function f() { } f(); var exports = { f: f };",
         "function f() { var a, b; { a = true; } b = a; }",
         "var a; function f() { var b = a; }",
         "function f(a) { }",
@@ -286,7 +280,6 @@ fn test() {
         "class C { static { if (bar) { foo; } var foo; } }",
         "class C { static { foo; var foo; } }",
         "class C { static { var foo; foo; } }",
-        "(function () { foo(); })(); function foo() {}",
         "(function () { foo(); })(); function foo() {}",
         "foo: while (true) { bar: for (var i = 0; i < 13; ++i) {if (i === 7) break foo; } }",
         "foo: while (true) { bar: for (var i = 0; i < 13; ++i) {if (i === 7) continue foo; } }",

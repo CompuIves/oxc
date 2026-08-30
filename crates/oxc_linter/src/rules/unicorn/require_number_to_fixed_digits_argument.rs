@@ -39,7 +39,9 @@ declare_oxc_lint!(
     RequireNumberToFixedDigitsArgument,
     unicorn,
     pedantic,
-    fix
+    fix,
+    version = "0.0.15",
+    short_description = "Enforce using the digits argument with `Number#toFixed()`.",
 );
 
 impl Rule for RequireNumberToFixedDigitsArgument {

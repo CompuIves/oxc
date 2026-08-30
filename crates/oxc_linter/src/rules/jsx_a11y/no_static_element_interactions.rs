@@ -82,11 +82,13 @@ declare_oxc_lint!(
     jsx_a11y,
     correctness,
     config = NoStaticElementInteractionsConfig,
+    version = "1.37.0",
+    short_description = "Enforces that static HTML elements with event handlers must have appropriate ARIA roles.",
 );
 
 impl Rule for NoStaticElementInteractions {
     fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
-        serde_json::from_value::<DefaultRuleConfig<Self>>(value).map(DefaultRuleConfig::into_inner)
+        DefaultRuleConfig::<Self>::from_value(value).map(DefaultRuleConfig::into_inner)
     }
 
     fn run<'a>(&self, node: &AstNode<'a>, ctx: &LintContext<'a>) {
@@ -161,10 +163,8 @@ impl Rule for NoStaticElementInteractions {
                     }
                 }
             }
-            JSXAttributeValue::ExpressionContainer(_) => {
-                if self.allow_expression_values {
-                    return;
-                }
+            JSXAttributeValue::ExpressionContainer(_) if self.allow_expression_values => {
+                return;
             }
             _ => {}
         }

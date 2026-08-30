@@ -101,11 +101,13 @@ declare_oxc_lint!(
     jsdoc,
     correctness,
     config = RequireYieldsConfig,
+    version = "0.3.2",
+    short_description = "Requires that yields are documented with `@yields`.",
 );
 
 impl Rule for RequireYields {
     fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
-        serde_json::from_value::<DefaultRuleConfig<Self>>(value).map(DefaultRuleConfig::into_inner)
+        DefaultRuleConfig::<Self>::from_value(value).map(DefaultRuleConfig::into_inner)
     }
 
     fn run<'a>(&self, node: &AstNode<'a>, ctx: &LintContext<'a>) {
@@ -153,7 +155,7 @@ impl Rule for RequireYields {
                 // Without this option, need to check `yield` value.
                 // Check will be performed in `YieldExpression` branch.
                 if self.force_require_yields
-                    && is_missing_special_tag(&jsdoc_tags, resolved_yields_tag_name)
+                    && is_missing_special_tag(jsdoc_tags.iter().copied(), resolved_yields_tag_name)
                 {
                     ctx.diagnostic(missing_yields(func.span));
                     return;
@@ -161,7 +163,8 @@ impl Rule for RequireYields {
 
                 // Other checks are always performed
 
-                if let Some(span) = is_duplicated_special_tag(&jsdoc_tags, resolved_yields_tag_name)
+                if let Some(span) =
+                    is_duplicated_special_tag(jsdoc_tags.iter().copied(), resolved_yields_tag_name)
                 {
                     ctx.diagnostic(duplicate_yields(span));
                     return;
@@ -242,7 +245,7 @@ impl Rule for RequireYields {
                 let jsdoc_tags = jsdocs.iter().flat_map(JSDoc::tags).collect::<Vec<_>>();
                 let resolved_yields_tag_name = settings.resolve_tag_name("yields");
 
-                if is_missing_special_tag(&jsdoc_tags, resolved_yields_tag_name) {
+                if is_missing_special_tag(jsdoc_tags.iter().copied(), resolved_yields_tag_name) {
                     ctx.diagnostic(missing_yields(generator_func.span));
                 }
             }

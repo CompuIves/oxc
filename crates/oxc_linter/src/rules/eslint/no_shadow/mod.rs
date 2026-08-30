@@ -9,7 +9,7 @@ use javascript_globals::GLOBALS;
 use oxc_allocator::GetAddress;
 use oxc_ast::{
     AstKind,
-    ast::{BindingPattern, Expression, FunctionType, TSModuleDeclarationName},
+    ast::{BindingPattern, Expression, FunctionType},
 };
 use oxc_diagnostics::OxcDiagnostic;
 use oxc_macros::declare_oxc_lint;
@@ -27,15 +27,29 @@ use crate::{
 
 pub use options::{HoistOption, NoShadowConfig};
 
-pub fn no_shadow_diagnostic(span: Span, name: &str, shadowed_span: Span) -> OxcDiagnostic {
-    OxcDiagnostic::warn(format!("'{name}' is already declared in the upper scope."))
-        .with_help(format!(
-            "Consider renaming '{name}' to avoid shadowing the variable from the outer scope."
+pub fn no_shadow_diagnostic(
+    span: Span,
+    name: &str,
+    shadowed_span: Span,
+    is_enum_member: bool,
+) -> OxcDiagnostic {
+    let diagnostic =
+        OxcDiagnostic::warn(format!("'{name}' is already declared in the upper scope."))
+            .with_help(format!(
+                "Consider renaming '{name}' to avoid shadowing the variable from the outer scope."
+            ))
+            .with_labels([
+                span.label(format!("'{name}' is declared here")),
+                shadowed_span.label("shadowed declaration is here"),
+            ]);
+
+    if is_enum_member {
+        diagnostic.with_note(format!(
+            "Enum members are added to the enum scope, so references to '{name}' in enum member initializers resolve to this member instead of the declaration in the upper scope."
         ))
-        .with_labels([
-            span.label(format!("'{name}' is declared here")),
-            shadowed_span.label("shadowed declaration is here"),
-        ])
+    } else {
+        diagnostic
+    }
 }
 
 pub fn no_shadow_global_diagnostic(span: Span, name: &str) -> OxcDiagnostic {
@@ -86,12 +100,14 @@ declare_oxc_lint!(
     NoShadow,
     eslint,
     suspicious,
-    config = NoShadowConfig
+    config = NoShadowConfig,
+    version = "1.48.0",
+    short_description = "Disallows variable declarations from shadowing variables declared in the outer scope.",
 );
 
 impl Rule for NoShadow {
     fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
-        serde_json::from_value::<DefaultRuleConfig<NoShadowConfig>>(value)
+        DefaultRuleConfig::<NoShadowConfig>::from_value(value)
             .map(|c| Self(Box::new(c.into_inner())))
     }
 
@@ -114,6 +130,7 @@ impl Rule for NoShadow {
                         symbol_span,
                         symbol_name_str,
                         shadowed_span,
+                        scoping.symbol_flags(symbol_id).is_enum_member(),
                     ));
                 }
                 continue;
@@ -122,7 +139,12 @@ impl Rule for NoShadow {
             if let Some(shadowed_span) =
                 Self::function_expression_name_shadow_span(ctx, symbol_id, symbol_name_str)
             {
-                ctx.diagnostic(no_shadow_diagnostic(symbol_span, symbol_name_str, shadowed_span));
+                ctx.diagnostic(no_shadow_diagnostic(
+                    symbol_span,
+                    symbol_name_str,
+                    shadowed_span,
+                    false,
+                ));
                 continue;
             }
 
@@ -364,7 +386,10 @@ impl NoShadow {
                 }
                 AstKind::Class(class) if class.declare => return true,
                 AstKind::TSEnumDeclaration(declaration) if declaration.declare => return true,
-                AstKind::TSModuleDeclaration(declaration) if declaration.declare => return true,
+                AstKind::TSExternalModuleDeclaration(declaration) if declaration.declare => {
+                    return true;
+                }
+                AstKind::TSNamespaceDeclaration(declaration) if declaration.declare => return true,
                 AstKind::TSInterfaceDeclaration(declaration) if declaration.declare => return true,
                 AstKind::TSTypeAliasDeclaration(declaration) if declaration.declare => return true,
                 AstKind::Program(_) => break,
@@ -379,13 +404,8 @@ impl NoShadow {
         let declaration_id = ctx.scoping().symbol_declaration(symbol_id);
         ctx.nodes().ancestor_kinds(declaration_id).any(|ancestor_kind| match ancestor_kind {
             AstKind::TSGlobalDeclaration(_) => true,
-            AstKind::TSModuleDeclaration(module) => {
-                module.declare
-                    && matches!(
-                        &module.id,
-                        TSModuleDeclarationName::Identifier(identifier)
-                            if identifier.name.as_str() == "global"
-                    )
+            AstKind::TSNamespaceDeclaration(module) => {
+                module.declare && module.id.name.as_str() == "global"
             }
             _ => false,
         })
@@ -449,15 +469,10 @@ impl NoShadow {
 
         let declaration_id = ctx.scoping().symbol_declaration(symbol_id);
         let module_name = ctx.nodes().ancestor_kinds(declaration_id).find_map(|kind| {
-            if let AstKind::TSModuleDeclaration(module_decl) = kind
+            if let AstKind::TSExternalModuleDeclaration(module_decl) = kind
                 && module_decl.declare
             {
-                match &module_decl.id {
-                    TSModuleDeclarationName::StringLiteral(string_literal) => {
-                        Some(string_literal.value.as_str())
-                    }
-                    TSModuleDeclarationName::Identifier(_) => None,
-                }
+                Some(module_decl.id.value.as_str())
             } else {
                 None
             }
@@ -591,22 +606,22 @@ impl NoShadow {
 
                     break;
                 }
-                AstKind::FormalParameter(parameter) => {
-                    if binding_pattern_contains_symbol(&parameter.pattern, shadowed_symbol_span)
-                        && parameter
-                            .initializer
-                            .as_ref()
-                            .is_some_and(|init| is_in_range(init.span(), call_expression_end))
-                    {
-                        return true;
-                    }
+                AstKind::FormalParameter(parameter)
+                    if binding_pattern_contains_symbol(
+                        &parameter.pattern,
+                        shadowed_symbol_span,
+                    ) && parameter
+                        .initializer
+                        .as_ref()
+                        .is_some_and(|init| is_in_range(init.span(), call_expression_end)) =>
+                {
+                    return true;
                 }
-                AstKind::AssignmentPattern(pattern) => {
+                AstKind::AssignmentPattern(pattern)
                     if binding_pattern_contains_symbol(&pattern.left, shadowed_symbol_span)
-                        && is_in_range(pattern.right.span(), call_expression_end)
-                    {
-                        return true;
-                    }
+                        && is_in_range(pattern.right.span(), call_expression_end) =>
+                {
+                    return true;
                 }
                 kind if is_initializer_sentinel(kind) => break,
                 _ => {}
@@ -632,10 +647,10 @@ impl NoShadow {
                         return Some(initializer);
                     }
                 }
-                AstKind::AssignmentPattern(pattern) => {
-                    if binding_pattern_contains_symbol(&pattern.left, symbol_span) {
-                        return Some(&pattern.right);
-                    }
+                AstKind::AssignmentPattern(pattern)
+                    if binding_pattern_contains_symbol(&pattern.left, symbol_span) =>
+                {
+                    return Some(&pattern.right);
                 }
                 AstKind::VariableDeclarator(declarator) => {
                     if let Some(initializer) =
@@ -727,7 +742,7 @@ fn is_initializer_sentinel(kind: AstKind) -> bool {
             | AstKind::ArrowFunctionExpression(_)
             | AstKind::CatchClause(_)
             | AstKind::ImportDeclaration(_)
-            | AstKind::ExportNamedDeclaration(_)
+            | AstKind::ExportDeclaration(_)
     )
 }
 

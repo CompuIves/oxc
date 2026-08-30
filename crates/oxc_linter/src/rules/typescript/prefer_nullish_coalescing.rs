@@ -130,11 +130,13 @@ declare_oxc_lint!(
     pedantic,
     fix,
     config = PreferNullishCoalescingConfig,
+    version = "1.33.0",
+    short_description = "Enforce using the nullish coalescing operator (`??`) instead of logical OR (`||`) or conditional expressions when the left operand might be `null` or `undefined`.",
 );
 
 impl Rule for PreferNullishCoalescing {
     fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
-        serde_json::from_value::<DefaultRuleConfig<Self>>(value).map(DefaultRuleConfig::into_inner)
+        DefaultRuleConfig::<Self>::from_value(value).map(DefaultRuleConfig::into_inner)
     }
 
     fn to_configuration(&self) -> Option<Result<serde_json::Value, serde_json::Error>> {

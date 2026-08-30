@@ -93,6 +93,8 @@ declare_oxc_lint!(
     correctness,
     fix,
     config = NoUselessEscapeConfig,
+    version = "0.0.5",
+    short_description = "Disallow unnecessary escape characters.",
 );
 
 impl Rule for NoUselessEscape {
@@ -144,7 +146,7 @@ impl Rule for NoUselessEscape {
     }
 
     fn from_configuration(value: serde_json::Value) -> Result<Self, serde_json::error::Error> {
-        serde_json::from_value::<DefaultRuleConfig<Self>>(value).map(DefaultRuleConfig::into_inner)
+        DefaultRuleConfig::<Self>::from_value(value).map(DefaultRuleConfig::into_inner)
     }
 }
 
@@ -212,13 +214,13 @@ fn check_character(
         }
         if unicode_sets {
             if REGEX_CLASS_SET_RESERVED_DOUBLE_PUNCTUATOR.contains(escape_char) {
-                if let Some(prev_char) = source_text.chars().nth(span.end as usize) {
+                if let Some(prev_char) = source_text[span.end as usize..].chars().next() {
                     // Escaping is valid when it is a reserved double punctuator
                     if prev_char == escape_char {
                         return None;
                     }
                 }
-                if let Some(prev_prev_char) = source_text.chars().nth(span.start as usize - 1)
+                if let Some(prev_prev_char) = source_text[..span.start as usize].chars().next_back()
                     && prev_prev_char == escape_char
                 {
                     if escape_char != '^' {
@@ -261,15 +263,10 @@ fn check_string(string: &str) -> Vec<usize> {
 
     let quote_char = string.chars().next().unwrap();
     let bytes = &string.as_bytes()[1..string.len() - 1];
-    let escapes = memmem::find_iter(bytes, "\\").collect::<Vec<_>>();
-
-    if escapes.is_empty() {
-        return vec![];
-    }
 
     let mut offsets = vec![];
     let mut prev_offset = None; // for checking double escape `\\`
-    for offset in escapes {
+    for offset in memmem::find_iter(bytes, "\\") {
         // Safety:
         // The offset comes from a utf8 checked string
 
@@ -526,6 +523,9 @@ fn test() {
         (r"/[\&&&\&]/v", None),  // { "ecmaVersion": 2024 },
         (r"/[[\-]\-]/v", None),  // { "ecmaVersion": 2024 },
         (r"/[\^]/v", None),      // { "ecmaVersion": 2024 },
+        // multi-byte characters earlier in the source must not shift the lookaround
+        ("const s = \"⚓💥⚓\";\n/[\\&&]/v", None),
+        ("const s = \"⚓💥⚓\";\n/[&\\&]/v", None),
         ("var foo = /\\#/;", Some(serde_json::json!([{ "allowRegexCharacters": ["#"] }]))),
         ("var foo = /\\;/;", Some(serde_json::json!([{ "allowRegexCharacters": [";"] }]))),
         ("var foo = /\\#\\;/;", Some(serde_json::json!([{ "allowRegexCharacters": ["#", ";"] }]))),
@@ -705,7 +705,7 @@ fn test() {
         ("var foo = '\\#';", "var foo = '#';", None),
         ("var foo = '\\$';", "var foo = '$';", None),
         ("var foo = '\\p';", "var foo = 'p';", None),
-        ("var foo = '\\p\\a\\@';", "var foo = 'pa@';", None),
+        ("var foo = '\\p\\a\\@';", "var foo = 'p\\a@';", None),
         ("<foo attr={\"\\d\"}/>", "<foo attr={\"d\"}/>", None),
         ("var foo = '\\`';", "var foo = '`';", None),
         ("var foo = `\\\"`;", "var foo = `\"`;", None),
@@ -758,7 +758,7 @@ fn test() {
         (
             // https://github.com/oxc-project/oxc/issues/5227
             r"const regex = /(https?:\/\/github\.com\/(([^\s]+)\/([^\s]+))\/([^\s]+\/)?(issues|pull)\/([0-9]+))|(([^\s]+)\/([^\s]+))?#([1-9][0-9]*)($|[\s\:\;\-\(\=])/;",
-            r"const regex = /(https?:\/\/github\.com\/(([^\s]+)\/([^\s]+))\/([^\s]+\/)?(issues|pull)\/([0-9]+))|(([^\s]+)\/([^\s]+))?#([1-9][0-9]*)($|[\s:;\-(=])/;",
+            r"const regex = /(https?:\/\/github\.com\/(([^\s]+)\/([^\s]+))\/([^\s]+\/)?(issues|pull)\/([0-9]+))|(([^\s]+)\/([^\s]+))?#([1-9][0-9]*)($|[\s:\;\-(\=])/;",
             None,
         ),
     ];

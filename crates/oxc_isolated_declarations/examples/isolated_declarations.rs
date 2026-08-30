@@ -34,10 +34,9 @@ fn main() -> std::io::Result<()> {
 
     let ret = Parser::new(&allocator, &source_text, source_type).parse();
 
-    if !ret.errors.is_empty() {
-        for error in ret.errors {
-            let error = error.with_source_code(source_text.clone());
-            println!("{error:?}");
+    if !ret.diagnostics.is_empty() {
+        for error in ret.diagnostics {
+            println!("{}", error.render_with_source_code(source_text.clone()));
         }
         return Ok(());
     }
@@ -59,11 +58,10 @@ fn main() -> std::io::Result<()> {
     println!("Dts Emit:\n");
     println!("{printed}\n");
 
-    if !id_ret.errors.is_empty() {
+    if !id_ret.diagnostics.is_empty() {
         println!("Transformed dts failed:\n");
-        for error in id_ret.errors {
-            let error = error.with_source_code(source_text.clone());
-            println!("{error:?}");
+        for error in id_ret.diagnostics {
+            println!("{}", error.render_with_source_code(source_text.clone()));
         }
     }
 

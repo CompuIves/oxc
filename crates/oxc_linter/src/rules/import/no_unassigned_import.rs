@@ -81,12 +81,14 @@ declare_oxc_lint!(
     NoUnassignedImport,
     import,
     suspicious,
-    config = NoUnassignedImportConfig
+    config = NoUnassignedImportConfig,
+    version = "0.16.11",
+    short_description = "This rule aims to remove modules with side-effects by reporting when a module is imported but not assigned.",
 );
 
 impl Rule for NoUnassignedImport {
     fn from_configuration(value: Value) -> Result<Self, serde_json::error::Error> {
-        serde_json::from_value::<DefaultRuleConfig<Self>>(value).map(DefaultRuleConfig::into_inner)
+        DefaultRuleConfig::<Self>::from_value(value).map(DefaultRuleConfig::into_inner)
     }
 
     fn run<'a>(&self, node: &AstNode<'a>, ctx: &LintContext<'a>) {

@@ -1,17 +1,13 @@
-use oxc_ast::{AstKind, ast::VariableDeclarationKind};
-use oxc_cfg::{
-    EdgeType, ErrorEdgeKind, Instruction, InstructionKind,
-    graph::{
-        Direction,
-        visit::{Control, DfsEvent, EdgeRef, set_depth_first_search},
-    },
-};
+use oxc_ast::{AstKind, AstType, ast::VariableDeclarationKind};
+use oxc_cfg::{Instruction, InstructionKind};
 use oxc_diagnostics::OxcDiagnostic;
 use oxc_macros::declare_oxc_lint;
 use oxc_semantic::NodeId;
 use oxc_span::{GetSpan, Span};
 
-use crate::{context::LintContext, rule::Rule};
+use crate::{
+    context::ContextHost, context::LintContext, rule::Rule, utils::effective_unreachable_blocks,
+};
 
 fn no_unreachable_diagnostic(span: Span) -> OxcDiagnostic {
     OxcDiagnostic::warn("Unreachable code.")
@@ -22,6 +18,16 @@ fn no_unreachable_diagnostic(span: Span) -> OxcDiagnostic {
 /// <https://github.com/eslint/eslint/blob/069aa680c78b8516b9a1b568519f1d01e74fb2a2/lib/rules/no-unreachable.js#L196>
 #[derive(Debug, Default, Clone)]
 pub struct NoUnreachable;
+
+const NEEDED_NODE_TYPES: &AstTypesBitset = &AstTypesBitset::from_types(&[
+    AstType::ReturnStatement,
+    AstType::ThrowStatement,
+    AstType::BreakStatement,
+    AstType::ContinueStatement,
+    AstType::WhileStatement,
+    AstType::DoWhileStatement,
+    AstType::ForStatement,
+]);
 
 declare_oxc_lint!(
     /// ### What it does
@@ -54,131 +60,111 @@ declare_oxc_lint!(
     /// ```
     NoUnreachable,
     eslint,
-    nursery
+    correctness,
+    version = "0.4.4",
+    short_description = "Disallow unreachable code after `return`, `throw`, `continue`, and `break` statements.",
 );
 
 impl Rule for NoUnreachable {
+    fn should_run(&self, ctx: &ContextHost) -> bool {
+        ctx.semantic().nodes().contains_any(NEEDED_NODE_TYPES)
+    }
+
     fn run_once(&self, ctx: &LintContext) {
-        let nodes = ctx.nodes();
-        let root = nodes.get_node(NodeId::ROOT);
         let cfg = ctx.cfg();
         let graph = cfg.graph();
+        let mut unreachable_statement_ids = Vec::new();
+        let unreachables = effective_unreachable_blocks(ctx);
 
-        // A pre-allocated vector containing the reachability status of all the basic blocks.
-        // We initialize this vector with all nodes set to `unreachable` since if we don't visit a
-        // node in our paths then it should be unreachable by definition.
-        let mut unreachables = vec![true; cfg.basic_blocks.len()];
-
-        // All of the end points of infinite loops we encountered.
-        let mut infinite_loops = Vec::new();
-
-        // Set the root as reachable.
-        let root_cfg_id = ctx.nodes().cfg_id(root.id());
-        unreachables[root_cfg_id.index()] = false;
-
-        // In our first path we first check if each block is definitely unreachable, If it is then
-        // we set it as such, If we encounter an infinite loop we keep its end block since it can
-        // prevent other reachable blocks from ever getting executed.
-        let _: Control<()> = set_depth_first_search(graph, Some(root_cfg_id), |event| {
-            if let DfsEvent::Finish(node, _) = event {
-                let unreachable = cfg.basic_block(node).is_unreachable();
-                unreachables[node.index()] = unreachable;
-
-                if !unreachable
-                    && let Some(it) = cfg.is_infinite_loop_start(node, |instruction| {
-                        use oxc_cfg::EvalConstConditionResult::{Eval, Fail, NotFound};
-                        match instruction {
-                            Instruction { kind: InstructionKind::Condition, node_id: Some(id) } => {
-                                match nodes.kind(*id) {
-                                    AstKind::BooleanLiteral(lit) => Eval(lit.value),
-                                    _ => Fail,
-                                }
-                            }
-                            _ => NotFound,
-                        }
-                    })
-                {
-                    infinite_loops.push(it);
-                }
+        for node in graph.node_indices() {
+            if !unreachables[node.index()] {
+                continue;
             }
-            Control::Continue
-        });
 
-        // In the second path we go for each infinite loop end block and follow it marking all
-        // edges as unreachable unless they have a reachable jump (eg. break).
-        for loop_ in infinite_loops {
-            // A loop end block usually is also its condition and start point but what is common
-            // in all cases is that it may have `Jump` or `Backedge` edges so we only want to
-            // follow the `Normal` edges as these are the exiting edges.
-            let starts: Vec<_> = graph
-                .edges_directed(loop_.1, Direction::Outgoing)
-                .filter(|it| matches!(it.weight(), EdgeType::Normal))
-                .map(|it| it.target())
-                .collect();
-
-            // Search with all `Normal` edges as starting point(s).
-            let _: Control<()> = set_depth_first_search(graph, starts, |event| match event {
-                DfsEvent::Discover(node, _) => {
-                    let mut incoming = graph.edges_directed(node, Direction::Incoming);
-                    if incoming.any(|e| match e.weight() {
-                        // `NewFunction` is always reachable
-                        | EdgeType::NewFunction
-                        // `Finalize` can be reachable if we encounter an error in the loop.
-                        | EdgeType::Finalize
-                        // Explicit `Error` can also be reachable if we encounter an error in the loop.
-                        | EdgeType::Error(ErrorEdgeKind::Explicit) => true,
-
-                        // If we have an incoming `Jump` and it is from a `Break` instruction,
-                        // We know with high confidence that we are visiting a reachable block.
-                        // NOTE: May cause false negatives but I couldn't think of one.
-                        EdgeType::Jump
-                            if cfg
-                                .basic_block(e.source())
-                                .instructions()
-                                .iter()
-                                .any(|it| matches!(it.kind, InstructionKind::Break(_))) =>
-                        {
-                            true
-                        }
-                        _ => false,
-                    }) {
-                        // We prune this branch if it is reachable from this point forward.
-                        Control::Prune
-                    } else {
-                        // Otherwise we set it to unreachable and continue.
-                        unreachables[node.index()] = true;
-                        Control::Continue
-                    }
-                }
-                _ => Control::Continue,
-            });
+            unreachable_statement_ids
+                .extend(cfg.basic_block(node).instructions().iter().filter_map(statement_node_id));
         }
-        for node in ctx.nodes() {
-            // exit early if we are not visiting a statement.
-            if !node.kind().is_statement() {
-                continue;
-            }
 
-            // exit early if it is an empty statement.
-            if matches!(node.kind(), AstKind::EmptyStatement(_)) {
-                continue;
-            }
+        report_unreachable_statements(ctx, unreachable_statement_ids);
+    }
+}
 
-            if matches!(
-                node.kind(),
-                AstKind::VariableDeclaration(decl)
-                    if matches!(decl.kind, VariableDeclarationKind::Var) && !decl.has_init()
-            ) {
-                // Skip `var` declarations without any initialization,
-                // These work because of the JavaScript hoisting rules.
-                continue;
-            }
+fn statement_node_id(instruction: &Instruction) -> Option<NodeId> {
+    if matches!(
+        instruction.kind,
+        InstructionKind::Statement
+            | InstructionKind::Return(_)
+            | InstructionKind::Break(_)
+            | InstructionKind::Continue(_)
+            | InstructionKind::Throw
+    ) {
+        instruction.node_id
+    } else {
+        None
+    }
+}
 
-            if unreachables[ctx.nodes().cfg_id(node.id()).index()] {
-                ctx.diagnostic(no_unreachable_diagnostic(node.kind().span()));
-            }
+fn report_unreachable_statements(ctx: &LintContext, mut unreachable_statement_ids: Vec<NodeId>) {
+    let nodes = ctx.nodes();
+
+    if unreachable_statement_ids.is_empty() {
+        return;
+    }
+
+    unreachable_statement_ids.sort_unstable_by_key(|node_id| node_id.index());
+    unreachable_statement_ids.dedup();
+
+    let mut reported_statement_ids = Vec::new();
+
+    for node_id in unreachable_statement_ids {
+        let kind = nodes.kind(node_id);
+
+        if !kind.is_statement() || should_skip_unreachable_statement(kind) {
+            continue;
+        }
+
+        if has_reported_unreachable_ancestor(nodes, &reported_statement_ids, node_id) {
+            continue;
+        }
+
+        reported_statement_ids.push(node_id);
+        ctx.diagnostic(no_unreachable_diagnostic(kind.span()));
+    }
+}
+
+fn has_reported_unreachable_ancestor(
+    nodes: &oxc_semantic::AstNodes<'_>,
+    reported_statement_ids: &[NodeId],
+    node_id: NodeId,
+) -> bool {
+    for ancestor_id in nodes.ancestor_ids(node_id) {
+        debug_assert!(
+            ancestor_id < node_id,
+            "ancestor nodes must be assigned lower NodeIds than descendants"
+        );
+
+        if matches!(nodes.kind(ancestor_id), AstKind::FunctionBody(_) | AstKind::StaticBlock(_)) {
+            return false;
+        }
+
+        if reported_statement_ids
+            .binary_search_by_key(&ancestor_id.index(), |reported_id| reported_id.index())
+            .is_ok()
+        {
+            return true;
         }
     }
+
+    false
+}
+
+fn should_skip_unreachable_statement(kind: AstKind<'_>) -> bool {
+    matches!(kind, AstKind::EmptyStatement(_))
+        || matches!(
+            kind,
+            AstKind::VariableDeclaration(decl)
+                if matches!(decl.kind, VariableDeclarationKind::Var) && !decl.has_init()
+        )
 }
 
 #[test]
@@ -307,6 +293,14 @@ fn test() {
             b();
         }
         ",
+        "
+        function foo() {
+            if (Math.random() === 0.5) {
+                while (true) { return 'greetings!'; }
+            }
+            return 'Hello, tsdown!';
+        }
+        ",
     ];
 
     let fail = vec![
@@ -353,6 +347,33 @@ fn test() {
         "function foo() { var x = 1; while (true) { } x = 2; }",
         //[{ messageId: "unreachableCode", type: "ExpressionStatement" }]
         "function foo() { var x = 1; do { } while (true); x = 2; }",
+        "
+        function foo() {
+            return;
+
+            if (Math.random() > 0.5) {
+                if (Math.random() > 0.5) {
+                    console.log('test');
+                }
+            } else {
+                console.log('test');
+
+            }
+        }
+        ",
+        "
+        function foo() {
+            return;
+
+            if (Math.random() > 0.5) {
+                function bar() {
+                    return;
+                    console.log('inner');
+                }
+            }
+        }
+        ",
+        "function foo() { while (true) { return ''; } return ''; }",
     ];
 
     Tester::new(NoUnreachable::NAME, NoUnreachable::PLUGIN, pass, fail).test_and_snapshot();
